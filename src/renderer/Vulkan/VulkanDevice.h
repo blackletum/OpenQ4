@@ -20,6 +20,7 @@
 
 #include "volk.h"
 #include "VulkanDeviceSelection.h"
+#include "../DisplayPresentation.h"
 
 // VMA handles as opaque forward declarations; TUs that call VMA include
 // vk_mem_alloc.h themselves (with the PCH-poison compensations)
@@ -54,6 +55,10 @@ static const int VK_MAX_UPLOAD_BATCH_STAGING = 1024;
 
 typedef struct vkDeviceContext_s {
 	bool				initialized;
+	// A failed post-acquire operation may leave semaphores signaled or queue
+	// state unknown. Never reuse them or wait an unsubmitted frame fence;
+	// only a new full device lifetime releases this latch.
+	bool				presentationBlocked;
 
 	VkInstance			instance;
 	VkDebugUtilsMessengerEXT debugMessenger;
@@ -111,6 +116,11 @@ typedef struct vkDeviceContext_s {
 	// requested swap interval the swapchain was created with; a change
 	// triggers recreation at the next present
 	int					swapInterval;
+	// A typed device request owns its interval until the configured CVar value
+	// changes. Loading-screen invalidation is not an explicit configuration edit.
+	bool				strictSwapInterval;
+	int					strictSwapIntervalValue;
+	int					strictSwapIntervalCvar;
 
 	// Driver-owned pipeline blob, seeded from and written back to a
 	// disposable fs_savepath cache so a session does not re-compile every
@@ -141,6 +151,7 @@ typedef struct vkDeviceContext_s {
 	// with a CPU wait at wait-idle teardown points
 	VkCommandBuffer		uploadCommandBuffer;
 	VkFence				uploadFence;
+	uint64_t            uploadBatchSerial, uploadBatchCompletedSerial;
 	bool				uploadBatchOpen;		// commands recorded, not yet submitted
 	bool				uploadBatchInFlight;	// submitted, uploadFence not yet waited
 	int					numUploadBatchPending;
@@ -175,6 +186,8 @@ void	VK_Device_Shutdown( void );
 // recreates the swapchain (resize / OUT_OF_DATE / swap-interval change);
 // reads the current window pixel size through the services
 bool	VK_Device_RecreateSwapchain( void );
+int		VK_Device_RequestedSwapInterval( void );
+void	VK_Device_BlockPresentation( renderDisplayOutcome_t outcome, VkResult error, const char *operation );
 
 // Accounts one ordinary indexed draw the way the OpenGL backend's
 // RB_DrawElementsWithCounters does, so both backends report the same
@@ -193,7 +206,7 @@ typedef void ( *vkImmediateRecord_t )( VkCommandBuffer cmd, void *user );
 // the GPU before the next frame or clear-frame submission. Returns false
 // without recording when no device/upload command buffer exists.
 bool	VK_Device_BatchedUpload( vkImmediateRecord_t record, void *user,
-			VkBuffer staging, VmaAllocation stagingAllocation, VkDeviceSize stagingBytes );
+			VkBuffer staging, VmaAllocation stagingAllocation, VkDeviceSize stagingBytes, uint64_t* acceptedBatch = nullptr );
 // submits the open upload batch (if any) without a CPU wait; must run before
 // every queue submission so consuming work executes after its uploads
 void	VK_Device_FlushUploadBatch( void );

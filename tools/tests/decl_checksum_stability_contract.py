@@ -16,7 +16,7 @@ def require(condition: bool, message: str) -> None:
 def main() -> None:
     text = SOURCE.read_text(encoding="utf-8")
     stub = text.index('if ( idStr::Icmpn( parseText, "{ STUB:", 7 ) == 0 )')
-    end = text.index("\n\t}\n\n\tif ( common->IsInitialized()", stub)
+    end = text.index("\n\tconst bool generatedRetainedResource", stub)
     block = text[stub:end]
 
     require(

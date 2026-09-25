@@ -142,6 +142,16 @@
 	"#str_229979"	"Indicatore di colpo"
 	"#str_229982"	"Rinculo arma"
 	"#str_229983"	"RIAVVIA LIVELLO"
+
+	// Settings transaction status.
+	"#str_230007"	"Pronto"
+	"#str_230008"	"Un'altra finestra delle impostazioni sta modificando queste opzioni."
+	"#str_230009"	"Apri le impostazioni prima di modificarle."
+	"#str_230010"	"Non è stato possibile applicare queste modifiche."
+	"#str_230011"	"Le impostazioni sono state modificate altrove. Controllale e riprova."
+	"#str_230012"	"Non è stato possibile ripristinare le impostazioni precedenti."
+	"#str_230013"	"Le modifiche sono in attesa di conferma."
+	"#str_230014"	"Modifiche non salvate."
 	"#str_41200"	"Off"
 	"#str_41201"	"Self"
 	"#str_41202"	"Enemy"
@@ -1003,4 +1013,51 @@
 	"#str_42944"	"-"
 	"#str_42945"	"Clic: seleziona   Trascina destro: ruota   Maiusc + destro: sposta   Rotella: zoom   F: inquadra"
 	"#str_42946"	"Sperimentale"
+	// SigmaTouch editor labels (emileb Android support).
+	"#str_43000"	"Mostra menu"
+	"#str_43001"	"Salvataggio rapido"
+	"#str_43002"	"Caricamento rapido"
+	"#str_43003"	"Mostra tastiera"
+	"#str_43004"	"Usa mouse"
+	"#str_43005"	"Console"
+	"#str_43006"	"Mostra comandi personalizzati"
+	"#str_43007"	"Mostra numeri delle armi"
+	"#str_43008"	"Arma successiva"
+	"#str_43009"	"Arma precedente"
+	"#str_43010"	"Tasti di movimento (WASD)"
+	"#str_43011"	"Clic sinistro"
+
+	// Display application, confirmation and durable recovery.
+	"#str_229990"	"Applicazione delle impostazioni dello schermo…"
+	"#str_229991"	"Ripristino delle impostazioni dello schermo precedenti…"
+	"#str_229992"	"Salvataggio delle impostazioni dello schermo…"
+	"#str_229993"	"Mantenere queste impostazioni dello schermo?"
+	"#str_229994"	"Mantieni"
+	"#str_229995"	"Ripristina"
+	"#str_229996"	"Riprova"
+	"#str_229997"	"Le impostazioni sono state accettate, ma il salvataggio non è terminato. Riprova per completarlo."
+	"#str_229998"	"10%;25%;50%;75%;85%;100%;125%;150%;200%"
+	"#str_229999"	"Continua a modificare"
+
+	// Transient numeric editor clipboard feedback.
+	"#str_230001"	"Impossibile leggere gli appunti. Riprova."
+	"#str_230002"	"Impossibile copiare negli appunti. Il testo non è stato modificato."
+	"#str_230003"	"Il testo degli appunti non è adatto a questo campo su una sola riga."
+
+	// Precise SYSTEM numeric field validation (decimal point input).
+	"#str_230004"	"Inserisci un numero da 0.5 a 2."
+	"#str_230005"	"Inserisci un numero da 0 a 1."
+	"#str_230006"	"Conferma ogni campo o scarta le modifiche incomplete."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Scala interfaccia"
+	"#str_230016"	"Dimensione testo"
+	"#str_230017"	"Ripristina dimensioni"
+	"#str_230018"	"Interfaccia"
+	"#str_230019"	"Le dimensioni maggiori possono essere ridotte per adattarsi alla finestra."
+	"#str_230020"	"No;2x;4x;8x;16x"
+	"#str_230021"	"Inserisci un numero intero da 320 a 16384."
+	"#str_230022"	"Inserisci un numero intero da 240 a 16384."
+	"#str_230023"	"Scegli schermo, dimensioni e frequenza supportati prima di applicare."
+	"#str_230024"	"Le dimensioni personalizzate si usano a schermo intero esclusivo. Modificarle seleziona la risoluzione personalizzata."
 }

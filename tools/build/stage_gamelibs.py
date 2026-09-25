@@ -81,7 +81,11 @@ def copy_regular_tree(source_dir: Path, dest_dir: Path) -> list[Path]:
 
         dest_path = dest_dir / rel
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, dest_path)
+        # This is a generated compiler-input tree. A changed source may carry
+        # a timestamp older than an existing PCH (checkout or a concurrent
+        # companion edit), so the newly staged copy must get a fresh mtime.
+        # Preserve permissions, but never backdate a replacement build input.
+        shutil.copy(source_path, dest_path)
         copied.append(dest_path)
     return copied
 

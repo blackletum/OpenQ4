@@ -74,6 +74,7 @@
 #include "shaders/temporal_resolve_spv.h"
 #include "shaders/target_test_spv.h"
 #include "shaders/color_resolve_spv.h"
+#include "shaders/display_color_mapping_spv.h"
 
 extern idCVar r_skipDynamicTextures;
 
@@ -413,6 +414,11 @@ typedef struct vkGuiExecutor_s {
 	VkShaderModule		gpuSkinningModule;
 	VkShaderModule		temporalResolveVertModule;
 	VkShaderModule		temporalResolveFragModule;
+	VkShaderModule		displayColorFragModule;
+	VkPipeline			displayColorPipeline;
+	idImage *			displayColorSourceImages[ VK_FRAMES_IN_FLIGHT ];
+	bool				displayColorMapped;
+	bool				displayColorMappingWarned;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSetLayout uboSetLayout;		// one dynamic uniform buffer (interaction block ring)
 	// shadow receiver set: binding 0 = atlas + compare sampler (fragment),
@@ -904,8 +910,8 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 		blendAttachment.srcColorBlendFactor = srcFactor;
 		blendAttachment.dstColorBlendFactor = dstFactor;
 		blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-		blendAttachment.srcAlphaBlendFactor = srcFactor;
-		blendAttachment.dstAlphaBlendFactor = dstFactor;
+		blendAttachment.srcAlphaBlendFactor = (blendBits & GLS_ALPHA_COVERAGE) ? VK_BLEND_FACTOR_ONE : srcFactor;
+		blendAttachment.dstAlphaBlendFactor = (blendBits & GLS_ALPHA_COVERAGE) ? VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : dstFactor;
 		blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 	}
 
@@ -1009,7 +1015,7 @@ static bool VK_Exec_UseAlphaToCoverage( const idMaterial *shader ) {
 }
 
 static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits, bool separateColor = false ) {
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 	const bool alphaToCoverage = vkExec.alphaToCoverageSurface
@@ -1108,7 +1114,7 @@ object is backed by that key before exposing it to the transactional path.
 ====================
 */
 static VkPipeline VK_GuiExecutor_GetPipelineStrict( int stateBits ) {
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 	for ( int i = 0; i < vkExec.numPipelines; ++i ) {
@@ -1139,7 +1145,7 @@ static VkPipeline VK_GuiExecutor_GetPipelineStrict( int stateBits ) {
 
 static VkPipeline VK_GuiExecutor_GetScreenPipeline( int stateBits,
 		bool separateColor = false ) {
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 
@@ -1241,7 +1247,7 @@ static VkPipeline VK_TemporalPresentation_GetResolvePipeline( void ) {
 // front-end texgen's tightly packed stream on binding 1 for the skies, or
 // the idDrawVert normal straight off binding 0 for diffuse cube maps
 static VkPipeline VK_GuiExecutor_GetCubePipeline( int stateBits, bool dirFromNormal ) {
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 
@@ -1311,7 +1317,7 @@ static void VK_Exec_InteractionVertexInput( VkVertexInputBindingDescription &bin
 // owns a bump stage, bumpyEnvironment.vfp with a second sampler and the
 // model-space transform block.
 static VkPipeline VK_GuiExecutor_GetEnvironmentPipeline( int stateBits, bool bumpy ) {
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 
@@ -1884,7 +1890,7 @@ static void VK_Exec_CasterVertexInput( VkVertexInputBindingDescription &binding,
 // the packed primary color from idDrawVert.
 static VkPipeline VK_Exec_GetProgramPipeline( vkMaterialProgramFamily_t family,
 		int stateBits, bool separateColor ) {
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 
@@ -2041,7 +2047,7 @@ static VkPipeline VK_Exec_GetGLSLMaterialPipeline( vkGLSLProgramFamily_t family,
 			VK_Exec_GLSLFamilyUsesVertexColor( family );
 	separateColor = separateColor && usesVertexColor;
 	const int programKey = 0x100 + (int)family;
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 
@@ -2142,7 +2148,7 @@ static VkPipeline VK_Exec_GetGLSLMaterialPipeline( vkGLSLProgramFamily_t family,
 
 static VkPipeline VK_Exec_GetGlassWarpPipeline( int stateBits ) {
 	static const int programKey = 0x80;
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 	for ( int i = 0; i < vkExec.numProgramPipelines; i++ ) {
@@ -2344,7 +2350,7 @@ VkPipeline VK_Exec_FogPipeline( void ) {
 // GL_State( GLS_DEPTHMASK | stage->drawStateBits | GLS_DEPTHFUNC_EQUAL ),
 // where only the blend factors are pipeline-level state
 VkPipeline VK_Exec_BlendLightPipeline( int stateBits ) {
-	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
+	const int pipelineBits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
 
@@ -3455,6 +3461,12 @@ void VK_GuiExecutor_Shutdown( void ) {
 		}
 	}
 	vkExec.numPostPipelines = 0;
+	if ( vkExec.displayColorPipeline != VK_NULL_HANDLE ) {
+		vkDestroyPipeline( vkCtx.device, vkExec.displayColorPipeline, NULL );
+	}
+	if ( vkExec.displayColorFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.displayColorFragModule, NULL );
+	}
 	if ( vkExec.pipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.pipelineLayout, NULL );
 	}
@@ -3664,6 +3676,9 @@ void VK_GuiExecutor_SetClearColor( const float color[ 4 ] ) {
 bool VK_GuiExecutor_BeginFrame( void ) {
 	static bool loggedNotInitialized = false;
 	static bool loggedInitFailed = false;
+	// Failed submissions can leave an unsignaled fence or an unconsumed binary
+	// semaphore. Only a full device restart makes these handles reusable.
+	if ( vkCtx.presentationBlocked ) return false;
 	if ( vkExec.frameOpen ) {
 		return true;
 	}
@@ -3675,6 +3690,7 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 		return false;
 	}
 	if ( !VK_GuiExecutor_Init() ) {
+		R_DisplayPresentationFailed( RDP_INIT_FAILED );
 		if ( !loggedInitFailed ) {
 			loggedInitFailed = true;
 			common->Printf( "Vulkan: GUI executor init failed; frames skipped\n" );
@@ -3706,7 +3722,8 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 	vkExec.temporalSwapchainFormat = vkCtx.swapchainFormat;
 	// swapchain format changes (rare) invalidate the pipeline set
 	if ( vkExec.pipelineTargetFormat != vkCtx.swapchainFormat ) {
-		vkDeviceWaitIdle( vkCtx.device );
+		const VkResult idle = vkDeviceWaitIdle( vkCtx.device );
+		if ( idle != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_WAIT_FAILED, idle, "pipeline retirement" ); return false; }
 		for ( int i = 0; i < vkExec.numPipelines; i++ ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.pipelines[ i ].pipeline, NULL );
 		}
@@ -3754,6 +3771,10 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.postPipelines[i].pipeline, NULL );
 		}
 		vkExec.numPostPipelines = 0;
+		if ( vkExec.displayColorPipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.displayColorPipeline, NULL );
+			vkExec.displayColorPipeline = VK_NULL_HANDLE;
+		}
 		vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
 	}
 
@@ -3767,6 +3788,7 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 		&vkCtx.frameFences[ slot ], VK_TRUE, UINT64_MAX );
 	R_RendererMetrics_EndWaitPhase( RENDERER_WAIT_FRAME_FENCE, fenceWaitBegin );
 	if ( frameFenceResult != VK_SUCCESS ) {
+		VK_Device_BlockPresentation( RDP_WAIT_FAILED, frameFenceResult, "frame fence wait" );
 		common->Warning( "Vulkan: frame-slot %d fence wait failed (%d)", slot,
 			static_cast<int>( frameFenceResult ) );
 		return false;
@@ -3781,6 +3803,7 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 	// batches referenced; near-free, since the batch was submitted before the
 	// previous frame's submit
 	VK_Device_WaitUploadBatch();
+	if ( vkCtx.presentationBlocked ) return false;
 	VK_Device_FlushDeferredDestroys( slot );
 	if ( vkExec.numRetiredSets[ slot ] > 0 ) {
 		vkFreeDescriptorSets( vkCtx.device, vkExec.descriptorPool,
@@ -3794,7 +3817,7 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 	// VK_Device_PresentClearFrame, which nothing calls, so toggling vsync did
 	// nothing here until something else forced a rebuild. Do it before the
 	// acquire, where the old swapchain is not yet in use this frame.
-	if ( R_GetEffectiveSwapInterval() != vkCtx.swapInterval ) {
+	if ( VK_Device_RequestedSwapInterval() != vkCtx.swapInterval ) {
 		if ( !VK_Device_RecreateSwapchain() ) {
 			return false;
 		}
@@ -3815,6 +3838,8 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 		R_RendererMetrics_EndWaitPhase( RENDERER_WAIT_SWAPCHAIN_IMAGE, retryBegin );
 	}
 	if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR ) {
+		if ( res == VK_ERROR_DEVICE_LOST ) VK_Device_BlockPresentation( RDP_ACQUIRE_FAILED, res, "frame acquire" );
+		else R_DisplayPresentationFailed( RDP_ACQUIRE_FAILED, (int32_t)res );
 		return false;
 	}
 
@@ -3826,17 +3851,17 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 	// Reset/begin the command buffer BEFORE resetting the slot fence, and bail
 	// on failure (device-lost between the fence wait and here): recording the
 	// barriers below into a command buffer that was never begun is undefined
-	// behavior, and leaving the fence signaled on the failure path keeps the
-	// slot's "fence signaled == slot idle" invariant so the next frame does not
-	// deadlock. The acquired swapchain image is abandoned only on this already
-	// terminal device-lost path.
-	if ( vkResetCommandBuffer( cmd, 0 ) != VK_SUCCESS
-			|| vkBeginCommandBuffer( cmd, &cbbi ) != VK_SUCCESS ) {
-		common->Warning( "Vulkan: frame-slot %d command buffer begin failed", slot );
+	// behavior. Acquisition already signaled a semaphore, so even a recording
+	// failure requires a full restart before another frame can reuse this slot.
+	res = vkResetCommandBuffer( cmd, 0 );
+	if ( res == VK_SUCCESS ) res = vkBeginCommandBuffer( cmd, &cbbi );
+	if ( res != VK_SUCCESS ) {
+		VK_Device_BlockPresentation( RDP_RECORD_FAILED, res, "frame command begin" );
 		return false;
 	}
-	if ( vkResetFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ] ) != VK_SUCCESS ) {
-		common->Warning( "Vulkan: frame-slot %d fence reset failed", slot );
+	res = vkResetFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ] );
+	if ( res != VK_SUCCESS ) {
+		VK_Device_BlockPresentation( RDP_WAIT_FAILED, res, "frame fence reset" );
 		return false;
 	}
 	// The slot fence above is the sole retirement wait. Timestamp results are
@@ -3886,6 +3911,7 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 	vkExec.activePipelineTarget = VK_Exec_SwapchainPipelineTarget();
 	vkExec.frameOpen = true;
 	vkExec.acquireWaitPending = true;
+	vkExec.displayColorMapped = false;
 	VK_Exec_BeginMainRendering( true );
 
 	vkExec.vertexRings[ slot ].cursor = 0;
@@ -6449,7 +6475,133 @@ bool VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
 	return depthResolved;
 }
 
-bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixels ) {
+static bool VK_DisplayColorMapping_Failed( const char *reason ) {
+	if ( !vkExec.displayColorMappingWarned ) {
+		common->Warning( "Vulkan: r_brightness/r_gamma could not be applied (%s); keeping the uncorrected frame", reason );
+		vkExec.displayColorMappingWarned = true;
+	}
+	return false;
+}
+
+static VkPipeline VK_DisplayColorMapping_GetPipeline( void ) {
+	if ( vkExec.displayColorPipeline != VK_NULL_HANDLE ) {
+		return vkExec.displayColorPipeline;
+	}
+	if ( vkExec.displayColorFragModule == VK_NULL_HANDLE ) {
+		VkShaderModuleCreateInfo info;
+		memset( &info, 0, sizeof( info ) );
+		info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		info.codeSize = vk_display_color_mapping_frag_spv_size;
+		info.pCode = (const uint32_t *)vk_display_color_mapping_frag_spv;
+		if ( vkCreateShaderModule( vkCtx.device, &info, NULL,
+				&vkExec.displayColorFragModule ) != VK_SUCCESS ) {
+			return VK_NULL_HANDLE;
+		}
+	}
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vkExec.displayColorPipeline = VK_Exec_CreatePipeline(
+		vkExec.temporalResolveVertModule, vkExec.displayColorFragModule,
+		&vertexInput, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO,
+		vkExec.pipelineLayout, false, false, VK_Exec_SwapchainPipelineTarget() );
+	return vkExec.displayColorPipeline;
+}
+
+// Final display correction is deliberately independent of scene post effects.
+// Both native and shared GUI/overlay draws are already in the swapchain. The
+// neutral path must not allocate, copy, change draw state or quantize any pixel.
+static bool VK_DisplayColorMapping_Apply( void ) {
+	const float brightness = idMath::ClampFloat( 0.0f, 16.0f, r_brightness.GetFloat() );
+	const float gamma = Max( r_gamma.GetFloat(), 0.001f );
+	if ( vkExec.displayColorMapped || ( idMath::Fabs( brightness - 1.0f ) <= 0.0001f
+			&& idMath::Fabs( gamma - 1.0f ) <= 0.0001f ) ) {
+		return true;
+	}
+	if ( !vkExec.frameOpen || !vkCtx.swapchainTransferSrc ) {
+		return VK_DisplayColorMapping_Failed( "swapchain copy unavailable" );
+	}
+	if ( vkExec.temporalScenePendingComposite
+			&& !VK_TemporalPresentation_CompositePendingScene() ) {
+		return VK_DisplayColorMapping_Failed( "scene composition unavailable" );
+	}
+	if ( !VK_Exec_SetRenderTarget( NULL ) ) {
+		return VK_DisplayColorMapping_Failed( "swapchain target unavailable" );
+	}
+	const VkPipeline pipeline = VK_DisplayColorMapping_GetPipeline();
+	if ( pipeline == VK_NULL_HANDLE ) {
+		return VK_DisplayColorMapping_Failed( "display shader/pipeline unavailable" );
+	}
+	const int width = (int)vkCtx.swapchainExtent.width;
+	const int height = (int)vkCtx.swapchainExtent.height;
+	idImage *&source = vkExec.displayColorSourceImages[ vkExec.frameSlot ];
+	if ( source == NULL || !source->IsLoaded() ) {
+		idImageOpts opts;
+		opts.width = width; opts.height = height; opts.format = FMT_RGBA8;
+		opts.numLevels = 1; opts.numMSAASamples = 0; opts.isPersistant = true;
+		source = globalImages->ScratchImage( va( "_vkDisplayColorSource%d", vkExec.frameSlot ),
+			&opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	}
+	if ( source == NULL ) {
+		return VK_DisplayColorMapping_Failed( "display copy image unavailable" );
+	}
+	// Images and their deferred GPU retirement remain owned by the image
+	// manager. Per-slot copies are reused only after the executor's slot fence,
+	// including resize/restart and the explicitly retired screenshot resume.
+	if ( !source->IsLoaded()
+			|| !VK_Exec_CopyRender( source, 0, 0, width, height, 0, false ) ) {
+		return VK_DisplayColorMapping_Failed( "display framebuffer copy failed" );
+	}
+	const VkDescriptorSet sourceSet = VK_GuiExecutor_GetImageDescriptor( source->GetDeviceHandle() );
+	if ( sourceSet == VK_NULL_HANDLE || !vkExec.mainScopeOpen ) {
+		return VK_DisplayColorMapping_Failed( "display copy descriptor/scope unavailable" );
+	}
+	// A positive viewport follows Vulkan image-memory coordinates. The fragment
+	// shader reverses CopyRender's GL-oriented rows using exact texel fetches.
+	VkViewport viewport;
+	memset( &viewport, 0, sizeof( viewport ) );
+	viewport.width = (float)width; viewport.height = (float)height; viewport.maxDepth = 1.0f;
+	VkRect2D scissor;
+	memset( &scissor, 0, sizeof( scissor ) );
+	scissor.extent = vkCtx.swapchainExtent;
+	vkCmdSetViewport( vkExec.cmd, 0, 1, &viewport );
+	vkCmdSetScissor( vkExec.cmd, 0, 1, &scissor );
+	vkCmdSetDepthTestEnable( vkExec.cmd, VK_FALSE );
+	vkCmdSetDepthWriteEnable( vkExec.cmd, VK_FALSE );
+	vkCmdSetDepthCompareOp( vkExec.cmd, VK_COMPARE_OP_ALWAYS );
+	vkCmdSetCullMode( vkExec.cmd, VK_CULL_MODE_NONE );
+	vkCmdSetFrontFace( vkExec.cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetDepthBiasEnable( vkExec.cmd, VK_FALSE );
+	vkCmdSetStencilTestEnable( vkExec.cmd, VK_FALSE );
+	if ( vkCtx.depthBoundsSupported ) vkCmdSetDepthBoundsTestEnable( vkExec.cmd, VK_FALSE );
+	vkCmdBindPipeline( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+	vkCmdBindDescriptorSets( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		vkExec.pipelineLayout, 0, 1, &sourceSet, 0, NULL );
+	const float mapping[ 4 ] = { brightness, gamma, 0, 0 };
+	vkCmdPushConstants( vkExec.cmd, vkExec.pipelineLayout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( mapping ), mapping );
+	vkCmdDraw( vkExec.cmd, 3, 1, 0, 0 );
+	vkExec.displayColorMapped = true;
+	vkExec.displayColorMappingWarned = false;
+	return true;
+}
+
+/*
+====================
+VK_GuiExecutor_ReadPixels
+
+components is 3 (GL_RGB) or 4 (GL_RGBA). Both are needed: R_ReadTiledPixels
+reads GL_RGBA everywhere since the ES screenshot fix, because OpenGL ES
+guarantees only that pair for the default framebuffer. This entry point
+accepted GL_RGB alone until 2026-08-10, so every Vulkan screenshot after that
+change came back black with a warning -- the same silent-black failure the ES
+fix was written to cure, moved to a different backend.
+====================
+*/
+bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixels, int components ) {
+	if ( components != 3 && components != 4 ) {
+		return false;
+	}
 	if ( pixels == NULL || width <= 0 || height <= 0 || !VK_GuiExecutor_BeginFrame()
 			|| !vkCtx.swapchainTransferSrc ) {
 		return false;
@@ -6491,6 +6643,9 @@ bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixel
 				(int)vkCtx.swapchainFormat );
 		return false;
 	}
+	// Capture the same final pixels that ordinary presentation displays. A
+	// failed pass warns and leaves the complete original composition intact.
+	(void)VK_DisplayColorMapping_Apply();
 
 	const VkDeviceSize readbackBytes = (VkDeviceSize)width * (VkDeviceSize)height * 4;
 	VkBufferCreateInfo bci;
@@ -6542,35 +6697,46 @@ bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixel
 	const bool resumeAfterReadback = tr.takingScreenshot;
 	R_RendererMetrics_ResetGpuFrameTiming( "Vulkan synchronous screenshot readback" );
 	if ( !VK_GuiExecutor_SubmitFrame( !resumeAfterReadback ) ) {
-		vmaDestroyBuffer( vkCtx.allocator, readbackBuffer, readbackAllocation );
+		// Submit may have succeeded before present failed; device loss also
+		// does not prove no commands ran. Retire this buffer with the device.
+		VK_Device_DeferDestroy( VK_NULL_HANDLE, VK_NULL_HANDLE, readbackBuffer, readbackAllocation );
 		return false;
 	}
 	const VkResult readbackFenceResult = vkWaitForFences( vkCtx.device, 1,
 		&vkCtx.frameFences[ submittedSlot ], VK_TRUE, UINT64_MAX );
 	if ( readbackFenceResult != VK_SUCCESS ) {
+		VK_Device_BlockPresentation( RDP_WAIT_FAILED, readbackFenceResult, "readback fence wait" );
 		VK_GpuFrameTiming_SubmitFailed( submittedSlot );
 		common->Warning( "Vulkan: screenshot readback fence wait failed (%d)",
 			static_cast<int>( readbackFenceResult ) );
-		vmaDestroyBuffer( vkCtx.allocator, readbackBuffer, readbackAllocation );
+		VK_Device_DeferDestroy( VK_NULL_HANDLE, VK_NULL_HANDLE, readbackBuffer, readbackAllocation );
 		return false;
 	}
 	vmaInvalidateAllocation( vkCtx.allocator, readbackAllocation, 0, VK_WHOLE_SIZE );
 
 	const byte *source = (const byte *)allocationInfo.pMappedData;
 	byte *destination = (byte *)pixels;
-	const int destinationStride = ( width * 3 + 3 ) & ~3;
+	// GL pads rows to dword boundaries, and R_ReadTiledPixels indexes the
+	// result with exactly this stride
+	const int destinationStride = ( width * components + 3 ) & ~3;
 	for ( int row = 0; row < height; row++ ) {
 		const byte *sourceRow = source + (size_t)( height - 1 - row ) * (size_t)width * 4;
 		byte *destinationRow = destination + (size_t)row * (size_t)destinationStride;
 		for ( int column = 0; column < width; column++ ) {
 			const byte *sourcePixel = sourceRow + column * 4;
-			byte *destinationPixel = destinationRow + column * 3;
+			byte *destinationPixel = destinationRow + column * components;
 			destinationPixel[ 0 ] = sourcePixel[ bgra ? 2 : 0 ];
 			destinationPixel[ 1 ] = sourcePixel[ 1 ];
 			destinationPixel[ 2 ] = sourcePixel[ bgra ? 0 : 2 ];
+			if ( components == 4 ) {
+				// the swapchain is opaque; a captured alpha of 0 would make the
+				// whole shot transparent in any format that keeps the channel
+				destinationPixel[ 3 ] = 255;
+			}
 		}
-		if ( destinationStride > width * 3 ) {
-			memset( destinationRow + width * 3, 0, (size_t)( destinationStride - width * 3 ) );
+		if ( destinationStride > width * components ) {
+			memset( destinationRow + width * components, 0,
+					(size_t)( destinationStride - width * components ) );
 		}
 	}
 
@@ -6584,14 +6750,22 @@ bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixel
 		// fence: if the command-buffer reset/begin fails, the fence stays
 		// signaled so the next BeginFrame's fence wait on this slot cannot
 		// deadlock on a fence that will never be submitted.
-		if ( vkResetCommandBuffer( vkExec.cmd, 0 ) != VK_SUCCESS
-				|| vkBeginCommandBuffer( vkExec.cmd, &cbbi ) != VK_SUCCESS
-				|| vkResetFences( vkCtx.device, 1, &vkCtx.frameFences[ submittedSlot ] ) != VK_SUCCESS ) {
-			common->Warning( "Vulkan: failed to resume rendering after screenshot readback" );
+		VkResult resumed = vkResetCommandBuffer( vkExec.cmd, 0 );
+		if ( resumed == VK_SUCCESS ) resumed = vkBeginCommandBuffer( vkExec.cmd, &cbbi );
+		if ( resumed != VK_SUCCESS ) {
+			VK_Device_BlockPresentation( RDP_RECORD_FAILED, resumed, "readback command resume" );
+			return false;
+		}
+		resumed = vkResetFences( vkCtx.device, 1, &vkCtx.frameFences[ submittedSlot ] );
+		if ( resumed != VK_SUCCESS ) {
+			VK_Device_BlockPresentation( RDP_WAIT_FAILED, resumed, "readback fence reset" );
 			return false;
 		}
 		vkExec.frameOpen = true;
 		vkExec.mainScopeOpen = false;
+		// The captured composition was submitted and retired above. The clear
+		// starts a new composition on this acquired image, with fresh draw state.
+		vkExec.displayColorMapped = false;
 		// The screenshot path explicitly retired this same slot; start a fresh
 		// timing epoch for the real frame recorded after the crop.
 		VK_GpuFrameTiming_BeginFrame( vkExec.cmd, submittedSlot, tr.frameCount );
@@ -6601,7 +6775,7 @@ bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixel
 }
 
 static bool VK_GuiExecutor_SubmitFrame( bool present ) {
-	if ( !vkExec.frameOpen ) {
+	if ( vkCtx.presentationBlocked || !vkExec.frameOpen ) {
 		return false;
 	}
 	const int slot = vkExec.frameSlot;
@@ -6612,6 +6786,11 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 	// them execute before this frame samples the images, and this frame's fence
 	// then covers them for deferred-destroy retirement
 	VK_Device_FlushUploadBatch();
+	if ( vkCtx.presentationBlocked ) {
+		VK_GpuFrameTiming_SubmitFailed( slot );
+		vkExec.acquireWaitPending = false; vkExec.frameOpen = false;
+		return false;
+	}
 
 	VK_Exec_EndMainRendering();
 	VK_Exec_TransitionActiveTargetToSampled();
@@ -6638,7 +6817,13 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 	}
 
 	VK_GpuFrameTiming_EndFrame( cmd, slot );
-	vkEndCommandBuffer( cmd );
+	const VkResult ended = vkEndCommandBuffer( cmd );
+	if ( ended != VK_SUCCESS ) {
+		VK_GpuFrameTiming_SubmitFailed( slot );
+		vkExec.acquireWaitPending = false; vkExec.frameOpen = false;
+		VK_Device_BlockPresentation( RDP_RECORD_FAILED, ended, "frame command end" );
+		return false;
+	}
 
 	// Flush each ring's host-written prefix once, before the queue submit that
 	// consumes it, instead of once per allocation. vmaFlushAllocation rounds to
@@ -6652,7 +6837,10 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 				const VkResult flushResult = vmaFlushAllocation( vkCtx.allocator,
 						frameRings[ r ]->allocation, 0, (VkDeviceSize)frameRings[ r ]->cursor );
 				if ( flushResult != VK_SUCCESS ) {
-					common->Warning( "Vulkan: frame ring flush failed (%d)", (int)flushResult );
+					VK_GpuFrameTiming_SubmitFailed( slot );
+					vkExec.acquireWaitPending = false; vkExec.frameOpen = false;
+					VK_Device_BlockPresentation( RDP_SUBMIT_FAILED, flushResult, "frame ring flush" );
+					return false;
 				}
 			}
 		}
@@ -6681,31 +6869,19 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 	si.pCommandBufferInfos = &cmdInfo;
 	si.signalSemaphoreInfoCount = present ? 1 : 0;
 	si.pSignalSemaphoreInfos = present ? &signalInfo : NULL;
-	if ( vkQueueSubmit2( vkCtx.graphicsQueue, 1, &si, vkCtx.frameFences[ slot ] ) != VK_SUCCESS ) {
+	const VkResult submitted = vkQueueSubmit2( vkCtx.graphicsQueue, 1, &si, vkCtx.frameFences[ slot ] );
+	if ( submitted != VK_SUCCESS ) {
 		VK_GpuFrameTiming_SubmitFailed( slot );
 		VK_Exec_DiscardHDRReadback( slot );
-		// The slot fence was reset in BeginFrame; a failed submit never signals
-		// it, so a later vkWaitForFences on this slot (next BeginFrame, or a
-		// screenshot readback) would block forever. The failed submit enqueued
-		// nothing, so the reset fence is idle and can be replaced with a fresh
-		// signaled one. Swap through a temporary so a create failure leaves the
-		// old handle intact rather than a NULL handle. Also clear the frame-open
-		// state: the command buffer is already ended, so the next BeginFrame must
-		// start fresh rather than resume recording into it.
+		// OOM leaves acquisition unconsumed; device loss offers no guarantee
+		// about queued work. Do not synthesize a signaled fence or reuse either
+		// semaphore. The device latch guards all later waits and acquisitions.
 		vkExec.acquireWaitPending = false;
 		vkExec.frameOpen = false;
-		VkFenceCreateInfo fci;
-		memset( &fci, 0, sizeof( fci ) );
-		fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-		fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-		VkFence recoveredFence = VK_NULL_HANDLE;
-		if ( vkCreateFence( vkCtx.device, &fci, NULL, &recoveredFence ) == VK_SUCCESS ) {
-			vkDestroyFence( vkCtx.device, vkCtx.frameFences[ slot ], NULL );
-			vkCtx.frameFences[ slot ] = recoveredFence;
-		}
-		common->Warning( "Vulkan: frame submit failed on slot %d; recovered frame state", slot );
+		VK_Device_BlockPresentation( RDP_SUBMIT_FAILED, submitted, "frame submit" );
 		return false;
 	}
+	R_DisplayPresentationSubmitted();
 	vkExec.acquireWaitPending = false;
 	vkExec.frameOpen = false;
 	if ( !present ) {
@@ -6721,13 +6897,19 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 	pi.pSwapchains = &vkCtx.swapchain;
 	pi.pImageIndices = &imageIndex;
 	const VkResult res = vkQueuePresentKHR( vkCtx.graphicsQueue, &pi );
+	if ( res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR ) R_DisplayPresentationPresented();
+	else if ( res == VK_ERROR_OUT_OF_DATE_KHR ) R_DisplayPresentationFailed( RDP_PRESENT_FAILED, (int32_t)res );
+	else { VK_Device_BlockPresentation( RDP_PRESENT_FAILED, res, "frame present" ); return false; }
 	if ( res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR ) {
-		VK_Device_RecreateSwapchain();
+		const bool recreated = VK_Device_RecreateSwapchain();
+		return recreated && res == VK_SUBOPTIMAL_KHR;
 	}
 	return true;
 }
 
 bool VK_GuiExecutor_EndFrameAndPresent( void ) {
+	if ( vkCtx.presentationBlocked ) return false;
+	(void)VK_DisplayColorMapping_Apply();
 	return VK_GuiExecutor_SubmitFrame( true );
 }
 
@@ -11039,6 +11221,9 @@ static bool VK_ClassicGui_MapCull( rendererCullMode_t cull,
 
 static bool VK_ClassicGui_MapState( const rendererEvaluatedMaterialPass_t &pass,
 		bool inWorld, vkClassicGuiPassPlan_t &plan ) {
+	const bool alphaCoverage = pass.blend.sourceAlpha == RENDERER_BLEND_ONE &&
+		pass.blend.destinationAlpha == RENDERER_BLEND_ONE_MINUS_SRC_ALPHA &&
+		pass.blend.sourceColor == RENDERER_BLEND_SRC_ALPHA && pass.blend.destinationColor == RENDERER_BLEND_ONE_MINUS_SRC_ALPHA;
 	if ( pass.kind != ( inWorld ? RENDERER_MATERIAL_PASS_SURFACE
 			: RENDERER_MATERIAL_PASS_GUI )
 			|| ( inWorld
@@ -11055,8 +11240,8 @@ static bool VK_ClassicGui_MapState( const rendererEvaluatedMaterialPass_t &pass,
 			|| pass.vertexColor > RENDERER_VERTEX_COLOR_INVERSE_MODULATE
 			|| pass.blend.colorOperation != RENDERER_BLEND_OP_ADD
 			|| pass.blend.alphaOperation != RENDERER_BLEND_OP_ADD
-			|| pass.blend.sourceAlpha != pass.blend.sourceColor
-			|| pass.blend.destinationAlpha != pass.blend.destinationColor
+			|| (!alphaCoverage && (pass.blend.sourceAlpha != pass.blend.sourceColor
+				|| pass.blend.destinationAlpha != pass.blend.destinationColor))
 			|| pass.depth.testEnabled != inWorld
 			|| ( pass.depth.compareOperation != RENDERER_COMPARE_LESS_OR_EQUAL
 				&& pass.depth.compareOperation != RENDERER_COMPARE_EQUAL
@@ -11081,7 +11266,7 @@ static bool VK_ClassicGui_MapState( const rendererEvaluatedMaterialPass_t &pass,
 		return false;
 	}
 
-	plan.stateBits = sourceBits | destinationBits;
+	plan.stateBits = sourceBits | destinationBits | (alphaCoverage ? GLS_ALPHA_COVERAGE : 0);
 	if ( ( pass.colorWriteMask & RENDERER_COLOR_WRITE_RED ) == 0 ) {
 		plan.stateBits |= GLS_REDMASK;
 	}

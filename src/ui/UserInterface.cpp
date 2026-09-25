@@ -29,13 +29,25 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
+#ifndef ID_DEDICATED
+#include "../sys/sdl3/TextClipboard.h"
+#endif
+#include "../framework/NativeInputPublications.h"
 #include "ListGUILocal.h"
 #include "DeviceContext.h"
 #include "Window.h"
+#include "LegacyGuiImport.h"
 #include "UserInterfaceLocal.h"
+#include "UserInterfaceDeferred.h"
+#ifndef ID_DEDICATED
+#include "UserInterfaceRetained.h"
+#endif
 #include "ChatWindow.h"
+#include "EditWindow.h"
 #include "SimpleWindow.h"
 #include "../framework/Session.h"
+#include "RetainedUI.h"
+#include <limits>
 
 extern idCVar r_skipGuiShaders;		// 1 = don't render any gui elements on surfaces
 extern idCVar gui_debugScript;
@@ -45,7 +57,562 @@ idCVar ui_aspectCorrection( "ui_aspectCorrection", "1", CVAR_GUI | CVAR_ARCHIVE 
 idUserInterfaceManagerLocal	uiManagerLocal;
 idUserInterfaceManager *	uiManager = &uiManagerLocal;
 
+idUserInterfaceManaged::idUserInterfaceManaged( bool managed ) : refs( 1 ), allocationId( 0 ), managed( managed ) {
+	if ( managed ) {
+		uiManagerLocal.RegisterAllocation( this );
+	}
+}
+
+void idUserInterfaceManaged::MarkNativeInputClosing() noexcept {
+    openq4::NativeInputBeforeUiChange(allocationId);
+    nativeInputClosing = true;
+}
+void idUserInterfaceManaged::SetNativeInputChanging(bool changing) noexcept {
+    openq4::NativeInputBeforeUiChange(allocationId);
+    nativeInputChanging = changing;
+}
+idUserInterfaceManaged::~idUserInterfaceManaged() {
+    MarkNativeInputClosing();
+	if ( managed ) {
+		uiManagerLocal.UnregisterGui( this );
+	}
+}
+
+void idUserInterfaceManaged::RegisterLoaded() {
+	if ( managed ) {
+		uiManagerLocal.RegisterGui( this );
+	}
+}
+
+void idUserInterfaceManaged::RegisterDemo() {
+	if ( managed ) {
+		uiManagerLocal.RegisterDemoGui( this );
+	}
+}
+
+void idUserInterfaceManaged::RefreshThinking() {
+	if ( managed ) {
+		uiManagerLocal.UpdateAlwaysThinkGui( this );
+	}
+}
+
+bool UI_IsRetainedPath( const char *qpath ) {
+	if ( qpath == NULL ) { return false; }
+	const int length = idStr::Length( qpath );
+	return length >= 5 && idStr::Icmp( qpath + length - 5, ".q4ui" ) == 0;
+}
+
+idUserInterfaceManaged *UI_CreateForPath( const char *qpath, bool managed ) {
+	if ( UI_IsRetainedPath( qpath ) ) {
+#ifndef ID_DEDICATED
+		return new idUserInterfaceRetained( managed );
+#else
+		return NULL;
+#endif
+	}
+	return new idUserInterfaceLocal( managed );
+}
+
+bool UI_DispatchApplicationActions( idUserInterface *gui, const char *command, bool &closeRequested ) {
+	return uiManagerLocal.DispatchApplicationActions( gui, command, closeRequested );
+}
+
+std::uint64_t UI_NextTextLifetime() {
+	// Engine-thread confined; never reset on manager or renderer shutdown.
+	static std::uint64_t next = 0;
+	if (next == (std::numeric_limits<std::uint64_t>::max)()) return 0;
+	return ++next;
+}
+
+openq4::ui::TextBrokerContext UI_QueryTextContext(idUserInterface* current,
+	std::uint64_t nativeWindow, std::uint64_t nativeSession) {
+	return uiManagerLocal.QueryTextContext(current,nativeWindow,nativeSession);
+}
+
+uiTextDeliveryResult_t UI_DeliverTextInput(idUserInterface* current,
+	std::uint64_t nativeWindow, std::uint64_t nativeSession,
+	const openq4::ui::TextBrokerContext& authorizedContext,
+	const openq4::ui::TextBrokerDelivery& delivery) {
+	return uiManagerLocal.DeliverTextInput(current,nativeWindow,nativeSession,authorizedContext,delivery);
+}
+
+openq4::ui::TextBrokerContext idUserInterfaceManagerLocal::QueryTextContext(idUserInterface* current,
+	std::uint64_t nativeWindow, std::uint64_t nativeSession) {
+#ifdef ID_DEDICATED
+	(void)current; (void)nativeWindow; (void)nativeSession;
+	return {};
+#else
+	if (textBoundaryActive || nativeBoundaryActive) { textBoundaryFailed = true; if(nativeBoundaryActive)nativeBoundaryFailed=true; return {}; }
+	if (!current || !nativeWindow || !nativeSession) return {};
+	textBoundaryActive = true; textBoundaryFailed = false;
+	struct Guard { bool& active; ~Guard() { active = false; } } guard{textBoundaryActive};
+	try {
+		for (int i = 0; i < allocations.Num(); ++i) {
+			if (allocations[i] != current || !allocations[i]->allocationId) continue;
+			const auto allocation = allocations[i]->allocationId;
+			const auto result = allocations[i]->QueryTextContext(allocation,nativeWindow,nativeSession);
+			if (textBoundaryFailed) return {};
+			// Refresh may invalidate membership. Do not dereference a saved pointer.
+			for (int j = 0; j < allocations.Num(); ++j)
+				if (allocations[j] == current && allocations[j]->allocationId == allocation) return result;
+			return {};
+		}
+	} catch (...) { return {}; }
+	return {};
+#endif
+}
+
+uiTextDeliveryResult_t idUserInterfaceManagerLocal::DeliverTextInput(idUserInterface* current,
+	std::uint64_t nativeWindow, std::uint64_t nativeSession,
+	const openq4::ui::TextBrokerContext& authorizedContext,
+	const openq4::ui::TextBrokerDelivery& delivery) {
+#ifdef ID_DEDICATED
+	(void)current; (void)nativeWindow; (void)nativeSession; (void)authorizedContext; (void)delivery;
+	return {openq4::ui::TextDeliveryOutcome::Rejected,{},"GUI text delivery is unavailable in a dedicated server"};
+#else
+	using namespace openq4::ui;
+	uiTextDeliveryResult_t result;
+	if (textBoundaryActive || nativeBoundaryActive) {
+		textBoundaryFailed = true; if(nativeBoundaryActive)nativeBoundaryFailed=true; result.diagnostic = "Reentrant GUI text delivery"; return result;
+	}
+	if (!current || !nativeWindow || !nativeSession || !delivery.token || !delivery.sequence || !delivery.target.allocation) {
+		result.diagnostic = "Invalid GUI text delivery identity"; return result;
+	}
+	textBoundaryActive = true; textBoundaryFailed = false;
+	struct Guard { bool& active; ~Guard() { active = false; } } guard{textBoundaryActive};
+	try {
+		// Freeze the authorized context and payload before callbacks can refresh
+		// resources. Native session and edit session are different identities.
+		const TextBrokerContext expected = authorizedContext;
+		if (expected.route != TextBrokerRoute::Retained || !expected.editor || *expected.editor != delivery.target) {
+			result.diagnostic = "GUI text authorization does not match its delivery"; return result;
+		}
+		if (!ValidateTextInputEvent(delivery.input,result.diagnostic)) return result;
+		const TextBrokerDelivery request = delivery;
+		const auto resolve = [&]() -> idUserInterfaceManaged* {
+			for (int i = 0; i < allocations.Num(); ++i)
+				if (allocations[i] == current && allocations[i]->allocationId == request.target.allocation) return allocations[i];
+			return NULL;
+		};
+		auto* gui = resolve();
+		if (!gui) { result.diagnostic = "GUI text allocation is no longer current"; return result; }
+		result.context = gui->QueryTextContext(request.target.allocation,nativeWindow,nativeSession);
+		gui = resolve();
+		if (textBoundaryFailed || !gui) {
+			result.context = {}; result.diagnostic = "GUI text query invalidated its owner"; return result;
+		}
+		if (result.context != expected) { result.diagnostic = "GUI text editor identity changed"; return result; }
+		const bool applied = gui->ApplyTextInput(expected,request.input,result.diagnostic);
+		gui = resolve();
+		if (textBoundaryFailed || !gui) {
+			result.context = {}; result.diagnostic = "GUI text delivery invalidated its owner"; return result;
+		}
+		result.context = gui->QueryTextContext(request.target.allocation,nativeWindow,nativeSession);
+		if (textBoundaryFailed || !resolve()) {
+			result.context = {}; result.diagnostic = "GUI text receipt invalidated its owner"; return result;
+		}
+		if (applied) result.outcome = result.context.editor && result.context.editor->revision == request.target.revision ?
+			TextDeliveryOutcome::AppliedNoChange : TextDeliveryOutcome::AppliedChanged;
+		// Complete() checks this actual receipt; never relabel a new editor as old.
+	} catch (...) { result.context = {}; result.diagnostic = "GUI text boundary failed"; }
+	return result;
+#endif
+}
+
+
+// Private native collection owner boundary. All manager re-resolution happens
+// outside backend method stacks; pure publication and teardown allocate nothing.
 namespace {
+struct NativeOwnerBoundaryScope {
+    bool& active;
+    ~NativeOwnerBoundaryScope() { active=false; }
+};
+void NativeOwnerDiagnostic(std::string& error,const char* message) noexcept {
+    try {error=message;} catch (...) {error.clear();}
+}
+}
+openq4::ui::NativeTextPresence idUserInterfaceManagerLocal::NativeTextPresence(openq4::ui::NativeTextIdentity native,
+    const openq4::ui::TextEditorIdentity& owner) const noexcept {
+    using Presence=openq4::ui::NativeTextPresence;
+    if (std::this_thread::get_id()!=nativePresenceThread || nativeBoundaryActive || textBoundaryActive ||
+        clipboardBoundaryActive || applicationPumpDepth || !native.document || !native.editorLease ||
+        !owner.allocation || owner.allocation>nextAllocationId || !owner.backend || !owner.document ||
+        !owner.modal || !owner.window || !owner.session || !owner.revision || owner.control.empty() ||
+        owner.control.size()>128 || owner.control.find('\0')!=std::string::npos) return Presence::BusyOrUnknown;
+#ifdef ID_DEDICATED
+    return Presence::BusyOrUnknown;
+#else
+    for (int i=0;i<allocations.Num();++i)
+        if (allocations[i]->allocationId==owner.allocation) return (allocations[i]->nativeInputClosing || allocations[i]->nativeInputChanging) ? Presence::BusyOrUnknown : allocations[i]->QueryNativeTextPresence(native,owner);
+    return Presence::AbsentOriginal;
+#endif
+}
+bool idUserInterfaceManagerLocal::QueryNativeInputAllocation(std::uintptr_t current,std::uint64_t& out) const noexcept {
+    if (std::this_thread::get_id()!=nativePresenceThread || nativeBoundaryActive || textBoundaryActive ||
+        clipboardBoundaryActive || applicationPumpDepth || !current) return false;
+    for (int i=0;i<allocations.Num();++i) {
+        const auto* allocation=allocations[i];
+        if (reinterpret_cast<std::uintptr_t>(allocation)==current && allocation->allocationId && !(allocation->nativeInputClosing || allocation->nativeInputChanging)) {
+            out=allocation->allocationId;return true;
+        }
+    }
+    return false;
+}
+bool openq4::UI_QueryNativeInputAllocation(std::uintptr_t current,std::uint64_t& out) noexcept {
+    return uiManagerLocal.QueryNativeInputAllocation(current,out);
+}
+bool idUserInterfaceManagerLocal::NativeTextEnter() noexcept {
+    if(nativeBoundaryActive || textBoundaryActive || clipboardBoundaryActive) {
+        nativeBoundaryFailed=true;
+        if(textBoundaryActive)textBoundaryFailed=true;
+        if(clipboardBoundaryActive)clipboardBoundaryFailed=true;
+        return false;
+    }
+    nativeBoundaryActive=true;nativeBoundaryFailed=false;return true;
+}
+idUserInterfaceManaged* idUserInterfaceManagerLocal::NativeTextResolve(uiNativeTextRouteProbe_t probe,void* context,
+    const openq4::ui::TextEditorIdentity& owner) const noexcept {
+#ifdef ID_DEDICATED
+    (void)probe;(void)context;(void)owner;return nullptr;
+#else
+    if(!probe || !owner.allocation || !owner.window)return nullptr;
+    const auto route=probe(context);
+    if(!route.current || !route.inputAllowed || route.window!=owner.window)return nullptr;
+    for(int i=0;i<allocations.Num();++i)
+        if(allocations[i]==route.current && allocations[i]->allocationId==owner.allocation && !allocations[i]->nativeInputClosing && !allocations[i]->nativeInputChanging)return allocations[i];
+    return nullptr;
+#endif
+}
+bool idUserInterfaceManagerLocal::NativeTextCheck(uiNativeTextRouteProbe_t probe,void* context,
+    const openq4::ui::NativeTextEditorBarrier& expected) const noexcept {
+    if(nativeBoundaryFailed)return false;
+    auto* owner=NativeTextResolve(probe,context,expected.editor);
+    return owner && owner->CurrentNativeText(expected);
+}
+bool idUserInterfaceManagerLocal::NativeTextCurrent(uiNativeTextRouteProbe_t probe,void* context,
+    const openq4::ui::NativeTextEditorBarrier& expected) noexcept {
+    if(!NativeTextEnter())return false;
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    return NativeTextCheck(probe,context,expected);
+}
+bool idUserInterfaceManagerLocal::NativeTextPublishSettlement(uiNativeTextRouteProbe_t probe,void* context,
+    openq4::ui::Interaction::NativeSettlement& prepared,openq4::ui::NativeTextEditorReceipt& out) noexcept {
+#ifdef ID_DEDICATED
+    (void)probe;(void)context;(void)prepared;(void)out;return false;
+#else
+    if(!NativeTextEnter())return false;
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    const auto& expected=prepared.Receipt().before;
+    if(!NativeTextCheck(probe,context,expected))return false;
+    auto* owner=NativeTextResolve(probe,context,expected.editor);
+    return owner && owner->PublishNativeTextSettlement(prepared,out);
+#endif
+}
+bool idUserInterfaceManagerLocal::NativeTextRetireExact(openq4::ui::NativeTextIdentity native,
+    const openq4::ui::TextEditorIdentity& owner) noexcept {
+    openq4::NativeInputBeforeUiChange(owner.allocation,owner.backend);
+    // Retirement is permitted inside a failed boundary. Poison its in-flight
+    // receipt first, then touch only the original registered lease without any
+    // resource preparation, host observation or current-route requirement.
+    if(nativeBoundaryActive)nativeBoundaryFailed=true;
+    if(textBoundaryActive)textBoundaryFailed=true;
+    if(clipboardBoundaryActive)clipboardBoundaryFailed=true;
+#ifdef ID_DEDICATED
+    (void)native;(void)owner;return false;
+#else
+    if(!owner.allocation || !native.document || !native.editorLease)return false;
+    for(int i=0;i<allocations.Num();++i)
+        if(allocations[i]->allocationId==owner.allocation) {
+            if(allocations[i]->nativeInputClosing || allocations[i]->nativeInputChanging)return false;
+            return allocations[i]->RetireNativeTextExact(native,owner);
+        }
+    return false;
+#endif
+}
+
+bool idUserInterfaceManagerLocal::NativeTextAttach(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::TextEditorIdentity& owner, openq4::ui::NativeTextIdentity native, openq4::ui::NativeTextEditorBarrier& out, std::string& error) {
+    openq4::NativeInputBeforeUiChange(owner.allocation,owner.backend);
+    if(!NativeTextEnter()){NativeOwnerDiagnostic(error,"Reentrant native GUI owner boundary");return false;}
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    try {
+        const auto frozen=owner;const auto nativeCopy=native;
+        openq4::ui::NativeTextEditorBarrier candidate;
+        const bool ready=[&]{auto* backend=NativeTextResolve(probe,context,frozen);return backend && backend->PrepareNativeText(frozen);}();
+        if(!ready || nativeBoundaryFailed)return false;
+        const bool accepted=[&]{auto* backend=NativeTextResolve(probe,context,frozen);return backend && backend->AttachNativeText(frozen,nativeCopy,candidate,error);}();
+        if(!accepted || nativeBoundaryFailed || !NativeTextCheck(probe,context,candidate))return false;
+        out=std::move(candidate);return true;
+    } catch (...) {NativeOwnerDiagnostic(error,"Native GUI owner allocation or callback failed");return false;}
+}
+
+bool idUserInterfaceManagerLocal::NativeTextRefresh(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, openq4::ui::NativeTextEditorView& out, std::string& error) {
+    if(!NativeTextEnter()){NativeOwnerDiagnostic(error,"Reentrant native GUI owner boundary");return false;}
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    try {
+        const auto frozen=expected;
+        openq4::ui::NativeTextEditorView candidate;
+        const bool ready=[&]{auto* backend=NativeTextResolve(probe,context,frozen.editor);return backend && backend->PrepareNativeText(frozen.editor);}();
+        if(!ready || nativeBoundaryFailed)return false;
+        const bool accepted=[&]{auto* backend=NativeTextResolve(probe,context,frozen.editor);return backend && backend->RefreshNativeText(frozen,candidate,error);}();
+        if(!accepted || nativeBoundaryFailed || !NativeTextCheck(probe,context,candidate.barrier))return false;
+        if(candidate.barrier!=frozen)return false;out=std::move(candidate);return true;
+    } catch (...) {NativeOwnerDiagnostic(error,"Native GUI owner allocation or callback failed");return false;}
+}
+
+bool idUserInterfaceManagerLocal::NativeTextBegin(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, const openq4::ui::NativeTextCollection& collection, openq4::ui::NativeTextEditorBarrier& out, std::string& error) {
+    if(!NativeTextEnter()){NativeOwnerDiagnostic(error,"Reentrant native GUI owner boundary");return false;}
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    try {
+        const auto frozen=expected;const auto collectionCopy=collection;
+        openq4::ui::NativeTextEditorBarrier candidate;
+        if(!NativeTextCheck(probe,context,frozen))return false;
+        const bool accepted=[&]{auto* backend=NativeTextResolve(probe,context,frozen.editor);return backend && backend->BeginNativeText(frozen,collectionCopy,candidate,error);}();
+        if(!accepted || nativeBoundaryFailed || !NativeTextCheck(probe,context,candidate))return false;
+        out=std::move(candidate);return true;
+    } catch (...) {NativeOwnerDiagnostic(error,"Native GUI owner allocation or callback failed");return false;}
+}
+
+bool idUserInterfaceManagerLocal::NativeTextApply(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, const openq4::ui::NativeTextOffer& offer, openq4::ui::NativeTextEditorReceipt& out, std::string& error) {
+    if(!NativeTextEnter()){NativeOwnerDiagnostic(error,"Reentrant native GUI owner boundary");return false;}
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    try {
+        const auto frozen=expected;const auto offerCopy=offer;
+        openq4::ui::NativeTextEditorReceipt candidate;
+        if(!NativeTextCheck(probe,context,frozen))return false;
+        const bool accepted=[&]{auto* backend=NativeTextResolve(probe,context,frozen.editor);return backend && backend->ApplyNativeText(frozen,offerCopy,candidate,error);}();
+        if(!accepted || nativeBoundaryFailed || !NativeTextCheck(probe,context,candidate.after))return false;
+        out=std::move(candidate);return true;
+    } catch (...) {NativeOwnerDiagnostic(error,"Native GUI owner allocation or callback failed");return false;}
+}
+
+bool idUserInterfaceManagerLocal::NativeTextComplete(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, const openq4::ui::NativeTextCollection& collection, openq4::ui::NativeTextEditorBarrier& out, std::string& error) {
+    if(!NativeTextEnter()){NativeOwnerDiagnostic(error,"Reentrant native GUI owner boundary");return false;}
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    try {
+        const auto frozen=expected;const auto collectionCopy=collection;
+        openq4::ui::NativeTextEditorBarrier candidate;
+        if(!NativeTextCheck(probe,context,frozen))return false;
+        const bool accepted=[&]{auto* backend=NativeTextResolve(probe,context,frozen.editor);return backend && backend->CompleteNativeText(frozen,collectionCopy,candidate,error);}();
+        if(!accepted || nativeBoundaryFailed || !NativeTextCheck(probe,context,candidate))return false;
+        out=std::move(candidate);return true;
+    } catch (...) {NativeOwnerDiagnostic(error,"Native GUI owner allocation or callback failed");return false;}
+}
+
+std::unique_ptr<openq4::ui::Interaction::NativeSettlement> idUserInterfaceManagerLocal::NativeTextPrepareSettlement(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, std::string& error) {
+#ifdef ID_DEDICATED
+    (void)probe;(void)context;(void)expected;(void)error;return nullptr;
+#else
+    if(!NativeTextEnter()){NativeOwnerDiagnostic(error,"Reentrant native GUI owner boundary");return nullptr;}
+    NativeOwnerBoundaryScope scope{nativeBoundaryActive};
+    try {
+        const auto frozen=expected;
+        std::unique_ptr<openq4::ui::Interaction::NativeSettlement> candidate;
+        if(!NativeTextCheck(probe,context,frozen))return nullptr;
+        const bool accepted=[&]{auto* backend=NativeTextResolve(probe,context,frozen.editor);return backend && (candidate=backend->PrepareNativeTextSettlement(frozen,error)) != nullptr;}();
+        if(!accepted || nativeBoundaryFailed || !NativeTextCheck(probe,context,frozen))return nullptr;
+        return candidate;
+    } catch (...) {NativeOwnerDiagnostic(error,"Native GUI owner allocation or callback failed");return nullptr;}
+#endif
+}
+
+bool UI_NativeTextCurrent(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected) noexcept {
+    return uiManagerLocal.NativeTextCurrent(probe,context,expected);
+}
+
+bool UI_NativeTextPublishSettlement(uiNativeTextRouteProbe_t probe,void* context, openq4::ui::Interaction::NativeSettlement& prepared,openq4::ui::NativeTextEditorReceipt& out) noexcept {
+    return uiManagerLocal.NativeTextPublishSettlement(probe,context,prepared,out);
+}
+
+bool UI_NativeTextAttach(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::TextEditorIdentity& owner, openq4::ui::NativeTextIdentity native, openq4::ui::NativeTextEditorBarrier& out, std::string& error) {
+    return uiManagerLocal.NativeTextAttach(probe,context,owner,native,out,error);
+}
+
+bool UI_NativeTextRefresh(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, openq4::ui::NativeTextEditorView& out, std::string& error) {
+    return uiManagerLocal.NativeTextRefresh(probe,context,expected,out,error);
+}
+
+bool UI_NativeTextBegin(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, const openq4::ui::NativeTextCollection& collection, openq4::ui::NativeTextEditorBarrier& out, std::string& error) {
+    return uiManagerLocal.NativeTextBegin(probe,context,expected,collection,out,error);
+}
+
+bool UI_NativeTextApply(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, const openq4::ui::NativeTextOffer& offer, openq4::ui::NativeTextEditorReceipt& out, std::string& error) {
+    return uiManagerLocal.NativeTextApply(probe,context,expected,offer,out,error);
+}
+
+bool UI_NativeTextComplete(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, const openq4::ui::NativeTextCollection& collection, openq4::ui::NativeTextEditorBarrier& out, std::string& error) {
+    return uiManagerLocal.NativeTextComplete(probe,context,expected,collection,out,error);
+}
+
+std::unique_ptr<openq4::ui::Interaction::NativeSettlement> UI_NativeTextPrepareSettlement(uiNativeTextRouteProbe_t probe,void* context, const openq4::ui::NativeTextEditorBarrier& expected, std::string& error) {
+    return uiManagerLocal.NativeTextPrepareSettlement(probe,context,expected,error);
+}
+
+openq4::ui::NativeTextPresence UI_NativeTextPresence(openq4::ui::NativeTextIdentity native,
+    const openq4::ui::TextEditorIdentity& owner) noexcept {
+    return uiManagerLocal.NativeTextPresence(native,owner);
+}
+bool UI_NativeTextRetireExact(openq4::ui::NativeTextIdentity native,const openq4::ui::TextEditorIdentity& owner) noexcept {
+    return uiManagerLocal.NativeTextRetireExact(native,owner);
+}
+
+bool idUserInterfaceManagerLocal::DispatchApplicationActions( idUserInterface *gui, const char *command, bool &closeRequested ) {
+	closeRequested = false;
+#ifdef ID_DEDICATED
+	for (int i = 0; i < allocations.Num(); ++i) {
+		if (allocations[i] == gui) return allocations[i]->DispatchApplicationActions(command,closeRequested);
+	}
+	return false;
+#else
+	using namespace openq4::ui;
+	if (clipboardBoundaryActive || nativeBoundaryActive) { clipboardBoundaryFailed = true; if(nativeBoundaryActive)nativeBoundaryFailed=true; return true; }
+	unsigned long long allocation = 0;
+	for (int i = 0; i < allocations.Num(); ++i) if (allocations[i] == gui) { allocation = allocations[i]->allocationId; break; }
+	if (!allocation) return false;
+	// command may point into the backend being replaced by the native callback.
+	const std::string marker = command ? command : "";
+	auto resolve = [&]() -> idUserInterfaceManaged* {
+		for (int i = 0; i < allocations.Num(); ++i)
+			if (allocations[i] == gui && allocations[i]->allocationId == allocation) return allocations[i];
+		return nullptr;
+	};
+	clipboardBoundaryActive = true; clipboardBoundaryFailed = false;
+	struct Guard { bool& active; ~Guard() { active = false; } } guard{clipboardBoundaryActive};
+	bool handled = false;
+	try {
+		for (unsigned count = 0; count <= 256; ++count) {
+			auto* owner = resolve(); if (!owner || clipboardBoundaryFailed) { closeRequested = false; return true; }
+			handled = owner->DispatchApplicationActions(marker.c_str(),closeRequested);
+			owner = resolve();
+			if (!owner || clipboardBoundaryFailed) { closeRequested = false; return true; }
+			if (!handled || closeRequested) return handled;
+			uiClipboardRequest_t request;
+			if (count == 256 || !owner->TakeClipboardRequest(marker.c_str(),request)) return handled;
+			// All following work uses copied values. No backend method is on the
+			// stack when clipboard access can pump/re-enter or replace that backend.
+			uiNumberEditorSnapshot_t before; std::string error;
+			auto query = [&](uiNumberEditorSnapshot_t& out) {
+				auto* live = resolve();
+				if (!live || clipboardBoundaryFailed || !live->QueryClipboardEditor(out,error)) return false;
+				return !clipboardBoundaryFailed && resolve() && out.target == request.target &&
+					out.target.backend && out.target.document && out.target.modal && !out.target.control.empty() &&
+					out.target.edit.session && out.target.edit.revision && out.editor.identity == out.target.edit &&
+					out.editor.active && !out.editor.conflict && !out.editor.composition;
+			};
+			if (!query(before)) continue;
+			const auto& state = before.editor.state;
+			TextInputEvent checked;
+			if (!MakeTextInputCommit(state.text,checked,error) || state.anchor > state.text.size() || state.caret > state.text.size()) continue;
+			const auto boundary = [&](std::size_t offset) {
+				return offset == state.text.size() || (static_cast<unsigned char>(state.text[offset]) & 0xc0) != 0x80;
+			};
+			if (!boundary(state.anchor) || !boundary(state.caret)) continue;
+			const auto first = (std::min)(state.anchor,state.caret), last = (std::max)(state.anchor,state.caret);
+			const std::string selection = state.text.substr(first,last-first);
+			if (!MakeTextInputCommit(selection,checked,error)) continue;
+			if (request.operation != uiClipboardOperation_t::Copy && request.operation != uiClipboardOperation_t::Cut &&
+				request.operation != uiClipboardOperation_t::Paste) continue;
+			std::string paste; bool succeeded = true;
+			NumberEditNotice notice = NumberEditNotice::None;
+			try {
+				if (request.operation == uiClipboardOperation_t::Paste) {
+					succeeded = openq4::SDL3_ReadTextClipboard(paste,error);
+					if (!succeeded) notice = NumberEditNotice::ClipboardReadFailed;
+				} else if (!selection.empty()) {
+					succeeded = openq4::SDL3_WriteTextClipboard(selection,error);
+					if (!succeeded) notice = NumberEditNotice::ClipboardWriteFailed;
+				}
+			} catch (...) {
+				succeeded = false;
+				notice = request.operation == uiClipboardOperation_t::Paste ? NumberEditNotice::ClipboardReadFailed : NumberEditNotice::ClipboardWriteFailed;
+			}
+			uiNumberEditorSnapshot_t after;
+			if (!query(after) || after.editor.state.text != state.text || after.editor.state.anchor != state.anchor ||
+				after.editor.state.caret != state.caret) continue;
+			// Empty Paste is a successful no-op, never deletion of the selection.
+			if (succeeded && ((request.operation == uiClipboardOperation_t::Cut && !selection.empty()) ||
+				(request.operation == uiClipboardOperation_t::Paste && !paste.empty()))) {
+				if (!MakeTextInputCommit(paste,checked,error)) notice = NumberEditNotice::ClipboardRejected;
+				else if (auto* live = resolve()) {
+					if (live->ReplaceClipboardSelection(request.target,paste,error)) continue;
+					notice = NumberEditNotice::ClipboardRejected;
+				}
+			}
+			// A refusal reports only a fixed localized category to the same live
+			// editor. Native diagnostics never become authored field contents.
+			if (!clipboardBoundaryFailed) if (auto* live = resolve()) live->SetClipboardNotice(request.target,notice,error);
+		}
+	} catch (...) { closeRequested = false; return true; }
+	return handled;
+#endif
+}
+
+void UI_PumpApplicationActions( UI_ApplicationCommandCallback callback, void *context, idUserInterface *only ) {
+	uiManagerLocal.PumpApplicationActions( callback, context, only );
+}
+
+void idUserInterfaceManagerLocal::PumpApplicationActions( UI_ApplicationCommandCallback callback, void *context, idUserInterface *only ) {
+	// Nested global pumps cannot replay the current batch. A targeted lifecycle
+	// drain may run inside a close callback, before an outgoing test GUI is freed.
+	if ( callback == NULL || ( applicationPumpDepth != 0 && only == NULL ) || applicationPumpDepth >= 8 ) return;
+	if ( applicationPumpDepth == 0 ) applicationPumpBudget = 256;
+	struct DepthScope {
+		int &depth;
+		explicit DepthScope( int &value ) : depth( value ) { ++depth; }
+		~DepthScope() { --depth; }
+	} scope( applicationPumpDepth );
+	idList<idUserInterfaceManaged*> ready;
+	idList<unsigned long long> identities;
+	idList<idStr> commands;
+	for ( int i = 0; i < allocations.Num() && ready.Num() < applicationPumpBudget; ++i ) {
+		idUserInterfaceManaged *gui = allocations[ i ];
+		if ( only != NULL && only != gui ) continue;
+		const char *command = gui->PendingApplicationCommand();
+		if ( command == NULL || command[ 0 ] == '\0' ) continue;
+		ready.Append( gui );
+		identities.Append( gui->allocationId );
+		commands.Append( idStr( command ) );
+	}
+	for ( int i = 0; i < ready.Num() && applicationPumpBudget > 0; ++i ) {
+		idUserInterfaceManaged *gui = ready[ i ];
+		if ( allocations.Find( gui ) == NULL || gui->allocationId != identities[ i ] ) continue;
+		--applicationPumpBudget;
+		callback( gui, commands[ i ].c_str(), context );
+		// The callback may delete this or any peer, including reusing its address.
+		// Never retain a registry iterator or dereference the owner afterward.
+	}
+}
+
+namespace {
+
+// Resolve presentation aliases without parser fixup. GetWinVarByName(..., true)
+// can disable a root expression or allocate a gui:: variable as a side effect.
+// External value queries must do neither, including when used by diagnostics.
+static idWinVar *FindPresentationVariable( idWindow *desktop, const char *name ) {
+	if ( desktop == NULL || name == NULL || name[ 0 ] == '\0' ) {
+		return NULL;
+	}
+	idStr key = name;
+	const int separator = key.Find( "::" );
+	if ( separator < 0 ) {
+		return desktop->GetWinVarByName( key.c_str(), false );
+	}
+	if ( separator == 0 || separator + 2 == key.Length() ) {
+		return NULL;
+	}
+	const idStr element = key.Left( separator );
+	key = key.Right( key.Length() - separator - 2 );
+	if ( key.Find( "::" ) >= 0 ) {
+		return NULL;
+	}
+	drawWin_t *target = desktop->FindChildByName( element.c_str() );
+	if ( target == NULL ) {
+		return NULL;
+	}
+	if ( target->win != NULL ) {
+		return target->win->GetWinVarByName( key.c_str(), false );
+	}
+	return target->simp != NULL ? target->simp->GetWinVarByName( key.c_str() ) : NULL;
+}
 
 static void SetStateRectangleComponents( idUserInterfaceLocal *gui, const char *prefix, const idRectangle &rect ) {
 	if ( gui == NULL || prefix == NULL ) {
@@ -60,6 +627,45 @@ static void SetStateRectangleComponents( idUserInterfaceLocal *gui, const char *
 
 }
 
+bool idUserInterfaceLocal::GetPresentationValue( const char *name, idStr &value ) const {
+	idWinVar *variable = FindPresentationVariable( desktop, name );
+	if ( variable == NULL ) {
+		return false;
+	}
+	value = variable->c_str();
+	return true;
+}
+
+bool idUserInterfaceLocal::SetPresentationValue( const char *name, const char *value, bool overrideExpression ) {
+	if ( value == NULL ) {
+		return false;
+	}
+	idWinVar *variable = FindPresentationVariable( desktop, name );
+	if ( variable == NULL ) {
+		return false;
+	}
+	variable->Set( value );
+	if ( overrideExpression ) {
+		variable->SetEval( false );
+	}
+	return true;
+}
+
+bool idUserInterfaceLocal::GetTextInputState( idRectangle &area, float &cursorOffset ) const {
+	if ( desktop == NULL ) {
+		return false;
+	}
+	idEditWindow *edit = dynamic_cast<idEditWindow *>( desktop->GetFocusedChild() );
+	idRectangle candidateArea;
+	float candidateOffset = 0.0f;
+	if ( edit == NULL || !edit->GetTextInputState( candidateArea, candidateOffset ) ) {
+		return false;
+	}
+	area = candidateArea;
+	cursorOffset = candidateOffset;
+	return true;
+}
+
 /*
 ===============================================================================
 
@@ -69,6 +675,8 @@ static void SetStateRectangleComponents( idUserInterfaceLocal *gui, const char *
 */
 
 void idUserInterfaceManagerLocal::Init() {
+	RetainedUI_Init();
+	cmdSystem->AddCommand("ui_observeLegacy",UI_ObserveLegacy,CMD_FL_SYSTEM,"observe exact legacy parse/fixup/alpha decisions without activation");
 	cmdSystem->AddCommand("chatHistory", idChatWindow::History_f, CMD_FL_SYSTEM, "browse open chat: up, down, top, bottom, status");
 	screenRect = idRectangle(0, 0, 640, 480);
 	dc.Init();
@@ -76,17 +684,22 @@ void idUserInterfaceManagerLocal::Init() {
 
 void idUserInterfaceManagerLocal::Shutdown() {
 	cmdSystem->RemoveCommand("chatHistory");
+	cmdSystem->RemoveCommand("ui_observeLegacy");
 	idChatWindow::Reset();
-	guis.DeleteContents( true );
-	alwaysThinkGUIs.Clear();
-	demoGuis.DeleteContents( true );
+	// Destruction unregisters from every list. Take one live allocation at a
+	// time instead of iterating a container that its destructor will mutate.
+	while ( allocations.Num() > 0 ) {
+		delete allocations[ allocations.Num() - 1 ];
+	}
+	RetainedUI_Shutdown();
 	dc.Shutdown();
 }
 
 void idUserInterfaceManagerLocal::Touch( const char *name ) {
 	idUserInterface *gui = Alloc();
-	gui->InitFromFile( name );
-//	delete gui;
+	if ( !gui->InitFromFile( name ) ) {
+		delete gui;
+	}
 }
 
 void idUserInterfaceManagerLocal::WritePrecacheCommands( idFile *f ) {
@@ -115,20 +728,14 @@ void idUserInterfaceManagerLocal::SetAspectCorrection( bool enabled ) {
 void idUserInterfaceManagerLocal::BeginLevelLoad() {
 	int c = guis.Num();
 	for ( int i = 0; i < c; i++ ) {
-		if ( (guis[ i ]->GetDesktop()->GetFlags() & WIN_MENUGUI) == 0 ) {
+		if ( !guis[ i ]->IsMenuGui() ) {
 			guis[ i ]->ClearRefs();
-			/*
-			delete guis[ i ];
-			guis.RemoveIndex( i );
-			i--; c--;
-			*/
 		}
 	}
 }
 
 void idUserInterfaceManagerLocal::EndLevelLoad() {
-	int c = guis.Num();
-	for ( int i = 0; i < c; i++ ) {
+	for ( int i = 0; i < guis.Num(); ) {
 		if ( guis[i]->GetRefs() == 0 ) {
 			//common->Printf( "purging %s.\n", guis[i]->GetSourceFile() );
 
@@ -142,12 +749,11 @@ void idUserInterfaceManagerLocal::EndLevelLoad() {
 				}
 			}
 			if ( remove ) {
-				RemoveAlwaysThinkGui( guis[i] );
 				delete guis[ i ];
-				guis.RemoveIndex( i );
-				i--; c--;
+				continue;
 			}
 		}
+		i++;
 	}
 
 	// icons registered before their image was resident can be sized now
@@ -168,22 +774,32 @@ void idUserInterfaceManagerLocal::RegisterIcon( const char *code, const char *sh
 void idUserInterfaceManagerLocal::Reload( bool all ) {
 	ID_TIME_T ts;
 
-	int c = guis.Num();
-	for ( int i = 0; i < c; i++ ) {
+	const idList<idUserInterfaceManaged*> reloadGuis = guis;
+	idList<unsigned long long> identities;
+	for ( int i = 0; i < reloadGuis.Num(); i++ ) {
+		identities.Append( reloadGuis[ i ]->allocationId );
+	}
+	for ( int i = 0; i < reloadGuis.Num(); i++ ) {
+		idUserInterfaceManaged *gui = reloadGuis[ i ];
+		if ( guis.Find( gui ) == NULL || gui->allocationId != identities[ i ] ) {
+			continue;
+		}
+		// InitFromFile may replace the owned source string while parsing.
+		const idStr sourcePath = gui->GetSourceFile();
 		if ( !all ) {
-			fileSystem->ReadFile( guis[i]->GetSourceFile(), NULL, &ts );
-			if ( ts <= guis[i]->GetTimeStamp() ) {
+			fileSystem->ReadFile( sourcePath, NULL, &ts );
+			if ( ts <= gui->GetTimeStamp() ) {
 				continue;
 			}
 		}
 
-		guis[i]->InitFromFile( guis[i]->GetSourceFile() );
-		if ( guis[i]->Active() ) {
-			// Rebuilding loses the active window's onActivate setup (including
-			// menu fade-in timelines). Restore it so a language reload stays visible.
-			guis[i]->Activate( true, common->GetPresentationTime() );
+		const bool wasActive = gui->Active();
+		gui->InitFromFile( sourcePath );
+		if ( guis.Find( gui ) != NULL && gui->allocationId == identities[ i ] && wasActive ) {
+			// Restore onActivate setup after language reload, including menu fades.
+			gui->Activate( true, common->GetPresentationTime() );
 		}
-		common->Printf( "reloading %s.\n", guis[i]->GetSourceFile() );
+		common->Printf( "reloading %s.\n", sourcePath.c_str() );
 	}
 }
 
@@ -194,15 +810,15 @@ void idUserInterfaceManagerLocal::ListGuis() const {
 	int copies = 0;
 	int unique = 0;
 	for ( int i = 0; i < c; i++ ) {
-		idUserInterfaceLocal *gui = guis[i];
+		idUserInterfaceManaged *gui = guis[i];
 		size_t sz = gui->Size();
-		bool isUnique = guis[i]->interactive;
+		bool isUnique = gui->IsInteractive();
 		if ( isUnique ) {
 			unique++;
 		} else {
 			copies++;
 		}
-		common->Printf( "%6.1fk %4i (%s) %s ( %i transitions )\n", sz / 1024.0f, guis[i]->GetRefs(), isUnique ? "unique" : "copy", guis[i]->GetSourceFile(), guis[i]->desktop->NumTransitions() );
+		common->Printf( "%6.1fk %4i (%s) %s ( %i transitions )\n", sz / 1024.0f, gui->GetRefs(), isUnique ? "unique" : "copy", gui->GetSourceFile(), gui->NumTransitions() );
 		total += sz;
 	}
 	common->Printf( "===========\n  %i total Guis ( %i copies, %i unique ), %.2f total Mbytes", c, copies, unique, total / ( 1024.0f * 1024.0f ) );
@@ -218,17 +834,15 @@ bool idUserInterfaceManagerLocal::CheckGui( const char *qpath ) const {
 }
 
 idUserInterface *idUserInterfaceManagerLocal::Alloc( void ) const {
-	return new idUserInterfaceLocal();
+	return new idUserInterfaceDeferred();
 }
 
 void idUserInterfaceManagerLocal::DeAlloc( idUserInterface *gui ) {
 	if ( gui ) {
-		int c = guis.Num();
+		int c = allocations.Num();
 		for ( int i = 0; i < c; i++ ) {
-			if ( guis[i] == gui ) {
-				RemoveAlwaysThinkGui( guis[i] );
-				delete guis[i];
-				guis.RemoveIndex( i );
+			if ( allocations[i] == gui ) {
+				delete allocations[i];
 				return;
 			}
 		}
@@ -236,6 +850,9 @@ void idUserInterfaceManagerLocal::DeAlloc( idUserInterface *gui ) {
 }
 
 idUserInterface *idUserInterfaceManagerLocal::FindGui( const char *qpath, bool autoLoad, bool needUnique, bool forceNOTUnique ) {
+	if ( qpath == NULL || qpath[ 0 ] == '\0' ) {
+		return NULL;
+	}
 	int c = guis.Num();
 
 	for ( int i = 0; i < c; i++ ) {
@@ -250,8 +867,10 @@ idUserInterface *idUserInterfaceManagerLocal::FindGui( const char *qpath, bool a
 	}
 
 	if ( autoLoad ) {
-		idUserInterface *gui = Alloc();
-		if ( gui->InitFromFile( qpath ) ) {
+		// Editors use concrete legacy access for .guied documents. Only pathless
+		// Alloc needs a deferred identity; named loads select their backend now.
+		idUserInterface *gui = UI_CreateForPath( qpath );
+		if ( gui != NULL && gui->InitFromFile( qpath ) ) {
 			gui->SetUniqued( forceNOTUnique ? false : needUnique );
 			return gui;
 		} else {
@@ -266,6 +885,9 @@ idUserInterface *idUserInterfaceManagerLocal::FindGui( const char *qpath, bool a
 }
 
 idUserInterface *idUserInterfaceManagerLocal::FindDemoGui( const char *qpath ) {
+	if ( qpath == NULL || qpath[ 0 ] == '\0' ) {
+		return NULL;
+	}
 	int c = demoGuis.Num();
 	for ( int i = 0; i < c; i++ ) {
 		if ( !idStr::Icmp( demoGuis[i]->GetSourceFile(), qpath ) ) {
@@ -283,8 +905,33 @@ void idUserInterfaceManagerLocal::FreeListGUI( idListGUI *listgui ) {
 	delete listgui;
 }
 
-void idUserInterfaceManagerLocal::UpdateAlwaysThinkGui( idUserInterfaceLocal *gui ) {
-	if ( gui == NULL || gui->desktop == NULL || !gui->desktop->AlwaysThink() ) {
+void idUserInterfaceManagerLocal::RegisterAllocation( idUserInterfaceManaged *gui ) {
+	if (nextAllocationId == (std::numeric_limits<unsigned long long>::max)()) {
+		common->FatalError("GUI allocation identity exhausted"); return;
+	}
+	gui->allocationId = ++nextAllocationId;
+	allocations.AddUnique( gui );
+}
+
+void idUserInterfaceManagerLocal::RegisterGui( idUserInterfaceManaged *gui ) {
+	guis.AddUnique( gui );
+	UpdateAlwaysThinkGui( gui );
+}
+
+void idUserInterfaceManagerLocal::RegisterDemoGui( idUserInterfaceManaged *gui ) {
+	demoGuis.AddUnique( gui );
+}
+
+void idUserInterfaceManagerLocal::UnregisterGui( idUserInterfaceManaged *gui ) {
+	openq4::NativeInputBeforeUiChange(gui->allocationId);
+	RemoveAlwaysThinkGui( gui );
+	guis.Remove( gui );
+	demoGuis.Remove( gui );
+	allocations.Remove( gui );
+}
+
+void idUserInterfaceManagerLocal::UpdateAlwaysThinkGui( idUserInterfaceManaged *gui ) {
+	if ( gui == NULL || guis.Find( gui ) == NULL || !gui->AlwaysThink() ) {
 		RemoveAlwaysThinkGui( gui );
 		return;
 	}
@@ -292,7 +939,7 @@ void idUserInterfaceManagerLocal::UpdateAlwaysThinkGui( idUserInterfaceLocal *gu
 	alwaysThinkGUIs.AddUnique( gui );
 }
 
-void idUserInterfaceManagerLocal::RemoveAlwaysThinkGui( idUserInterfaceLocal *gui ) {
+void idUserInterfaceManagerLocal::RemoveAlwaysThinkGui( idUserInterfaceManaged *gui ) {
 	if ( gui == NULL ) {
 		return;
 	}
@@ -301,16 +948,25 @@ void idUserInterfaceManagerLocal::RemoveAlwaysThinkGui( idUserInterfaceLocal *gu
 }
 
 void idUserInterfaceManagerLocal::RunAlwaysThinkGUIs( int time ) {
-	for ( int i = 0; i < alwaysThinkGUIs.Num(); i++ ) {
-		idUserInterfaceLocal *gui = alwaysThinkGUIs[i];
-		if ( gui == NULL || guis.Find( gui ) == NULL || gui->desktop == NULL || !gui->desktop->AlwaysThink() ) {
-			alwaysThinkGUIs.RemoveIndex( i );
-			i--;
+	// A callback can remove a view. Visit the starting set once, checking
+	// membership and allocation identity before dereferencing it; a new view
+	// at a deleted object's address still waits until the next tick.
+	const idList<idUserInterfaceManaged*> thinkers = alwaysThinkGUIs;
+	idList<unsigned long long> identities;
+	for ( int i = 0; i < thinkers.Num(); i++ ) {
+		identities.Append( thinkers[ i ]->allocationId );
+	}
+	for ( int i = 0; i < thinkers.Num(); i++ ) {
+		idUserInterfaceManaged *gui = thinkers[i];
+		if ( gui == NULL || guis.Find( gui ) == NULL || gui->allocationId != identities[ i ] ) {
+			continue;
+		}
+		if ( !gui->AlwaysThink() ) {
+			RemoveAlwaysThinkGui( gui );
 			continue;
 		}
 
-		gui->time = time;
-		gui->desktop->RunTimeEvents( time );
+		gui->RunTimeEvents( time );
 	}
 }
 
@@ -322,7 +978,7 @@ void idUserInterfaceManagerLocal::RunAlwaysThinkGUIs( int time ) {
 ===============================================================================
 */
 
-idUserInterfaceLocal::idUserInterfaceLocal() {
+idUserInterfaceLocal::idUserInterfaceLocal( bool managed ) : idUserInterfaceManaged( managed ) {
 	chatWindow = NULL;
 	cursorX = cursorY = 0.0;
 	desktop = NULL;
@@ -336,7 +992,7 @@ idUserInterfaceLocal::idUserInterfaceLocal() {
 	lightColorVar = NULL;
 	//so the reg eval in gui parsing doesn't get bogus values
 	time = 0;
-	refs = 1;
+	timeStamp = 0;
 }
 
 idUserInterfaceLocal::~idUserInterfaceLocal() {
@@ -387,7 +1043,7 @@ bool idUserInterfaceLocal::InitFromFile( const char *qpath, bool rebuild, bool c
 	//Load the timestamp so reload guis will work correctly
 	fileSystem->ReadFile(qpath, NULL, &timeStamp);
 
-	src.LoadFile( qpath );
+	if (!UI_LegacyObservationLoad(this,src,qpath)) src.LoadFile( qpath );
 
 	if ( src.IsLoaded() ) {
 		idToken token;
@@ -440,12 +1096,10 @@ bool idUserInterfaceLocal::InitFromFile( const char *qpath, bool rebuild, bool c
 			desktop->SetFocus(chatWindow, false);
 		}
 	}
+	UI_LegacyObservationLoaded(this,src.IsLoaded());
 	interactive = desktop->Interactive();
 
-	if ( uiManagerLocal.guis.Find( this ) == NULL ) {
-		uiManagerLocal.guis.Append( this );
-	}
-	uiManagerLocal.UpdateAlwaysThinkGui( this );
+	RegisterLoaded();
 
 	loading = false;
 	lightColorVar = NULL;
@@ -689,18 +1343,7 @@ void idUserInterfaceLocal::ReadFromDemoFile( class idDemoFile *f ) {
 	f->ReadFloat( restoredCursorY );
 	SetCursor( restoredCursorX, restoredCursorY );
 
-	bool add = true;
-	int c = uiManagerLocal.demoGuis.Num();
-	for ( int i = 0; i < c; i++ ) {
-		if ( uiManagerLocal.demoGuis[i] == this ) {
-			add = false;
-			break;
-		}
-	}
-
-	if (add) {
-		uiManagerLocal.demoGuis.Append(this);
-	}
+	RegisterDemo();
 }
 
 void idUserInterfaceLocal::WriteToDemoFile( class idDemoFile *f ) {
@@ -988,6 +1631,25 @@ size_t idUserInterfaceLocal::Size() {
 		sz += desktop->Size();
 	}
 	return sz;
+}
+
+bool idUserInterfaceLocal::IsMenuGui() const {
+	return desktop != NULL && ( desktop->GetFlags() & WIN_MENUGUI ) != 0;
+}
+
+bool idUserInterfaceLocal::AlwaysThink() const {
+	return desktop != NULL && desktop->AlwaysThink();
+}
+
+void idUserInterfaceLocal::RunTimeEvents( int _time ) {
+	time = _time;
+	if ( desktop != NULL ) {
+		desktop->RunTimeEvents( _time );
+	}
+}
+
+int idUserInterfaceLocal::NumTransitions() {
+	return desktop != NULL ? desktop->NumTransitions() : 0;
 }
 
 void idUserInterfaceLocal::RecurseSetKeyBindingNames( idWindow *window ) {

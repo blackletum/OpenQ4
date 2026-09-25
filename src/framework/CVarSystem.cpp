@@ -30,8 +30,10 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "../idlib/PrivateCommand.h"
+#include "NativeInputPublications.h"
 #include "RemoteCVarPolicy.h"
 #include "CVarCompletionSnapshot.h"
+#include "CVarDefaults.h"
 
 idCVar * idCVar::staticVars = NULL;
 
@@ -46,6 +48,7 @@ idCVar * idCVar::staticVars = NULL;
 class idInternalCVar : public idCVar {
 	friend class idCVarSystemLocal;
 	friend class idCVarCompletionSnapshot;
+	friend bool CVar_ReadDefault(const char* name, idStr& output);
 public:
 							idInternalCVar( void );
 							idInternalCVar( const char *newName, const char *newValue, int newFlags );
@@ -236,6 +239,7 @@ idInternalCVar::Update
 ============
 */
 void idInternalCVar::Update( const idCVar *cvar ) {
+	if (nameString.Icmp("com_asyncInput") == 0) openq4::NativeInputBeforeInputBlockerChange();
 	const bool privateValue = ( ( flags | cvar->GetFlags() ) & CVAR_PRIVATE ) != 0;
 
 	// if this is a statically declared variable
@@ -421,6 +425,7 @@ void idInternalCVar::Set( const char *newValue, bool force, bool fromServer ) {
 		return;
 	}
 
+	if (nameString.Icmp("com_asyncInput") == 0) openq4::NativeInputBeforeInputBlockerChange();
 	CVar_AssignString( valueString, newValue, ( flags & CVAR_PRIVATE ) != 0 );
 	value = valueString.c_str();
 	UpdateValue();
@@ -435,6 +440,8 @@ idInternalCVar::Reset
 ============
 */
 void idInternalCVar::Reset( void ) {
+	if (nameString.Icmp("com_asyncInput") == 0 && valueString.Cmp(resetString.c_str()) != 0)
+		openq4::NativeInputBeforeInputBlockerChange();
 	CVar_AssignString( valueString, resetString.c_str(), ( flags & CVAR_PRIVATE ) != 0 );
 	value = valueString.c_str();
 	UpdateValue();
@@ -568,6 +575,14 @@ idCVarSystemLocal			localCVarSystem;
 idCVarSystem *				cvarSystem = &localCVarSystem;
 
 idDict						idCVarSystemLocal::moveCVarsToDict;
+
+bool CVar_ReadDefault(const char* name, idStr& output) {
+	if (name == NULL || name[0] == '\0') return false;
+	const idInternalCVar* variable = localCVarSystem.FindInternal(name);
+	if (variable == NULL || (variable->GetFlags() & CVAR_PRIVATE) != 0) return false;
+	output = variable->resetString;
+	return true;
+}
 
 #define NUM_COLUMNS				77		// 78 - 1
 #define NUM_NAME_CHARS			33

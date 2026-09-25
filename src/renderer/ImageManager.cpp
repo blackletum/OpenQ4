@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "RendererResourceSettings.h"
 
 bool R_IsMutableRenderImageName( const char *name ) {
 	if ( name == NULL || name[0] == '\0' ) {
@@ -145,6 +146,22 @@ idCVar image_ignoreHighQuality(
 	"0",
 	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 	"ignore material highquality / uncompressed image usage hints" );
+// Only does anything where the renderer reports no S3TC, which in practice
+// means an OpenGL ES driver that never exposed it -- everywhere else the DXT
+// data Quake 4 ships is already being uploaded as-is and is both smaller and
+// better than anything re-encoded from it would be.
+//
+// Rising by usage rather than all at once because each step has a different
+// risk: specular is the least visually sensitive, diffuse needs the alpha split
+// decided against real materials, and bump wants EAC_RG11 plus a shader change
+// that does not exist yet.
+idCVar image_useETC2(
+	"image_useETC2",
+	"0",
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"compress textures to ETC2 when the driver exposes no S3TC:\n 0: off, keep uncompressed RGBA8\n 1: specular only\n 2: specular and diffuse\n 3: specular, diffuse and bump (bump as EAC_RG11)",
+	0,
+	3 );
 idCVar image_picmip(
 	"image_picmip",
 	"0",
@@ -188,8 +205,8 @@ static bool R_IsImageProgramNameChar( char c ) {
 	return ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || c == '_';
 }
 
-static bool R_ImagePicmipFilterAllows( const char *name ) {
-	const int filter = image_picmipFilter.GetInteger() & PICMIP_FILTER_MASK;
+static bool R_ImagePicmipFilterAllows( const char *name, int value ) {
+	const int filter = value & PICMIP_FILTER_MASK;
 	if ( filter == PICMIP_FILTER_ALL ) {
 		return true;
 	}
@@ -235,7 +252,17 @@ is derived from it, so a cvar change always produces a cache miss rather than a
 stale texture at the previous size.
 ===============
 */
-void R_GetImageDownsizePolicy( const char *name, textureUsage_t usage, bool allowDownSize, imageDownsizePolicy_t &policy ) {
+imageDownsizeInputs_t R_ReadImageDownsizeInputs() {
+    return {image_downSize.GetInteger(), image_downSizeLimit.GetInteger(),
+        image_downSizeSpecular.GetInteger(), image_downSizeSpecularLimit.GetInteger(),
+        image_downSizeBump.GetInteger(), image_downSizeBumpLimit.GetInteger(),
+        image_picmip.GetInteger(), image_picmipFilter.GetInteger(), image_picmipMinSize.GetInteger()};
+}
+void R_GetImageDownsizePolicy( const char* name, textureUsage_t usage, bool allowDownSize, imageDownsizePolicy_t& policy ) {
+    const imageDownsizeInputs_t inputs = R_ReadImageDownsizeInputs();
+    R_ResolveImageDownsizePolicy(inputs, name, usage, allowDownSize, policy);
+}
+void R_ResolveImageDownsizePolicy( const imageDownsizeInputs_t& inputs, const char *name, textureUsage_t usage, bool allowDownSize, imageDownsizePolicy_t &policy ) {
 	policy = imageDownsizePolicy_t();
 
 	// 'nopicmip' materials and the presentation namespaces opt out entirely
@@ -243,12 +270,12 @@ void R_GetImageDownsizePolicy( const char *name, textureUsage_t usage, bool allo
 		return;
 	}
 
-	if ( usage == TD_SPECULAR && image_downSizeSpecular.GetInteger() != 0 ) {
-		policy.maxDimension = image_downSizeSpecularLimit.GetInteger();
-	} else if ( usage == TD_BUMP && image_downSizeBump.GetInteger() != 0 ) {
-		policy.maxDimension = image_downSizeBumpLimit.GetInteger();
-	} else if ( image_downSize.GetInteger() != 0 ) {
-		policy.maxDimension = image_downSizeLimit.GetInteger();
+	if ( usage == TD_SPECULAR && inputs.downSizeSpecular != 0 ) {
+		policy.maxDimension = inputs.downSizeSpecularLimit;
+	} else if ( usage == TD_BUMP && inputs.downSizeBump != 0 ) {
+		policy.maxDimension = inputs.downSizeBumpLimit;
+	} else if ( inputs.downSize != 0 ) {
+		policy.maxDimension = inputs.downSizeLimit;
 	}
 	if ( policy.maxDimension < 0 ) {
 		policy.maxDimension = 0;
@@ -257,10 +284,10 @@ void R_GetImageDownsizePolicy( const char *name, textureUsage_t usage, bool allo
 	// picmip is deliberately narrower than the downsize limits: it only touches
 	// the diffuse layer, so bump and specular detail, lighting, sky, decals, and
 	// every 2D surface keep their authored resolution.
-	if ( usage == TD_DIFFUSE && R_ImagePicmipFilterAllows( name ) ) {
-		policy.mipShift = Max( 0, image_picmip.GetInteger() );
+	if ( usage == TD_DIFFUSE && R_ImagePicmipFilterAllows( name, inputs.picmipFilter ) ) {
+		policy.mipShift = Max( 0, inputs.picmip );
 	}
-	policy.minDimension = Max( 1, image_picmipMinSize.GetInteger() );
+	policy.minDimension = Max( 1, inputs.picmipMinSize );
 }
 
 /*
@@ -793,6 +820,7 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 
 			const bool mergedAllowDownSize = image->allowDownSize && allowDownSize;
 			const bool allowDownSizeChanged = image->allowDownSize != mergedAllowDownSize;
+			if ( allowDownSizeChanged && !R_ImagePolicyContentMutation() ) return image;
 			image->allowDownSize = mergedAllowDownSize;
 			image->usage = usage;
 			image->levelLoadReferenced = true;
@@ -870,7 +898,9 @@ idImage *idImageManager::ImageHandleDeferred( const char *_name, textureFilter_t
 			if ( image->usage != usage || image->flags != flags ) {
 				continue;
 			}
-			image->allowDownSize = image->allowDownSize && allowDownSize;
+			const bool mergedAllowDownSize = image->allowDownSize && allowDownSize;
+			if ( image->allowDownSize != mergedAllowDownSize && !R_ImagePolicyContentMutation() ) return image;
+			image->allowDownSize = mergedAllowDownSize;
 			return image;
 		}
 	}
@@ -911,6 +941,7 @@ idImage * idImageManager::ScratchImage( const char *_name, idImageOpts *imgOpts,
 	for ( int i = imageHash.First( hash ); i != -1; i = imageHash.Next( i ) ) {
 		idImage	* image = images[i];
 		if ( name.Icmp( image->GetName() ) == 0 ) {
+			if ( ( !image->scratchImage || image->usage != usage ) && !R_ImagePolicyContentMutation() ) return image;
 			image->scratchImage = true;
 			image->usage = usage;
 			image->levelLoadReferenced = true;
@@ -997,6 +1028,7 @@ ReloadImages
 ===============
 */
 void idImageManager::ReloadImages( bool all, bool fileBackedOnly ) {
+	if ( !R_ImagePolicyOperationAllowed() ) return;
 	// a reload exists to observe files dropped since the last level load;
 	// never let it consult (or leave behind) memoized probe results
 	R_SetDDSProbeCacheActive( false );
@@ -1013,7 +1045,7 @@ void idImageManager::ReloadImages( bool all, bool fileBackedOnly ) {
 		if ( fileBackedOnly && R_IsMutableRenderImage( image ) ) {
 			continue;
 		}
-		image->Reload( all );
+		if ( R_ImagePolicyShouldReload( image ) ) image->Reload( all );
 	}
 }
 
@@ -1167,6 +1199,7 @@ Init
 ===============
 */
 void idImageManager::Init() {
+	R_ImagePolicyLifecycleChanged();
 
 	images.Resize( 1024, 1024 );
 	imageHash.ResizeIndex( 1024 );
@@ -1191,6 +1224,7 @@ Shutdown
 ===============
 */
 void idImageManager::Shutdown() {
+	R_ImagePolicyLifecycleChanged();
 	images.DeleteContents( true );
 	imageHash.Clear();
 
@@ -1203,6 +1237,7 @@ Frees all images used by the previous level
 ====================
 */
 void idImageManager::BeginLevelLoad() {
+	R_ImagePolicyLifecycleChanged();
 	insideLevelLoad = true;
 
 	// search paths are stable for the whole load, so DDS replacement probes
@@ -1445,4 +1480,13 @@ void idImageManager::PrintMemInfo( MemInfo_t *mi ) {
 
 	f->Printf( "\nTotal image bytes allocated: %s\n", idStr::FormatNumber( total ).c_str() );
 	fileSystem->CloseFile( f );
+}
+
+// The checked service has already compared the exact eight-field policy. Other
+// reduction/sampler edits remain pending for their ordinary lifecycle.
+void idImageManager::ClearCheckedImagePolicyChanges() {
+    image_downSize.ClearModified(); image_downSizeLimit.ClearModified();
+    image_downSizeSpecular.ClearModified(); image_downSizeSpecularLimit.ClearModified();
+    image_downSizeBump.ClearModified(); image_downSizeBumpLimit.ClearModified();
+    image_ignoreHighQuality.ClearModified();
 }

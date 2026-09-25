@@ -89,8 +89,8 @@ def main() -> None:
 
     game_api = read(GAME_ROOT / "src/game/Game.h")
     api_version = re.search(r"const int GAME_API_VERSION\s*=\s*(\d+);", game_api)
-    if api_version is None or int(api_version.group(1)) < 46:
-        raise AssertionError("The transient time-scale API requires game ABI 46 or newer")
+    if api_version is None or int(api_version.group(1)) < 47:
+        raise AssertionError("The transient time-scale API requires game ABI 47 or newer")
 
     print("single-player time-scale and walking CVar checks passed")
 

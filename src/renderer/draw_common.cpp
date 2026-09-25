@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <cstring>
 
 #include "tr_local.h"
+#include "OpenGL/FramebufferSamples.h"
 #include "CelShading.h"
 #include "ClassicGuiDomain.h"
 #include "ClassicCinematicPostDomain.h"
@@ -979,7 +980,6 @@ static const int RB_SCREEN_FRACTION_NATIVE = 100;
 static const int RB_SCREEN_FRACTION_MAX = 200;
 static int rbLastReportedScreenFractionRequest = 0;
 static int rbLastReportedScreenFractionEffective = 0;
-static int rbSceneScalePresentedFrame = -1;
 static float rbHDRAdaptedExposure = 1.0f;
 static float rbHDRLastAverageLuminance = 1.0f;
 static float rbHDRLastTargetExposure = 1.0f;
@@ -1909,7 +1909,10 @@ static bool RB_EnsureSceneRenderTexture( const viewDef_t *sceneTargetView ) {
 		scaledWidth, scaledHeight );
 	const int targetWidth = scaledScene ? scaledWidth : Max( glConfig.vidWidth, sceneTargetView->viewport.x2 + 1 );
 	const int targetHeight = scaledScene ? scaledHeight : Max( glConfig.vidHeight, sceneTargetView->viewport.y2 + 1 );
-	const int requestedSamples = Max( 0, r_multiSamples.GetInteger() );
+	// Follow the created context, which can differ from the archived preference
+	// after a strict device request or driver fallback. Unknown samples do not
+	// authorize allocating a multisampled target.
+	const int requestedSamples = Max( 0, R_DefaultFramebufferSamples() );
 	// Any non-native scene target already requires a resolve. Keep it
 	// single-sample instead of stacking an MSAA FP16 FBO on top of the scale
 	// transition; temporal AA owns antialiasing when enabled.
@@ -4928,9 +4931,6 @@ static void RB_PresentSceneRenderTargetToBackBuffer( const rbSceneScaleState_t &
 
 	globalImages->BindNull();
 	RB_EndFullscreenPostProcessPass();
-	if ( scaleState.active ) {
-		rbSceneScalePresentedFrame = backEnd.frameCount;
-	}
 }
 
 enum rbResolutionScaleUniformIndex_t {
@@ -4972,7 +4972,7 @@ static void RB_InitResolutionScaleStage( void ) {
 
 static bool RB_BindSceneScaleSharpenProgram( int sourceWidth, int sourceHeight,
 		int textureWidth, int textureHeight ) {
-	if ( idMath::ClampInt( 0, 2, r_resolutionScaleMode.GetInteger() ) != 2
+	if ( idMath::ClampInt( 0, 3, r_resolutionScaleMode.GetInteger() ) != 2
 			|| !glConfig.GLSLProgramAvailable || sourceWidth <= 0
 			|| sourceHeight <= 0 || textureWidth <= 0 || textureHeight <= 0 ) {
 		return false;
@@ -5128,7 +5128,6 @@ static bool RB_PresentTemporalSpatialFallback( idImage *sceneImage,
 	globalImages->BindNull();
 	RB_EndFullscreenPostProcessPass();
 	backEnd.currentRenderCopied = false;
-	rbSceneScalePresentedFrame = backEnd.frameCount;
 	return true;
 }
 
@@ -5354,9 +5353,6 @@ static bool RB_DrawTemporalResolvePass( const resolveTemporalPresentationCommand
 	GL_SelectTexture( 0 );
 	RB_EndFullscreenPostProcessPass();
 	backEnd.currentRenderCopied = false;
-	if ( destination == NULL ) {
-		rbSceneScalePresentedFrame = backEnd.frameCount;
-	}
 	return true;
 }
 
@@ -5771,122 +5767,12 @@ static bool RB_PresentBackendTemporalScene( void ) {
 }
 
 void RB_ApplyResolutionScaleToBackBuffer( void ) {
-	if ( r_skipPostProcess.GetBool() ) {
-		return;
-	}
-	const temporalPresentationFrameState_t &presentation =
-		R_TemporalPresentation_GetFrameState();
-	if ( presentation.dynamicResolutionRequested
-			|| presentation.temporalAARequested
-			|| AdvancedScreenSpaceCore_Requested(
-				presentation.advancedScreenSpace ) ) {
-		// Temporal presentation owns scene scaling before native HUD/menu draws.
-		// A UI-only frame has no scene-present marker, so the legacy swap-tail
-		// filter must still stay out of the native backbuffer.
-		return;
-	}
-	if ( rbSceneScalePresentedFrame == backEnd.frameCount ) {
-		// The 3D scene was already scaled into the native back buffer before
-		// later 2D commands. Re-filtering here would scale the HUD/menu too.
-		return;
-	}
-
-	const int scalePercent = RB_RequestedScreenFraction();
-	if ( scalePercent >= RB_SCREEN_FRACTION_NATIVE ) {
-		return;
-	}
-
-	int mode = idMath::ClampInt( 0, 2, r_resolutionScaleMode.GetInteger() );
-	if ( mode == 0 ) {
-		// Legacy path: BeginFrame crop mode without fullscreen upscale.
-		return;
-	}
-
-	const int viewportWidth = glConfig.vidWidth;
-	const int viewportHeight = glConfig.vidHeight;
-	if ( viewportWidth <= 0 || viewportHeight <= 0 ) {
-		return;
-	}
-
-	const int sourceWidth = idMath::ClampInt( 1, viewportWidth,
-		idMath::Ftoi( static_cast<float>( viewportWidth ) * ( static_cast<float>( scalePercent ) * 0.01f ) + 0.5f ) );
-	const int sourceHeight = idMath::ClampInt( 1, viewportHeight,
-		idMath::Ftoi( static_cast<float>( viewportHeight ) * ( static_cast<float>( scalePercent ) * 0.01f ) + 0.5f ) );
-	if ( sourceWidth <= 0 || sourceHeight <= 0 ) {
-		return;
-	}
-
-	if ( !glConfig.GLSLProgramAvailable ) {
-		return;
-	}
-
-	RB_InitResolutionScaleStage();
-	if ( !R_ValidateGLSLProgram( &rbResolutionScaleStage ) ) {
-		return;
-	}
-
-	idImage *sceneImage = globalImages->currentRenderImage;
-	if ( sceneImage == NULL ) {
-		return;
-	}
-
-	RB_LogComment( "---------- RB_ApplyResolutionScaleToBackBuffer ----------\n" );
-
-	idRenderTexture::BindNull();
-	backEnd.renderTexture = NULL;
-	glDrawBuffer( GL_BACK );
-	glReadBuffer( GL_BACK );
-	glViewport( 0, 0, viewportWidth, viewportHeight );
-	glScissor( 0, 0, viewportWidth, viewportHeight );
-
-	// Copy the full back buffer; the resolution-scale shader samples this image
-	// on a reduced grid so output always fills the screen.
-	sceneImage->CopyFramebuffer( 0, 0, viewportWidth, viewportHeight );
-
-	const int textureWidth = sceneImage->GetOpts().width;
-	const int textureHeight = sceneImage->GetOpts().height;
-	if ( textureWidth <= 0 || textureHeight <= 0 ) {
-		return;
-	}
-
-	RB_BeginFullscreenPostProcessPass( 0, 0, viewportWidth, viewportHeight );
-	GL_SelectTexture( 0 );
-	sceneImage->Bind();
-	GL_TexEnv( GL_MODULATE );
-
-	glUseProgramObjectARB( (GLhandleARB)rbResolutionScaleStage.glslProgramObject );
-
-	const int sceneLocation = rbResolutionScaleStage.shaderTextureLocations[0];
-	if ( sceneLocation >= 0 ) {
-		glUniform1iARB( sceneLocation, 0 );
-	}
-
-	const GLfloat invTexSize[2] = {
-		1.0f / static_cast<GLfloat>( textureWidth ),
-		1.0f / static_cast<GLfloat>( textureHeight )
-	};
-	const GLfloat invLowResSize[2] = {
-		1.0f / static_cast<GLfloat>( sourceWidth ),
-		1.0f / static_cast<GLfloat>( sourceHeight )
-	};
-	const GLfloat sharpenAmount = ( mode == 2 )
-		? idMath::ClampFloat( 0.0f, 1.5f, r_resolutionScaleSharpness.GetFloat() )
-		: 0.0f;
-
-	if ( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_TEX_SIZE] >= 0 ) {
-		glUniform2fvARB( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_TEX_SIZE], 1, invTexSize );
-	}
-	if ( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_LOW_RES_SIZE] >= 0 ) {
-		glUniform2fvARB( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_INV_LOW_RES_SIZE], 1, invLowResSize );
-	}
-	if ( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_SHARPEN_AMOUNT] >= 0 ) {
-		glUniform1fARB( rbResolutionScaleStage.shaderParmLocations[RB_RES_SCALE_UNIFORM_SHARPEN_AMOUNT], sharpenAmount );
-	}
-
-	RB_DrawFullscreenPostProcessQuadUnitUV();
-	glUseProgramObjectARB( 0 );
-	globalImages->BindNull();
-	RB_EndFullscreenPostProcessPass();
+	// Shared backend hook: world scaling is completed by the scene-target
+	// presenter before native HUD/menu commands. At swap time the backbuffer
+	// already contains UI, including on UI-only frames or scene-target failure;
+	// filtering it would reduce UI resolution without reducing world draw cost.
+	// Keep this hook inert, as on GLES. Legacy mode 0 remains the explicit
+	// BeginFrame crop; ordinary scaling and supersampling use scene resolves.
 }
 
 enum rbCRTUniformIndex_t {
@@ -9020,6 +8906,9 @@ static bool RB_SharedGuiGLBuildState( const rendererEvaluatedMaterialPass_t &pas
 	stateBits = 0;
 	alphaFunction = GL_ALWAYS;
 	cullType = CT_FRONT_SIDED;
+	const bool alphaCoverage = pass.blend.sourceAlpha == RENDERER_BLEND_ONE &&
+		pass.blend.destinationAlpha == RENDERER_BLEND_ONE_MINUS_SRC_ALPHA &&
+		pass.blend.sourceColor == RENDERER_BLEND_SRC_ALPHA && pass.blend.destinationColor == RENDERER_BLEND_ONE_MINUS_SRC_ALPHA;
 
 	if ( pass.kind != ( inWorld ? RENDERER_MATERIAL_PASS_SURFACE
 			: RENDERER_MATERIAL_PASS_GUI )
@@ -9031,8 +8920,8 @@ static bool RB_SharedGuiGLBuildState( const rendererEvaluatedMaterialPass_t &pas
 			|| pass.textureSemantic != RENDERER_TEXTURE_DIFFUSE
 			|| pass.blend.colorOperation != RENDERER_BLEND_OP_ADD
 			|| pass.blend.alphaOperation != RENDERER_BLEND_OP_ADD
-			|| pass.blend.sourceAlpha != pass.blend.sourceColor
-			|| pass.blend.destinationAlpha != pass.blend.destinationColor ) {
+			|| (!alphaCoverage && (pass.blend.sourceAlpha != pass.blend.sourceColor
+				|| pass.blend.destinationAlpha != pass.blend.destinationColor)) ) {
 		return false;
 	}
 	const bool replacementBlend = pass.blend.sourceColor == RENDERER_BLEND_ONE
@@ -9047,6 +8936,7 @@ static bool RB_SharedGuiGLBuildState( const rendererEvaluatedMaterialPass_t &pas
 			|| !RB_SharedGuiGLMapCull( pass.cull, cullType ) ) {
 		return false;
 	}
+	if (alphaCoverage) stateBits |= GLS_ALPHA_COVERAGE;
 
 	if ( ( pass.colorWriteMask
 			& ~static_cast<std::uint32_t>( RENDERER_COLOR_WRITE_RGBA ) ) != 0 ) {
@@ -15697,13 +15587,6 @@ void	RB_STD_DrawView( void ) {
 		}
 	}
 	RB_RestoreDirectTemporalProjection( sceneScaleState, backEnd.viewDef );
-	if ( feedbackSceneTargetScalingRequested
-			&& ( backEnd.viewDef->renderFlags & RF_PORTAL_SKY ) == 0 ) {
-		// The game-owned post chain (including its spatial/SMAA rollback) will
-		// composite this scaled world at native resolution before drawing UI.
-		// Suppress the swap-tail scaler so it cannot rescale that native UI.
-		rbSceneScalePresentedFrame = backEnd.frameCount;
-	}
 
 	if ( inlineSubviewSceneRenderTargetRequested
 		&& RB_IsSceneRenderTexture( backEnd.renderTexture ) ) {

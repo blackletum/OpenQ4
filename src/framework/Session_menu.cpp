@@ -29,10 +29,15 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
+#include "NativeInputDispatch.h"
 #include "Session_local.h"
+#include "NativeInputPublications.h"
+#include "../ui/Rectangle.h"
 #include "ArenaCampaign.h"
 #include "../ui/ListGUILocal.h"
-#include "../ui/Window.h"
+#include "../ui/RetainedUI.h"
+#include "../ui/UserInterfaceManaged.h"
+#include "../ui/UserInterfaceRetained.h"
 #include "../sound/snd_local.h"
 
 #if defined( USE_SDL3 )
@@ -46,6 +51,7 @@ idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_G
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 28 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0.0f, 0.0f );
 idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 48 );
+idCVar ui_retainedSystem( "ui_retainedSystem", "0", CVAR_GUI | CVAR_BOOL, "opt in to the in-development retained SYSTEM page" );
 
 static const int MENU_CONTROLLER_AXIS_THRESHOLD = 50;
 static const int MENU_CONTROLLER_REPEAT_INITIAL_MSEC = 320;
@@ -1293,6 +1299,13 @@ static void MainMenuBuildModelList( const bool isTeamGame, const int menuModelTe
 	buildValues.Clear();
 	buildNames.Clear();
 
+	// Only declName and description are read out of these, but parsing a
+	// playerModel decl precaches its model, head, skin and sounds as a side
+	// effect. Walking the whole list therefore loaded every multiplayer
+	// character before the main menu could draw -- several seconds of startup
+	// spent on a dropdown the player may never open.
+	idSuppressPlayerModelMediaCaching suppressPrecache;
+
 	const int numModels = declManager->GetNumDecls( DECL_PLAYER_MODEL );
 	for ( int i = 0; i < numModels; ++i ) {
 		const rvDeclPlayerModel *playerModel = static_cast<const rvDeclPlayerModel *>( declManager->DeclByIndex( DECL_PLAYER_MODEL, i, true ) );
@@ -1323,9 +1336,15 @@ static void SetMainMenuMPModelVars( idUserInterface *gui ) {
 	const int menuModelTeam = MainMenuResolveModelTeam();
 	MainMenuSyncMPSettingsGuiState( gui, menuModelTeam );
 
-	const idDeclEntityDef *menuDef = static_cast<const idDeclEntityDef *>( declManager->FindType( DECL_ENTITYDEF, "player_marine_mp_ui", false ) );
-	const idDeclEntityDef *fallbackDef = static_cast<const idDeclEntityDef *>( declManager->FindType( DECL_ENTITYDEF, "player_marine_mp", false ) );
-	const idDeclEntityDef *def = menuDef ? menuDef : fallbackDef;
+	// Look the fallback up only when it is needed. FindType parses the decl, and
+	// parsing a player entityDef precaches everything it references -- models,
+	// animations, weapons and sounds. Resolving both unconditionally paid that
+	// cost for "player_marine_mp" on every main menu build and then threw the
+	// result away whenever the _ui variant existed, which it normally does.
+	const idDeclEntityDef *def = static_cast<const idDeclEntityDef *>( declManager->FindType( DECL_ENTITYDEF, "player_marine_mp_ui", false ) );
+	if ( def == NULL ) {
+		def = static_cast<const idDeclEntityDef *>( declManager->FindType( DECL_ENTITYDEF, "player_marine_mp", false ) );
+	}
 
 	idStr buildValues;
 	idStr buildNames;
@@ -1359,6 +1378,13 @@ static void SetMainMenuMPModelVars( idUserInterface *gui ) {
 		if ( MainMenuFirstModelFromList( buildValues, isTeamGame, menuModelTeam, selectedDecl, selectedModelName, selectedHeadName, selectedSkinName ) ) {
 			cvarSystem->SetCVarString( modelCVar.c_str(), selectedDecl.c_str() );
 		}
+	}
+
+	// The list above was built with precaching suppressed, so restore it for the
+	// one model the menu actually displays.
+	if ( selectedDecl.Length() ) {
+		DeclPlayerModel_CacheMediaForDecl(
+			static_cast<const rvDeclPlayerModel *>( declManager->FindType( DECL_PLAYER_MODEL, selectedDecl.c_str(), false ) ) );
 	}
 
 	if ( !selectedModelName.Length() && def ) {
@@ -1404,8 +1430,20 @@ idUserInterface *idSessionLocal::GetActiveMenu( void ) {
 idSessionLocal::StartMainMenu
 ==============
 */
+
+// Building the main menu was over half of startup at one point; keep the split
+// visible so a regression there is obvious rather than folded into "startup".
+extern idCVar com_showLevelLoadTimes;
+
+static int menuProfileSaveVarsMsec = 0;
+static int menuProfileMainVarsMsec = 0;
+
 void idSessionLocal::StartMenu( bool playIntro ) {
 	const bool shouldPlayIntro = playIntro && !com_skipLogoVideos.GetBool();
+	if ( guiSystem != NULL && ( guiActive == guiSystem || guiMsgRestore == guiSystem ) ) {
+		ReturnSystemSettings();
+		return;
+	}
 
 	if ( guiActive == guiMainMenu ) {
 		return;
@@ -1424,8 +1462,17 @@ void idSessionLocal::StartMenu( bool playIntro ) {
 	// start playing the menu sounds
 	SetPlayingSoundWorld( menuSoundWorld );
 
+	const int menuProfileStart = Sys_Milliseconds();
+	menuProfileSaveVarsMsec = 0;
+	menuProfileMainVarsMsec = 0;
+
+	const int setGuiStart = Sys_Milliseconds();
 	SetGUI( guiMainMenu, NULL );
+	const int setGuiMsec = Sys_Milliseconds() - setGuiStart;
+
+	const int introStart = Sys_Milliseconds();
 	guiMainMenu->HandleNamedEvent( shouldPlayIntro ? "playIntro" : "noIntro" );
+	const int introMsec = Sys_Milliseconds() - introStart;
 	menuIntroBlackoutActive = true;
 	menuIntroBlackoutAwaitMenuMusic = shouldPlayIntro;
 	menuIntroBlackoutFadeStart = -1;
@@ -1444,6 +1491,18 @@ void idSessionLocal::StartMenu( bool playIntro ) {
 
 	console->Close();
 
+	if ( com_showLevelLoadTimes.GetBool() ) {
+		const int menuProfileTotal = Sys_Milliseconds() - menuProfileStart;
+		common->Printf(
+			"Main menu phases: setGUI=%d (saveVars=%d mainVars=%d other=%d) introEvent=%d rest=%d total=%d msec\n",
+			setGuiMsec,
+			menuProfileSaveVarsMsec,
+			menuProfileMainVarsMsec,
+			setGuiMsec - menuProfileSaveVarsMsec - menuProfileMainVarsMsec,
+			introMsec,
+			menuProfileTotal - setGuiMsec - introMsec,
+			menuProfileTotal );
+	}
 }
 
 bool idSessionLocal::IsMainMenuIntroPlaying() const {
@@ -1458,8 +1517,23 @@ idSessionLocal::SetGUI
 =================
 */
 void idSessionLocal::SetGUI( idUserInterface *gui, HandleGuiCommand_t handle ) {
+	if ( RetainedUI_IsOpen() ) RetainedUI_Close();
 	const char	*cmd;
+	const bool resumeSystemParent = guiSystem != NULL && gui == guiSystemParent;
+	if ( guiSystem != NULL && gui != guiSystem ) {
+		// Explicit replacement/stop is forced teardown. Ordinary Back uses the
+		// guarded Return operation and cannot discard a dirty/recovering owner.
+		CloseSystemSettings();
+	}
 
+	if ( guiActive && guiActive != gui ) {
+		idUserInterface *previous = guiActive;
+		openq4::NativeInputBeforeSessionChange();
+		guiActive = NULL;
+		previous->Activate( false, common->GetPresentationTime() );
+		PumpApplicationActions( previous );
+	}
+	openq4::NativeInputBeforeSessionChange();
 	guiActive = gui;
 	guiHandle = handle;
 	if ( guiMsgRestore ) {
@@ -1470,15 +1544,19 @@ void idSessionLocal::SetGUI( idUserInterface *gui, HandleGuiCommand_t handle ) {
 		return;
 	}
 
-	if ( guiActive == guiMainMenu ) {
+	if ( guiActive == guiMainMenu && !resumeSystemParent ) {
 		// Opening ESC must never wait for unbounded filesystem, device, display,
 		// or declaration enumeration. Those catalogs are refreshed when their
 		// page is opened; the title-screen path still primes them for stock GUIs.
 		const bool refreshCatalogs = !mapSpawned;
+		const int saveVarsStart = Sys_Milliseconds();
 		if ( refreshCatalogs ) {
 			SetSaveGameGuiVars();
 		}
+		menuProfileSaveVarsMsec = Sys_Milliseconds() - saveVarsStart;
+		const int mainVarsStart = Sys_Milliseconds();
 		SetMainMenuGuiVars( refreshCatalogs );
+		menuProfileMainVarsMsec = Sys_Milliseconds() - mainVarsStart;
 	} else if ( guiActive == guiRestartMenu ) {
 		SetSaveGameGuiVars();
 	}
@@ -1489,6 +1567,7 @@ void idSessionLocal::SetGUI( idUserInterface *gui, HandleGuiCommand_t handle ) {
 
 	cmd = guiActive->HandleEvent( &ev, common->GetPresentationTime() );
 	guiActive->Activate( true, common->GetPresentationTime() );
+	PumpApplicationActions( guiActive );
 }
 
 /*
@@ -1497,7 +1576,18 @@ idSessionLocal::ExitMenu
 ===============
 */
 void idSessionLocal::ExitMenu( void ) {
+	if ( guiSystem != NULL && ( guiActive == guiSystem || guiMsgRestore == guiSystem ) ) {
+		ReturnSystemSettings();
+		return;
+	}
+	idUserInterface *previous = guiActive;
+	openq4::NativeInputBeforeSessionChange();
 	guiActive = NULL;
+	if ( previous ) {
+		previous->Activate( false, common->GetPresentationTime() );
+		PumpApplicationActions( previous );
+	}
+	if ( guiActive != NULL ) return;
 
 	// go back to the game sounds
 	SetPlayingSoundWorld( sw );
@@ -1506,6 +1596,86 @@ void idSessionLocal::ExitMenu( void ) {
 	if ( sw != NULL && sw->IsPaused() ) {
 		sw->UnPause();
 	}
+}
+
+bool idSessionLocal::OpenSystemSettings() {
+#ifdef ID_DEDICATED
+	return false;
+#else
+	if ( !ui_retainedSystem.GetBool() || systemGuiTransition || guiTest != NULL || RetainedUI_IsOpen() ) return false;
+	if ( guiSystem != NULL ) return guiActive == guiSystem;
+	if ( guiMainMenu == NULL || guiActive != guiMainMenu || guiMsgRestore != NULL ) return false;
+	// The canonical source may not exist while this opt-in route is developed.
+	// Load and validate its application contract before deactivating the parent.
+	idUserInterface *child = uiManager->FindGui( "guis/menu/settings/system.q4ui", true, true, false );
+	if ( child == NULL ) return false;
+	if ( !UI_RetainedSettingsDocument( child ) ) {
+		uiManager->DeAlloc( child );
+		return false;
+	}
+	guiSystemParent = guiActive;
+	guiSystemParentHandle = guiHandle;
+	guiSystem = child;
+	systemGuiTransition = true;
+	SetGUI( child, NULL );
+	systemGuiTransition = false;
+	SetPlayingSoundWorld();
+	return guiActive == child;
+#endif
+}
+
+bool idSessionLocal::ReturnSystemSettings() {
+#ifdef ID_DEDICATED
+	return false;
+#else
+	if ( systemGuiTransition || guiSystem == NULL || guiActive != guiSystem ) return false;
+	if ( !UI_RetainedSettingsCanReturn( guiSystem ) ) {
+		// An authored Back may open a dirty-state modal or request recovery. A
+		// recursive dismiss from that event must not replay it indefinitely.
+		if ( systemGuiBackEvent ) return false;
+		systemGuiBackEvent = true;
+		idUserInterface *child = guiSystem;
+		child->HandleNamedEvent( "onBack" );
+		PumpApplicationActions( child );
+		systemGuiBackEvent = false;
+		return guiSystem == NULL && guiActive != child;
+	}
+	idUserInterface *parent = guiSystemParent;
+	const HandleGuiCommand_t handler = guiSystemParentHandle;
+	if ( parent == NULL ) return false;
+	SetGUI( parent, handler );
+	SetPlayingSoundWorld();
+	return guiActive == parent && guiSystem == NULL;
+#endif
+}
+
+void idSessionLocal::CloseSystemSettings() {
+	if ( guiSystem == NULL ) return;
+	idUserInterface *child = guiSystem;
+	// Clear every owning/reference slot before callbacks can pump another
+	// lifecycle action. Manager dispatch permits this targeted drain before free.
+	guiSystem = guiSystemParent = NULL;
+	guiSystemParentHandle = NULL;
+	if ( guiActive == child ) { openq4::NativeInputBeforeSessionChange(); guiActive = NULL; }
+	if ( guiMsgRestore == child ) guiMsgRestore = NULL;
+	const bool previousTransition = systemGuiTransition;
+	systemGuiTransition = true;
+	child->Activate( false, common->GetPresentationTime() );
+	PumpApplicationActions( child );
+	uiManager->DeAlloc( child );
+	systemGuiTransition = previousTransition;
+}
+
+void idSessionLocal::ReportSystemSettings() {
+	bool canReturn = false;
+#ifndef ID_DEDICATED
+	canReturn = guiSystem != NULL && UI_RetainedSettingsCanReturn( guiSystem );
+#endif
+	common->Printf( "OPENQ4_SYSTEM enabled=%d active=%s parent=%s child=%d guiTest=%d menu=%d map=%d multiplayer=%d menuSound=%d canReturn=%d\n",
+		ui_retainedSystem.GetBool() ? 1 : 0, guiActive ? guiActive->Name() : "-",
+		guiSystemParent ? guiSystemParent->Name() : "-", guiSystem != NULL && guiActive == guiSystem ? 1 : 0,
+		guiTest != NULL ? 1 : 0, guiActive != NULL ? 1 : 0, mapSpawned ? 1 : 0, IsMultiplayer() ? 1 : 0,
+		menuSoundWorld != NULL && requestedSoundWorld == menuSoundWorld ? 1 : 0, canReturn ? 1 : 0 );
 }
 
 /*
@@ -2060,6 +2230,7 @@ idSessionLocal::SetMainMenuGuiVars
 ===============
 */
 void idSessionLocal::SetMainMenuGuiVars( bool refreshCatalogs ) {
+	guiMainMenu->SetStateBool( "retainedSystem", ui_retainedSystem.GetBool() );
 
 	guiMainMenu->SetStateString( "serverlist_sel_0", "-1" );
 	guiMainMenu->SetStateString( "serverlist_selid_0", "-1" ); 
@@ -2372,15 +2543,10 @@ static int MainMenuGetNewGameOption( idUserInterface *gui, const char *desktopSt
 		return defaultValue;
 	}
 
-	idWindow *desktop = gui->GetDesktop();
-	if ( desktop != NULL ) {
-		idWinVar *winVar = desktopStateName != NULL ? desktop->GetWinVarByName( desktopStateName, true ) : NULL;
-		if ( winVar == NULL && stateName != NULL ) {
-			winVar = desktop->GetWinVarByName( stateName, false );
-		}
-		if ( winVar != NULL ) {
-			return atoi( winVar->c_str() );
-		}
+	idStr presentation;
+	if ( ( desktopStateName != NULL && gui->GetPresentationValue( desktopStateName, presentation ) ) ||
+		 ( stateName != NULL && gui->GetPresentationValue( stateName, presentation ) ) ) {
+		return atoi( presentation.c_str() );
 	}
 
 	int value = defaultValue;
@@ -2426,6 +2592,11 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 
 		if ( !idStr::Cmp( cmd, ";" ) ) {
 			continue;
+		}
+
+		if ( !idStr::Icmp( cmd, "openRetainedSystem" ) ) {
+			OpenSystemSettings();
+			return;
 		}
 
 		if ( !idStr::Icmp( cmd, "demoOpen" ) ) {
@@ -3259,6 +3430,7 @@ void idSessionLocal::HandleInGameCommands( const char *menuCommand ) {
 			const char	*cmd;
 			cmd = guiActive->HandleEvent( &ev, common->GetPresentationTime() );
 			guiActive->Activate( false, common->GetPresentationTime() );
+			openq4::NativeInputBeforeSessionChange();
 			guiActive = NULL;
 		}
 	}
@@ -3269,10 +3441,27 @@ void idSessionLocal::HandleInGameCommands( const char *menuCommand ) {
 idSessionLocal::DispatchCommand
 ==============
 */
+static void Session_DispatchApplicationCommand( idUserInterface *gui, const char *command, void *context ) {
+	static_cast<idSessionLocal*>( context )->DispatchCommand( gui, command );
+}
+
+void idSessionLocal::PumpApplicationActions( idUserInterface *only ) {
+	UI_PumpApplicationActions( Session_DispatchApplicationCommand, this, only );
+}
+
 void idSessionLocal::DispatchCommand( idUserInterface *gui, const char *menuCommand, bool doIngame ) {
 
 	if ( !gui ) {
 		gui = guiActive;
+	}
+	bool closeRequested = false;
+	if ( UI_DispatchApplicationActions( gui, menuCommand, closeRequested ) ) {
+		if ( closeRequested ) {
+			if ( gui == guiSystem ) ReturnSystemSettings();
+			else if ( gui == guiTest ) TestGUI( NULL );
+			else if ( gui == guiActive ) ExitMenu();
+		}
+		return;
 	}
 
 	if ( gui == guiMainMenu ) {
@@ -3295,6 +3484,7 @@ void idSessionLocal::DispatchCommand( idUserInterface *gui, const char *menuComm
 	} else if ( game && guiActive && guiActive->State().GetBool( "gameDraw" ) ) {
 		const char *cmd = game->HandleGuiCommands( menuCommand );
 		if ( !cmd ) {
+			openq4::NativeInputBeforeSessionChange();
 			guiActive = NULL;
 		} else if ( idStr::Icmp( cmd, "main" ) == 0 ) {
 			StartMenu();
@@ -3331,21 +3521,13 @@ Executes any commands returned by the gui
 ==============
 */
 static bool MainMenuWindowStateIsNonZero( idUserInterface *gui, const char *stateName ) {
-	if ( gui == NULL || gui->GetDesktop() == NULL ) {
-		return false;
-	}
-
-	idWinVar *state = gui->GetDesktop()->GetWinVarByName( stateName, true );
-	return state != NULL && atoi( state->c_str() ) != 0;
+	idStr value;
+	return gui != NULL && gui->GetPresentationValue( stateName, value ) && atoi( value.c_str() ) != 0;
 }
 
 static bool MainMenuWindowStateEqualsInt( idUserInterface *gui, const char *stateName, int expectedValue ) {
-	if ( gui == NULL || gui->GetDesktop() == NULL ) {
-		return false;
-	}
-
-	idWinVar *state = gui->GetDesktop()->GetWinVarByName( stateName, true );
-	return state != NULL && atoi( state->c_str() ) == expectedValue;
+	idStr value;
+	return gui != NULL && gui->GetPresentationValue( stateName, value ) && atoi( value.c_str() ) == expectedValue;
 }
 
 static bool MainMenuSettingsPopupIsVisible( idUserInterface *gui ) {
@@ -3454,18 +3636,7 @@ static const mainMenuSettingsScrollPage_t *FindMainMenuSettingsScrollPage( const
 }
 
 static bool MainMenuSetWindowVar( idUserInterface *gui, const char *stateName, const char *value ) {
-	if ( gui == NULL || gui->GetDesktop() == NULL || stateName == NULL || value == NULL ) {
-		return false;
-	}
-
-	idWinVar *state = gui->GetDesktop()->GetWinVarByName( stateName, true );
-	if ( state == NULL ) {
-		return false;
-	}
-
-	state->Set( value );
-	state->SetEval( false );
-	return true;
+	return NativeInput_SessionCurrent() && gui != NULL && gui->SetPresentationValue( stateName, value );
 }
 
 static int MainMenuSettingsSectionChoiceForScroll( const mainMenuSettingsScrollPage_t &page, int scrollValue ) {
@@ -3511,7 +3682,8 @@ static int MainMenuSettingsSectionChoiceForScroll( const mainMenuSettingsScrollP
 }
 
 static bool ApplyMainMenuSettingsScrollPage( idUserInterface *gui, const mainMenuSettingsScrollPage_t &page, int requestedValue, bool requireVisiblePage ) {
-	if ( gui == NULL || gui->GetDesktop() == NULL ) {
+    if (!NativeInput_SessionCurrent()) return false;
+	if ( gui == NULL ) {
 		return false;
 	}
 
@@ -3575,7 +3747,7 @@ static bool ApplyMainMenuSettingsScrollPage( idUserInterface *gui, const char *p
 }
 
 static bool AdjustMainMenuPageScroll( idUserInterface *gui, const mainMenuSettingsScrollPage_t &page, int delta, bool toStart, bool toEnd ) {
-	if ( gui == NULL || gui->GetDesktop() == NULL ) {
+	if ( gui == NULL ) {
 		return false;
 	}
 
@@ -3667,6 +3839,7 @@ static void SyncMainMenuSettingsScrollPages( idUserInterface *gui ) {
 }
 
 void idSessionLocal::MenuEvent( const sysEvent_t *event ) {
+    if (!NativeInput_SessionCurrent()) return;
 	const char	*menuCommand;
 
 	if ( guiActive == NULL ) {
@@ -3679,8 +3852,14 @@ void idSessionLocal::MenuEvent( const sysEvent_t *event ) {
 		}
 	}
 
+    if (!NativeInput_SessionCurrent()) return;
 	menuCommand = guiActive->HandleEvent( event, common->GetPresentationTime() );
+    if (!NativeInput_SessionCurrent()) return;
+    // Keep callback-owned command bytes alive before another callback can replace them.
+    const idStr nativeCommand = NativeInput_Inhibited() ? (menuCommand ? menuCommand : "") : "";
+    if (NativeInput_Inhibited()) menuCommand = nativeCommand.c_str();
 	SyncMainMenuSettingsScrollPages( guiActive );
+    if (!NativeInput_SessionCurrent()) return;
 
 	if ( !menuCommand || !menuCommand[0] ) {
 		// If the menu didn't handle the event, and it's a key down event for an F key, run the bind
@@ -3691,6 +3870,7 @@ void idSessionLocal::MenuEvent( const sysEvent_t *event ) {
 	}
 
 	DispatchCommand( guiActive, menuCommand );
+    if (!NativeInput_SessionCurrent()) return;
 	SyncMainMenuSettingsScrollPages( guiActive );
 }
 
@@ -3700,16 +3880,24 @@ idSessionLocal::GuiFrameEvents
 =================
 */
 void idSessionLocal::GuiFrameEvents() {
+	// Programmatic events and deactivation actions are independent of input
+	// focus, the console, and which GUI currently receives physical events.
+	PumpApplicationActions();
 	const char	*cmd;
 	sysEvent_t  ev;
 	idUserInterface	*gui;
 
 	// stop generating move and button commands when a local console or menu is active
 	// running here so SP, async networking and no game all go through it
-	if ( console->Active() || guiActive ) {
+	if ( console->Active() || guiActive || guiTest || RetainedUI_IsOpen() ) {
 		usercmdGen->InhibitUsercmd( INHIBIT_SESSION, true );
 	} else {
 		usercmdGen->InhibitUsercmd( INHIBIT_SESSION, false );
+	}
+	if ( RetainedUI_IsOpen() ) {
+		RetainedUI_FrameInput();
+		ClearMenuControllerRepeatState();
+		return;
 	}
 
 	if ( guiTest ) {
@@ -3740,9 +3928,10 @@ void idSessionLocal::GuiFrameEvents() {
 	ev.evType = SE_NONE;
 	cmd = gui->HandleEvent( &ev, common->GetPresentationTime() );
 	if ( cmd && cmd[0] ) {
-		DispatchCommand( guiActive, cmd );
+		DispatchCommand( gui, cmd );
 	}
-	SyncMainMenuSettingsScrollPages( gui );
+	// Dispatch can close and release a test instance or install another menu.
+	SyncMainMenuSettingsScrollPages( guiTest != NULL ? guiTest : guiActive );
 }
 
 /*
@@ -3844,6 +4033,7 @@ const char* idSessionLocal::MessageBox( msgBoxType_t type, const char *message, 
 	msgFireBack[ 0 ] = fire_yes ? fire_yes : "";
 	msgFireBack[ 1 ] = fire_no ? fire_no : "";
 	guiMsgRestore = guiActive;
+	openq4::NativeInputBeforeSessionChange();
 	guiActive = guiMsg;
 	guiMsg->SetCursor( 325, 290 );
 	guiActive->Activate( true, common->GetPresentationTime() );
@@ -3978,6 +4168,7 @@ void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char 
 	guiMsg->SetStateString( "message", "Connecting.." );
 
 	guiMsgRestore = guiActive;
+	openq4::NativeInputBeforeSessionChange();
 	guiActive = guiMsg;
 	msgRunning = true;
 
@@ -3985,6 +4176,7 @@ void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char 
 		while ( msgRunning ) {
 			common->GUIFrame( true, false );
 			if ( bgl->completed ) {
+				openq4::NativeInputBeforeSessionChange();
 				guiActive = guiMsgRestore;
 				guiMsgRestore = NULL;
 				return;
@@ -4043,6 +4235,7 @@ void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char 
 		guiMsg->SetStateString( "visible_mid", "0" );
 		// continue looping
 		guiMsgRestore = guiActive;
+		openq4::NativeInputBeforeSessionChange();
 		guiActive = guiMsg;
 		msgRunning = true;
 	}
@@ -4075,6 +4268,7 @@ void idSessionLocal::HandleMsgCommands( const char *menuCommand ) {
 	// "stop" works even on first frame
 	if ( idStr::Icmp( cmd, "stop" ) == 0 ) {
 		// force hiding the current dialog
+		openq4::NativeInputBeforeSessionChange();
 		guiActive = guiMsgRestore;
 		guiMsgRestore = NULL;
 		msgRunning = false;
@@ -4085,12 +4279,14 @@ void idSessionLocal::HandleMsgCommands( const char *menuCommand ) {
 		return;
 	}
 	if ( idStr::Icmp( cmd, "mid" ) == 0 || idStr::Icmp( cmd, "left" ) == 0 ) {
+		openq4::NativeInputBeforeSessionChange();
 		guiActive = guiMsgRestore;
 		guiMsgRestore = NULL;
 		msgRunning = false;
 		msgRetIndex = 0;
 		DispatchCommand( guiActive, msgFireBack[ 0 ].c_str() );
 	} else if ( idStr::Icmp( cmd, "right" ) == 0 ) {
+		openq4::NativeInputBeforeSessionChange();
 		guiActive = guiMsgRestore;
 		guiMsgRestore = NULL;
 		msgRunning = false;
@@ -4107,6 +4303,7 @@ idSessionLocal::HandleNoteCommands
 #define NOTEDATFILE "C:/notenumber.dat"
 
 void idSessionLocal::HandleNoteCommands( const char *menuCommand ) {
+	openq4::NativeInputBeforeSessionChange();
 	guiActive = NULL;
 
 	if ( idStr::Icmp( menuCommand,  "note" ) == 0 && mapSpawned ) {

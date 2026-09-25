@@ -8,10 +8,10 @@ permissions:
   contents: read
 
 env:
-  # Keep the engine's shared File/FileSystem ABI locked to the companion
-  # revision that implements GAME_API 46, generated-animation cache v3, and
-  # the game-owned transient time-scale interface.
-  OPENQ4_GAMELIBS_SHA: 8f411dbc38efcb0f5f63b1c300ab220beb73808c
+  # Pin the companion's GAME_API 48 and retained input/presentation contract.
+  # Renderer API 14 device services are private to this engine repository.
+  # Publish this companion commit before CI runs.
+  OPENQ4_GAMELIBS_SHA: c24ce89097865ead402457068b2ce1df3eeb29d1
 
 concurrency:
   group: openq4-push-verification-${{ github.ref }}
@@ -43,6 +43,15 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Setup Java for Android host storage validation
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install native display test headers
+        run: sudo apt-get update && sudo apt-get install -y libvulkan-dev
+
       - name: Install release documentation dependency
         run: python -m pip install markdown
 
@@ -51,6 +60,9 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile \
+            tools/build/android_cross.py \
+            tools/build/android_elf.py \
+            tools/build/prepare_android_deps.py \
             tools/build/build_openq4_pack.py \
             tools/build/build_pak0.py \
             tools/build/build_windows_installer.py \
@@ -69,6 +81,7 @@ jobs:
             tools/build/verify_linux_arm64_release_evidence.py \
             tools/build/stage_fast_install.py \
             tools/build/stage_gamelibs.py \
+            tools/build/gamelibs_stage_path.py \
             tools/build/stage_windows_runtime.py \
             tools/build/sync_icons.py \
             tools/build/windows_runtime.py \
@@ -129,6 +142,14 @@ jobs:
             tools/tests/docs_link_integrity.py \
             tools/tests/dmap_render_geometry_lifecycle.py \
             tools/tests/fatal_error_startup_safety.py \
+            tools/tests/android_build.py \
+            tools/tests/android_touch_input.py \
+            tools/tests/audio_payload_restore.py \
+            tools/tests/renderer_gles_dispatch.py \
+            tools/tests/renderer_gles_alpha.py \
+            tools/tests/renderer_gles_upload.py \
+            tools/tests/android_host_storage.py \
+            tools/tests/image_block_mips.py \
             tools/tests/filesystem_case_segments.py \
             tools/tests/filesystem_mod_manifest.py \
             tools/tests/filesystem_write_qpath_safety.py \
@@ -242,6 +263,7 @@ jobs:
             tools/tests/renderer_gpu_frame_timing.py \
             tools/tests/renderer_gpu_skinning.py \
             tools/tests/renderer_temporal_presentation.py \
+            tools/tests/renderer_native_ui_output.py \
             tools/tests/renderer_mp_flat_items.py \
             tools/tests/renderer_pbr_materials.py \
             tools/tests/renderer_classic_gui_domain.py \
@@ -272,6 +294,118 @@ jobs:
             tools/tests/savegame_pointer_width_safety.py \
             tools/tests/savegame_v3_contract.py \
             tools/tests/sdl3_input_parity.py \
+            tools/tests/sys_event_queue_ownership.py \
+            tools/tests/event_journal.py \
+            tools/tests/event_disposition_storage.py \
+            tools/tests/sdl3_input_disposition.py \
+            tools/tests/native_event_disposition.py \
+            tools/tests/native_input_route.py \
+            tools/tests/native_input_facts.py \
+            tools/tests/native_input_terminal.py \
+            tools/tests/native_input_lifecycle.py \
+            tools/tests/native_input_driver.py \
+            tools/tests/native_event_retirement.py \
+            tools/tests/sdl3_clipboard_status.py \
+            tools/tests/sdl3_text_provenance.py \
+            tools/tests/sdl3_native_fence.py \
+            tools/tests/native_queue_batch.py \
+            tools/tests/ui_text_edit_model.py \
+            tools/tests/ui_native_text_document.py \
+            tools/tests/ui_native_text_editor.py \
+            tools/tests/ui_native_text_collection.py \
+            tools/tests/ui_number_clipboard.py \
+            tools/tests/ui_number_drafts.py \
+            tools/tests/ui_number_native.py \
+            tools/tests/ui_native_collection_coordinator.py \
+            tools/tests/ui_managed_native_owner.py \
+            tools/tests/ui_focus_reveal.py \
+            tools/tests/ui_scrollbar_interaction.py \
+            tools/tests/ui_scrollbar_runtime.py \
+            tools/tests/ui_choice_scroll_interaction.py \
+            tools/tests/ui_choice_scroll_runtime.py \
+            tools/tests/ui_document_edit.py \
+            tools/tests/ui_document_canvas.py \
+            tools/tests/ui_document_canvas_mutations.py \
+            tools/tests/ui_document_view_projection.py \
+            tools/tests/ui_popup_placement.py \
+            tools/tests/ui_popup_placement_runtime.py \
+            tools/tests/ui_settings_decimal_precision.py \
+            tools/tests/ui_settings_exact_values.py \
+            tools/tests/ui_settings_automatic.py \
+            tools/tests/ui_settings_effect_journal.py \
+            tools/tests/sound_settings.py \
+            tools/tests/sound_recovery.py \
+            tools/tests/ui_performance_presets.py \
+            tools/tests/ui_system_number_fields.py \
+            tools/tests/ui_system_presets.py \
+            tools/tests/system_settings_archive_policy.py \
+            tools/tests/ui_system_presets_runtime.py \
+            tools/ui/update_system_presets.py \
+            tools/ui/update_system_number_fields.py \
+            tools/tests/windows_text_store.py \
+            tools/tests/windows_text_collection_bridge.py \
+            tools/tests/windows_text_session.py \
+            tools/tests/ui_text_input.py \
+            tools/tests/ui_retained_input.py \
+            tools/tests/ui_retained_state_sources.py \
+            tools/tests/ui_presentation_bridge.py \
+            tools/tests/ui_retained_layer_pool.py \
+            tools/tests/ui_manager_lifecycle.py \
+            tools/tests/ui_event_delivery.py \
+            tools/tests/ui_list_selection_safety.py \
+            tools/tests/ui_session_test_gui.py \
+            tools/tests/ui_system_session_route.py \
+            tools/tests/ui_retained_resource_lifecycle.py \
+            tools/tests/ui_retained_adapter.py \
+            tools/tests/ui_text_owner.py \
+            tools/tests/ui_system_settings_host.py \
+            tools/tests/ui_settings_service.py \
+            tools/tests/durable_file.py \
+            tools/tests/settings_configuration_persistence.py \
+            tools/tests/sdl3_settings_placement.py \
+            tools/tests/ui_system_display.py \
+            tools/tests/ui_settings_display_service.py \
+            tools/tests/ui_display_settings_fixture.py \
+            tools/tests/ui_generated_font_precache.py \
+            tools/tests/ui_capture_display_settings.py \
+            tools/tests/ui_capture_settings_recovery.py \
+            tools/tests/ui_capture_managed.py \
+            tools/tests/ui_capture_system_settings.py \
+            tools/tests/ui_capture_system_page.py \
+            tools/tests/ui_capture_system_exit.py \
+            tools/tests/renderer_vid_restart_route.py \
+            tools/tests/renderer_image_recovery_owner.py \
+            tools/tests/renderer_image_recovery_module.py \
+            tools/tests/renderer_image_recovery_loader.py \
+            tools/tests/renderer_image_recovery_codec.py \
+            tools/tests/renderer_image_recovery_cold.py \
+            tools/tests/renderer_image_recovery_fixture.py \
+            tools/tests/renderer_image_recovery_lifecycle.py \
+            tools/tests/renderer_image_policy_restart.py \
+            tools/tests/renderer_image_policy_boundaries.py \
+            tools/tests/renderer_image_policy_lifetimes.py \
+            tools/tests/renderer_image_policy_metadata.py \
+            tools/tests/renderer_consumed_policy.py \
+            tools/tests/renderer_consumed_upload_batches.py \
+            tools/tests/renderer_upload_storage.py \
+            tools/tests/renderer_image_reduction.py \
+            tools/tests/renderer_image_content.py \
+            tools/tests/renderer_display_services.py \
+            tools/tests/renderer_display_presentation.py \
+            tools/tests/renderer_gl_display_policy.py \
+            tools/tests/sdl3_strict_window.py \
+            tools/tests/ui_capture_display_device.py \
+            tools/ui/capture_display_device.py \
+            tools/tests/ui_legacy_inventory.py \
+            tools/tests/ui_legacy_import.py \
+            tools/tests/ui_legacy_expression.py \
+            tools/tests/ui_legacy_observation.py \
+            tools/ui/legacy_inventory.py \
+            tools/ui/legacy_import.py \
+            tools/ui/legacy_syntax.py \
+            tools/ui/capture_legacy_baseline.py \
+            tools/ui/verify_binding_capture.py \
+            tools/tests/ui_background_cursor.py \
             tools/tests/menu_controller_navigation.py \
             tools/tests/sdl3_multidisplay_windowing.py \
             tools/tests/settings_menu_coverage.py \
@@ -288,6 +422,9 @@ jobs:
             tools/build/vulkan_material_sources.py \
             tools/tests/renderer_vulkan_material_programs.py \
             tools/tests/renderer_vulkan_material_reload.py \
+            tools/tests/vk_display_color_mapping.py \
+            tools/tests/vk_display_color_mapping_shader_pin.py \
+            tools/tests/vk_display_color_mapping_capture.py \
             tools/tests/vk_temporal_resolve_shader_pin.py \
             tools/tests/vscode_fast_build.py
           bash -n tools/build/meson_setup.sh
@@ -325,6 +462,14 @@ jobs:
           python tools/tests/docs_link_integrity.py
           python tools/tests/dmap_render_geometry_lifecycle.py
           python tools/tests/fatal_error_startup_safety.py
+          python tools/tests/android_build.py
+          python tools/tests/android_touch_input.py
+          python tools/tests/audio_payload_restore.py
+          python tools/tests/renderer_gles_dispatch.py
+          python tools/tests/renderer_gles_alpha.py
+          python tools/tests/renderer_gles_upload.py
+          python tools/tests/android_host_storage.py
+          python tools/tests/image_block_mips.py
           python tools/tests/filesystem_case_segments.py
           python tools/tests/filesystem_mod_manifest.py
           python tools/tests/filesystem_write_qpath_safety.py
@@ -365,6 +510,7 @@ jobs:
           python tools/tests/loading_pacifier_reentry_contract.py
           python tools/tests/choice_gui_value_contract.py
           python tools/tests/map_entity_strings.py
+          python tools/tests/sp_turbo_weapon_wheel.py
           python tools/tests/weapon_wheel_time_scale.py
           python tools/tests/weapon_zoom_view_alignment.py
           python tools/tests/windows_dedicated_server_smoke_contract.py
@@ -432,6 +578,7 @@ jobs:
           python tools/tests/renderer_gpu_frame_timing.py
           python tools/tests/renderer_gpu_skinning.py
           python tools/tests/renderer_temporal_presentation.py
+          python tools/tests/renderer_native_ui_output.py
           python tools/tests/renderer_mp_flat_items.py
           python tools/tests/renderer_pbr_materials.py
           python tools/tests/renderer_classic_gui_domain.py
@@ -460,6 +607,101 @@ jobs:
           python tools/tests/savegame_pointer_width_safety.py
           python tools/tests/savegame_v3_contract.py
           python tools/tests/sdl3_input_parity.py
+          python tools/tests/sys_event_queue_ownership.py
+          python tools/tests/event_journal.py
+          python tools/tests/event_disposition_storage.py
+          python tools/tests/sdl3_input_disposition.py
+          python tools/tests/native_event_disposition.py
+          python tools/tests/native_input_route.py
+          python tools/tests/native_input_lifecycle.py
+          python tools/tests/native_input_driver.py --mutations
+          python tools/tests/native_input_facts.py
+          python tools/tests/native_input_terminal.py
+          python tools/tests/native_event_retirement.py
+          python tools/tests/sdl3_clipboard_status.py
+          python tools/tests/sdl3_text_provenance.py
+          python tools/tests/sdl3_native_fence.py
+          python tools/tests/native_queue_batch.py
+          python tools/tests/ui_text_edit_model.py
+          python tools/tests/ui_native_text_document.py
+          python tools/tests/ui_native_text_editor.py
+          python tools/tests/ui_native_text_collection.py
+          python tools/tests/ui_number_clipboard.py
+          python tools/tests/ui_number_drafts.py
+          python tools/tests/ui_number_native.py
+          python tools/tests/ui_native_collection_coordinator.py
+          python tools/tests/ui_managed_native_owner.py
+          python tools/tests/ui_settings_decimal_precision.py
+          python tools/tests/ui_settings_exact_values.py --mutations
+          python tools/tests/ui_settings_automatic.py
+          python tools/tests/ui_settings_effect_journal.py
+          python tools/tests/sound_settings.py
+          python tools/tests/sound_recovery.py
+          python tools/tests/ui_performance_presets.py --mutations --adjacent
+          python tools/tests/ui_system_number_fields.py
+          python tools/tests/ui_system_presets.py
+          python tools/tests/system_settings_archive_policy.py
+          python tools/ui/update_system_presets.py --check
+          python tools/ui/update_system_number_fields.py --check
+          python tools/tests/ui_text_input.py
+          python tools/tests/ui_retained_input.py
+          python tools/tests/ui_retained_state_sources.py
+          python tools/tests/ui_presentation_bridge.py
+          python tools/tests/ui_retained_layer_pool.py
+          python tools/tests/ui_manager_lifecycle.py
+          python tools/tests/ui_event_delivery.py
+          python tools/tests/ui_list_selection_safety.py
+          python tools/tests/ui_session_test_gui.py
+          python tools/tests/ui_system_session_route.py
+          python tools/tests/ui_retained_resource_lifecycle.py
+          python tools/tests/ui_retained_adapter.py
+          python tools/tests/ui_scrollbar_interaction.py --mutations
+          python tools/tests/ui_choice_scroll_interaction.py --mutations
+          python tools/tests/ui_document_edit.py --mutations
+          python tools/tests/ui_popup_placement.py --mutations
+          python tools/tests/ui_text_owner.py
+          python tools/tests/ui_system_settings_host.py
+          python tools/tests/ui_settings_service.py
+          python tools/tests/durable_file.py --mutations
+          python tools/tests/settings_configuration_persistence.py
+          python tools/tests/sdl3_settings_placement.py
+          python tools/tests/ui_system_display.py
+          python tools/tests/ui_settings_display_service.py
+          python tools/tests/ui_display_settings_fixture.py
+          python tools/tests/ui_generated_font_precache.py
+          python tools/tests/ui_capture_display_settings.py
+          python tools/tests/ui_capture_settings_recovery.py
+          python tools/tests/ui_capture_managed.py
+          python tools/tests/ui_capture_system_settings.py
+          python tools/tests/ui_capture_system_page.py
+          python tools/tests/ui_capture_system_exit.py
+          python tools/tests/renderer_vid_restart_route.py
+          python tools/tests/renderer_image_recovery_owner.py --mutations
+          python tools/tests/renderer_image_recovery_module.py --mutations
+          python tools/tests/renderer_image_recovery_loader.py --mutations
+          python tools/tests/renderer_image_recovery_codec.py --mutations
+          python tools/tests/renderer_image_recovery_cold.py --mutations
+          python tools/tests/renderer_image_recovery_lifecycle.py --mutations
+          python tools/tests/renderer_image_policy_restart.py --mutations
+          python tools/tests/renderer_image_policy_boundaries.py --mutations
+          python tools/tests/renderer_image_policy_lifetimes.py --mutations
+          python tools/tests/renderer_image_policy_metadata.py --mutations
+          python tools/tests/renderer_consumed_policy.py --mutations
+          python tools/tests/renderer_consumed_policy.py --vulkan --mutations
+          python tools/tests/renderer_consumed_upload_batches.py --mutations
+          python tools/tests/renderer_upload_storage.py --mutations
+          python tools/tests/renderer_image_reduction.py --mutations
+          python tools/tests/renderer_image_content.py --mutations
+          python tools/tests/renderer_display_services.py
+          python tools/tests/renderer_display_presentation.py
+          python tools/tests/renderer_gl_display_policy.py
+          python tools/tests/sdl3_strict_window.py
+          python tools/tests/ui_capture_display_device.py
+          python tools/tests/ui_legacy_inventory.py
+          python tools/tests/ui_legacy_import.py
+          python tools/tests/ui_legacy_expression.py --mutations
+          python tools/tests/ui_legacy_observation.py --mutations
+          python tools/tests/ui_background_cursor.py
           python tools/tests/menu_controller_navigation.py
           python tools/tests/sdl3_multidisplay_windowing.py
           python tools/tests/settings_menu_coverage.py
@@ -474,6 +716,9 @@ jobs:
           python tools/tests/validation_hardening.py
           python tools/tests/vk_shader_header_pin.py
           python tools/build/vulkan_material_sources.py --check
+          python tools/tests/vk_display_color_mapping.py
+          python tools/tests/vk_display_color_mapping_shader_pin.py
+          python tools/tests/vk_display_color_mapping_capture.py --self-test
           python tools/tests/vk_temporal_resolve_shader_pin.py
           python tools/tests/vscode_fast_build.py
 
@@ -547,6 +792,12 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.x"
+
+      - name: Setup Java for Android host storage validation
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
       - name: Install Meson and Ninja
         shell: bash
@@ -757,6 +1008,12 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Setup Java for Android host storage validation
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Install Meson and Ninja
         shell: pwsh
         run: |
@@ -800,6 +1057,29 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           python tools/analysis/clang_tidy_input_safety.py --build-dir builddir
+
+      - name: Validate Windows text-store SDK boundary
+        shell: cmd
+        run: |
+          call tools\build\openq4_devcmd.cmd
+          if errorlevel 1 exit /b 1
+          python tools\tests\windows_text_store.py
+          if errorlevel 1 exit /b 1
+          python tools\tests\windows_text_collection_bridge.py --sdl-include subprojects/SDL3-3.4.10/include
+          if errorlevel 1 exit /b 1
+          python tools\tests\windows_text_collection_bridge.py --compiler cl --msvc-debug --sdl-include subprojects/SDL3-3.4.10/include
+          if errorlevel 1 exit /b 1
+          python tools\tests\windows_text_collection_bridge.py --unsupported --sdl-include subprojects/SDL3-3.4.10/include
+          if errorlevel 1 exit /b 1
+          python tools\tests\windows_text_session.py --sdl-include subprojects/SDL3-3.4.10/include
+          if errorlevel 1 exit /b 1
+          python tools\tests\windows_text_session.py --compiler cl --msvc-debug --no-mutations --sdl-include subprojects/SDL3-3.4.10/include
+          if errorlevel 1 exit /b 1
+          python tools\tests\windows_text_session.py --route-facts --sdl-include subprojects/SDL3-3.4.10/include
+          if errorlevel 1 exit /b 1
+          python tools\tests\native_input_facts.py --compiler cl --msvc-debug --no-mutations --sdl-include subprojects/SDL3-3.4.10/include
+          if errorlevel 1 exit /b 1
+          python tools\tests\native_input_terminal.py --compiler cl --msvc-debug --no-mutations --sdl-include subprojects/SDL3-3.4.10/include
 
       - name: Publish staged payload
         if: always()

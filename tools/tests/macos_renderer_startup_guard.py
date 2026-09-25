@@ -199,7 +199,7 @@ def validate_disabled_upload_bridge_state() -> None:
         "hasSync = requestedPath == UPLOAD_PATH_PERSISTENT && syncAvailable",
         'const char *bridgeMode = "disabled"',
         'bridgeMode = "streaming"',
-        "activeRingBytes / 1024",
+        "stats.ringSizeBytes / 1024",
     ):
         require(init_body, token, "disabled renderer upload bridge state")
 

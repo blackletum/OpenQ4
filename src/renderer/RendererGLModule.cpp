@@ -29,6 +29,7 @@
 #endif
 
 #include "tr_local.h"
+#include "RendererResourceSettings.h"
 #include "RenderModuleAPI.h"
 #include "RendererModule.h"
 #include "../bse/BSEInterface.h"
@@ -406,10 +407,10 @@ bool R_RendererModule_ResetApiAfterDeviceFailure( void ) {
 	return false;
 }
 
-#ifdef OPENQ4_RENDERER_GL_MODULE
+#if defined( OPENQ4_RENDERER_GL_MODULE ) || defined( OPENQ4_RENDERER_GLES_MODULE )
 /*
 ====================
-QGL loader (module-local, GL backend only)
+QGL loader (module-local, GL and GLES backends)
 
 Under the SDL3 seam all GL procs resolve through the window services; QGL
 only tracks the driver library handle on Windows for parity with the legacy
@@ -446,7 +447,7 @@ void QGL_Shutdown( void ) {
 }
 #endif
 
-#endif /* OPENQ4_RENDERER_GL_MODULE */
+#endif /* OPENQ4_RENDERER_GL_MODULE || OPENQ4_RENDERER_GLES_MODULE */
 
 /*
 ====================
@@ -529,6 +530,15 @@ renderExport_t *GetRenderAPI( renderImport_t *moduleImport ) {
 
 	rgm_export.renderSystem = renderSystem;			// the module's statically-initialized &tr
 	rgm_export.renderModelManager = renderModelManager;
+	rgm_export.TryDeviceRestart = R_TryFullVidRestart;
+	rgm_export.GetDisplayPresentation = R_GetDisplayPresentation;
+	rgm_export.TryInitializeDisplay = R_TryInitializeDisplay;
+	rgm_export.TryImagePolicyRestart = R_TryImagePolicyRestart;
+    rgm_export.PrepareImagePolicyRecovery=R_PrepareImagePolicyRecovery;
+    rgm_export.CaptureImagePolicyRecovery=R_CaptureImagePolicyRecovery;
+    rgm_export.PrepareColdImagePolicyRecovery=R_PrepareColdImagePolicyRecovery;
+    rgm_export.CancelImagePolicyRecovery=R_CancelPreparedImagePolicyRecovery;
+    rgm_export.ReleaseImagePolicyRecovery=R_ReleaseCompletedImagePolicyRecovery;
 #ifdef OPENQ4_RENDERER_VK_MODULE
 	// the Vulkan backend keeps its bring-up diagnostics surface for the
 	// on-demand rendererVkProbe flow

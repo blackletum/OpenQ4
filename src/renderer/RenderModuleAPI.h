@@ -3,6 +3,7 @@
 
 #ifndef __RENDERMODULEAPI_H__
 #define __RENDERMODULEAPI_H__
+#include <stdint.h>
 
 /*
 ===============================================================================
@@ -57,14 +58,17 @@
 // 11 - Append-only idRenderSystem slots publish frame-latched scene/native
 //      output state and enqueue the backend-neutral temporal presentation
 //      resolve requested by game modules
-// 12 - ResetRenderApiAfterDeviceFailure service: a module whose device cannot
-//      start after activation asks the loader to point the next launch at
-//      OpenGL
-// 13 - Recoverable startup-device preparation. The engine may tear down its
-//      startup owners and retry the fallback renderer after this returns false.
-// 14 - Match the canonical game renderer interface: ETC2 capability field and
-//      explicit clear alpha. Reject old modules with a different C++ contract.
-#define RENDER_API_VERSION			14
+// 12 - renderFramebufferDesc_t::glESProfile lets a module ask for an OpenGL ES
+//      context; a stale module would leave that byte uninitialised
+// 13 - ClearRenderTarget carries alpha for transparent retained UI layers.
+// 14 - Strict window requests/readback and private recoverable device services.
+// 15 - Private strict first-device initialization for durable display recovery.
+// 16 - Checked image/material policy restart receipt (private renderer service).
+// 17 - Owned portable image recovery preparation/capture and checked consumption.
+// 18 - Append-only retained output-size font metrics/glyph/reset services.
+// 19 - Merge startup-device preparation/fallback and current renderer contracts
+//      with retained UI services; both parent branches have incompatible layouts.
+#define RENDER_API_VERSION			19
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -167,6 +171,8 @@ typedef struct renderFramebufferDesc_s {
 	bool			glDebugContext;
 	// --- version 6 ---
 	int				surfaceKind;		// renderSurfaceKind_t; GL attributes above are ignored for Vulkan
+	// --- version 12 ---
+	bool			glESProfile;		// request an OpenGL ES context; overrides glCoreProfile
 } renderFramebufferDesc_t;
 
 // ABI-neutral mirror of the renderer's glimpParms_t
@@ -179,6 +185,39 @@ typedef struct renderWindowParms_s {
 	int				displayHz;
 	int				multiSamples;
 } renderWindowParms_t;
+
+// Immutable display request. A nonzero displayId is authoritative across display
+// enumeration changes; displayIndex is used only when displayId is zero (-1 Auto).
+// Windowed dimensions are logical window units; exclusive dimensions are pixels.
+// swapInterval and multiSamples are validated by the renderer, not SDL windowing.
+typedef struct renderWindowRequest_s {
+	renderWindowParms_t parms;
+	unsigned int displayId;
+	int displayIndex;
+	bool fullscreenDesktop;
+	bool spanDisplays;
+	int swapInterval;
+	// Explicit baseline restoration. Position is authoritative only when true;
+	// maximized is applied independently, including on positionless compositors.
+	bool restorePlacement;
+	int windowX, windowY;
+	bool maximized;
+} renderWindowRequest_t;
+
+// Observations, never echoes of requested CVars. False query/apply results leave
+// output unchanged. A failed strict apply may have partially changed the window;
+// the caller must explicitly restore its captured state before persisting it.
+typedef struct renderWindowState_s {
+	unsigned int displayId;
+	int displayIndex;
+	unsigned long long windowFlags;
+	bool fullscreen, fullscreenDesktop, borderless, hidden, minimized, maximized, focused;
+	int windowX, windowY, logicalWidth, logicalHeight, pixelWidth, pixelHeight;
+	bool positionValid, currentModeValid;
+	int modeWidth, modeHeight, modePixelWidth, modePixelHeight;
+	float refreshRate, modePixelDensity, displayScale, pixelDensityX, pixelDensityY;
+	int uiViewportX, uiViewportY, uiViewportWidth, uiViewportHeight;
+} renderWindowState_t;
 
 typedef struct renderWindowServices_s {
 	// idempotent window-system bring-up: video subsystem, hints, lifecycle
@@ -244,6 +283,16 @@ typedef struct renderWindowServices_s {
 	// creates a surface on the current game window; false when the window
 	// was not created with RENDER_SURFACE_VULKAN or creation fails
 	bool			( *CreateVulkanSurface )( void *vkInstance, unsigned long long *outVkSurface );
+
+	// --- version 14: strict application has no closest-mode/desktop/placement
+	// fallback. Query reads current SDL state without changing archived CVars.
+	bool			( *QueryWindowState )( renderWindowState_t *outState );
+	bool			( *ApplyScreenParmsStrict )( const renderWindowRequest_t *request,
+								renderWindowState_t *outState, char *error, int errorSize );
+	// A recoverable attempt pins the existing video subsystem so live display
+	// identities survive context/window teardown, including failed attempts.
+	bool			( *RetainVideoSystem )( void );
+	void			( *ReleaseVideoSystem )( void );
 } renderWindowServices_t;
 
 // attribute selectors for renderWindowServices_t::GetGLAttribute; the
@@ -312,6 +361,12 @@ typedef struct renderModuleDiagnostics_s {
 	bool			( *RunDeviceSelfTest )( char *outSummary, int summaryLength );
 } renderModuleDiagnostics_t;
 
+struct renderDisplayPresentation_t;
+struct renderImagePolicyRequest_t;
+struct renderImagePolicyResult_t;
+struct renderImagePolicy_t;
+struct renderImageRecoveryLease_t;
+
 typedef struct renderExport_s {
 	int										version;		// RENDER_API_VERSION
 	const char *							backendName;	// "gl" / "vulkan" -> r_actualRenderApi
@@ -331,6 +386,23 @@ typedef struct renderExport_s {
 	// for InitOpenGL; failure releases partial GPU/window state and returns to
 	// the engine before any renderer module can be unloaded. Optional for GL.
 	bool			( *PrepareStartupDevice )( char *outReason, int reasonLength );
+	// Version 14: frame-boundary device work and actual backend presentation.
+	// A failed restart may leave no device; the caller must explicitly restore.
+	bool			( *TryDeviceRestart )( const renderWindowRequest_t *request, char *error, int errorSize );
+	void			( *GetDisplayPresentation )( renderDisplayPresentation_t *outState );
+	// Version 15: only after renderSystem->Init and before the first device/world.
+	// Failure leaves no device; an explicit retry retains the caller's request.
+	// This never runs the legacy startup fallback or the world/font restart tail.
+	bool			( *TryInitializeDisplay )( const renderWindowRequest_t *request, char *error, int errorSize );
+    // Version 16: synchronous upload/material work; not a first-present receipt.
+    // False preserves output even when the failed attempt requires explicit restore.
+    bool (*TryImagePolicyRestart)(const renderImagePolicyRequest_t* request,
+        renderImagePolicyResult_t* output, char* error, int errorSize);
+    bool (*PrepareImagePolicyRecovery)(uint64_t,uint64_t,const char*,const renderImagePolicy_t*,renderImageRecoveryLease_t*,char*,int);
+    bool (*CaptureImagePolicyRecovery)(const renderImageRecoveryLease_t*,uint32_t,char*,uint32_t,uint32_t*,char*,int);
+    bool (*PrepareColdImagePolicyRecovery)(uint64_t,uint64_t,const char*,uint32_t,const char*,uint32_t,renderImageRecoveryLease_t*,char*,int);
+    bool (*CancelImagePolicyRecovery)(const renderImageRecoveryLease_t*,char*,int);
+    bool (*ReleaseImagePolicyRecovery)(const renderImageRecoveryLease_t*,uint32_t,const renderImagePolicyResult_t*,char*,int);
 } renderExport_t;
 
 extern "C" {

@@ -29,6 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
+#include "../../framework/NativeInputDispatch.h"
+#include <intrin.h>
 #include <errno.h>
 #include <float.h>
 #include <fcntl.h>
@@ -987,13 +989,24 @@ Show the early console as an error dialog
 =============
 */
 void Sys_Error(const char* error, ...) {
-	va_list		argptr;
-	char		text[4096];
+    // Freeze borrowed diagnostics before retirement can release their owner.
+    // Formatting touches no GUI, native window, or message-dispatch boundary.
+    va_list argptr;
+    char text[4096];
+    va_start(argptr, error);
+    idStr::vsnPrintf(text, sizeof(text), error ? error : "Unknown error", argptr);
+    va_end(argptr);
+    if (!NativeInput_FatalRetire()) {
+        // An already-fatal unresolved native lease cannot enter the console or
+        // dispatch DLL/CRT shutdown callbacks. Preserve bounded raw diagnostics.
+        const char* message = text;
+        DWORD length = 0, written = 0;
+        while (length < 2048 && message[length]) ++length;
+        (void)WriteFile(GetStdHandle(STD_ERROR_HANDLE), message, length, &written, NULL);
+        (void)TerminateProcess(GetCurrentProcess(), 1);
+        __fastfail(FAST_FAIL_FATAL_APP_EXIT);
+    }
 	MSG        msg;
-
-	va_start(argptr, error);
-	idStr::vsnPrintf(text, sizeof(text), error, argptr);
-	va_end(argptr);
 
 	Conbuf_AppendText(text);
 	Conbuf_AppendText("\n");
@@ -1498,12 +1511,34 @@ EVENT LOOP
 ========================================================================
 */
 
+#include "../EventQueueContinuity.h"
+#include "../EventDisposition.h"
+#include "../EventRetirement.h"
+
 #define	MAX_QUED_EVENTS		256
 #define	MASK_QUED_EVENTS	( MAX_QUED_EVENTS - 1 )
 
 sysEvent_t	eventQue[MAX_QUED_EVENTS];
+static sysEventDispositionTag_t eventDispositionTags[MAX_QUED_EVENTS];
+static std::uint64_t eventRetirementSerials[MAX_QUED_EVENTS];
+static std::uint64_t eventRetirementHighwater = 0; // Never reset by clear/rebind.
 int			eventHead = 0;
 int			eventTail = 0;
+
+// Only pending queue entries own their payload. Dequeued slots may still hold
+// a pointer whose ownership has already transferred to the event consumer.
+static void Sys_DiscardQueuedEvent( sysEvent_t &event ) {
+	if ( event.evPtr != NULL ) {
+		// Discarded console input can contain private CVar values. Wipe all
+		// bounded console bytes without parsing text during queue teardown.
+		if ( event.evType == SE_CONSOLE && event.evPtrLength > 0 ) {
+			memset( event.evPtr, 0, static_cast<size_t>( event.evPtrLength ) );
+		}
+		Mem_Free( event.evPtr );
+	}
+	event.evPtr = NULL;
+	event.evPtrLength = 0;
+}
 
 /*
 ================
@@ -1519,11 +1554,10 @@ void Sys_QueEvent(int time, sysEventType_t type, int value, int value2, int ptrL
 	ev = &eventQue[eventHead & MASK_QUED_EVENTS];
 
 	if (eventHead - eventTail >= MAX_QUED_EVENTS) {
+		Sys_InvalidateEventQueue();
 		common->Printf("Sys_QueEvent: overflow\n");
 		// we are discarding an event, but don't leak memory
-		if (ev->evPtr) {
-			Mem_Free(ev->evPtr);
-		}
+		Sys_DiscardQueuedEvent( *ev );
 		eventTail++;
 	}
 
@@ -1534,6 +1568,72 @@ void Sys_QueEvent(int time, sysEventType_t type, int value, int value2, int ptrL
 	ev->evValue2 = value2;
 	ev->evPtrLength = ptrLength;
 	ev->evPtr = ptr;
+	eventDispositionTags[ev - eventQue] = {};
+	eventRetirementSerials[ev - eventQue] = 0;
+}
+
+bool Sys_QueTrackedEvent(sysEvent_t& event, sysEventDispositionTag_t& tag) noexcept {
+	int type = 0;
+	memcpy(&type, &event.evType, sizeof(type));
+	if (!Sys_EventDispositionTagCurrent(tag) || type <= SE_NONE || type > SE_RETAINED_UI ||
+		event.evPtrLength < 0 || event.evPtrLength > 1024 * 1024 ||
+		((event.evPtrLength != 0) != (event.evPtr != NULL))) return false;
+	if (eventHead - eventTail >= MAX_QUED_EVENTS) {
+		Sys_InvalidateEventQueue();
+		return false; // No eviction, ownership transfer or callback on failed admission.
+	}
+	if (eventRetirementHighwater == (std::numeric_limits<std::uint64_t>::max)()) return false;
+	const int slot = eventHead & MASK_QUED_EVENTS;
+	eventQue[slot] = event;
+	eventDispositionTags[slot] = tag;
+	eventRetirementSerials[slot] = ++eventRetirementHighwater;
+	++eventHead;
+	event = {}; tag = {};
+	return true;
+}
+
+
+sysEventTransfer_t Sys_PeekEventDispositionTag(sysEventDispositionTag_t& out) noexcept {
+    if (!Sys_EventDispositionBoundThread()) return sysEventTransfer_t::Refused;
+    if (eventHead <= eventTail) return sysEventTransfer_t::Empty;
+    out = eventDispositionTags[eventTail & MASK_QUED_EVENTS];
+    return sysEventTransfer_t::Ready;
+}
+sysEventTransfer_t Sys_PeekEventForRetirement(openq4::NativeInputHead& out) noexcept {
+    if (!Sys_EventDispositionBoundThread()) return sysEventTransfer_t::Refused;
+    if (eventHead <= eventTail) return sysEventTransfer_t::Empty;
+    const unsigned slot = static_cast<unsigned>(eventTail & MASK_QUED_EVENTS);
+    if (!eventRetirementSerials[slot] || !eventDispositionTags[slot].ShapeValid()) return sysEventTransfer_t::Refused;
+    out = Sys_EventRetirementHead(openq4::NativeInputLane::Platform, eventRetirementSerials[slot], slot,
+        eventQue[slot], eventDispositionTags[slot]);
+    return sysEventTransfer_t::Ready;
+}
+sysEventTransfer_t Sys_TakeEventForRetirement(openq4::NativeInputRoute& route,
+    const openq4::NativeInputRoute::CancellationPermit& permit, sysEvent_t& event, sysEventDispositionTag_t& tag) noexcept {
+    openq4::NativeInputHead head;
+    const auto status = Sys_PeekEventForRetirement(head);
+    if (status != sysEventTransfer_t::Ready) return status;
+    if (!route.AllowsCancellation(permit, head)) return sysEventTransfer_t::Refused;
+    // Serialized original event thread; no foreign call between comparison and transfer.
+    const auto ownedEvent = eventQue[head.slot]; const auto ownedTag = eventDispositionTags[head.slot];
+    eventQue[head.slot] = {}; eventDispositionTags[head.slot] = {}; eventRetirementSerials[head.slot] = 0;
+    ++eventTail;
+    event = ownedEvent; tag = ownedTag;
+    return sysEventTransfer_t::Ready;
+}
+
+sysEventTransfer_t Sys_TakeEventWithDisposition(sysEvent_t& event, sysEventDispositionTag_t& tag) noexcept {
+	if (!Sys_EventDispositionEpoch()) return sysEventTransfer_t::Refused;
+	if (eventHead <= eventTail) return sysEventTransfer_t::Empty;
+	const int slot = eventTail & MASK_QUED_EVENTS;
+	const auto ownedTag = eventDispositionTags[slot];
+	if (!ownedTag.Empty() && !Sys_EventDispositionTagCurrent(ownedTag)) return sysEventTransfer_t::Refused;
+	const auto ownedEvent = eventQue[slot];
+	eventQue[slot] = {}; eventDispositionTags[slot] = {};
+	eventRetirementSerials[slot] = 0;
+	++eventTail;
+	event = ownedEvent; tag = ownedTag;
+	return sysEventTransfer_t::Ready;
 }
 
 /*
@@ -1544,6 +1644,7 @@ This allows windows to be moved during renderbump
 =============
 */
 void Sys_PumpEvents(void) {
+    if (NativeInput_OwnsPump()) return; // Same owner also covers support windows.
 	MSG msg;
 
 #ifdef USE_SDL3
@@ -1622,6 +1723,13 @@ Sys_ClearEvents
 ================
 */
 void Sys_ClearEvents(void) {
+	Sys_InvalidateEventQueue();
+	while ( eventHead > eventTail ) {
+		Sys_DiscardQueuedEvent( eventQue[ eventTail & MASK_QUED_EVENTS ] );
+		eventDispositionTags[eventTail & MASK_QUED_EVENTS] = {};
+		eventRetirementSerials[eventTail & MASK_QUED_EVENTS] = 0;
+		eventTail++;
+	}
 	eventHead = eventTail = 0;
 }
 
@@ -1635,6 +1743,10 @@ sysEvent_t Sys_GetEvent(void) {
 
 	// return if we have data
 	if (eventHead > eventTail) {
+		if (!eventDispositionTags[eventTail & MASK_QUED_EVENTS].Empty()) {
+			Sys_InvalidateEventQueue();
+			return sysEvent_t{}; // Preserve original tagged ownership for explicit retirement.
+		}
 		eventTail++;
 		return eventQue[(eventTail - 1) & MASK_QUED_EVENTS];
 	}

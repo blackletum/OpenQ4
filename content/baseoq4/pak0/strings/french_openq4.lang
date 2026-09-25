@@ -142,6 +142,16 @@
 	"#str_229979"	"Marqueur de touche"
 	"#str_229982"	"Recul de l'arme"
 	"#str_229983"	"RELANCER NIVEAU"
+
+	// Settings transaction status.
+	"#str_230007"	"Prêt"
+	"#str_230008"	"Une autre fenêtre de paramètres modifie ces options."
+	"#str_230009"	"Ouvrez les paramètres avant de les modifier."
+	"#str_230010"	"Ces modifications n'ont pas pu être appliquées."
+	"#str_230011"	"Les paramètres ont été modifiés ailleurs. Vérifiez-les et réessayez."
+	"#str_230012"	"Les paramètres précédents n'ont pas pu être rétablis."
+	"#str_230013"	"Des modifications sont en attente de confirmation."
+	"#str_230014"	"Modifications non enregistrées."
 	"#str_41200"	"Off"
 	"#str_41201"	"Self"
 	"#str_41202"	"Enemy"
@@ -1003,4 +1013,51 @@
 	"#str_42944"	"-"
 	"#str_42945"	"Clic : choisir   Glisser à droite : tourner   Maj + droite : déplacer   Molette : zoom   F : cadrer"
 	"#str_42946"	"Expérimental"
+	// SigmaTouch editor labels (emileb Android support).
+	"#str_43000"	"Afficher le menu"
+	"#str_43001"	"Sauvegarde rapide"
+	"#str_43002"	"Chargement rapide"
+	"#str_43003"	"Afficher le clavier"
+	"#str_43004"	"Utiliser la souris"
+	"#str_43005"	"Console"
+	"#str_43006"	"Afficher les commandes personnalisées"
+	"#str_43007"	"Afficher les numéros des armes"
+	"#str_43008"	"Arme suivante"
+	"#str_43009"	"Arme précédente"
+	"#str_43010"	"Touches de déplacement (WASD)"
+	"#str_43011"	"Clic gauche"
+
+	// Display application, confirmation and durable recovery.
+	"#str_229990"	"Application des paramètres d’affichage…"
+	"#str_229991"	"Restauration des paramètres d’affichage précédents…"
+	"#str_229992"	"Enregistrement des paramètres d’affichage…"
+	"#str_229993"	"Conserver ces paramètres d’affichage ?"
+	"#str_229994"	"Conserver"
+	"#str_229995"	"Rétablir"
+	"#str_229996"	"Réessayer"
+	"#str_229997"	"Les paramètres ont été acceptés, mais leur enregistrement est incomplet. Réessayez pour le terminer."
+	"#str_229998"	"10%;25%;50%;75%;85%;100%;125%;150%;200%"
+	"#str_229999"	"Continuer à modifier"
+
+	// Transient numeric editor clipboard feedback.
+	"#str_230001"	"Impossible de lire le presse-papiers. Réessayez."
+	"#str_230002"	"Impossible de copier dans le presse-papiers. Votre texte reste inchangé."
+	"#str_230003"	"Le texte du presse-papiers ne convient pas à ce champ sur une seule ligne."
+
+	// Precise SYSTEM numeric field validation (decimal point input).
+	"#str_230004"	"Saisissez un nombre de 0.5 à 2."
+	"#str_230005"	"Saisissez un nombre de 0 à 1."
+	"#str_230006"	"Validez chaque champ ou abandonnez les modifications inachevées."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Taille de l’interface"
+	"#str_230016"	"Taille du texte"
+	"#str_230017"	"Réinitialiser les tailles"
+	"#str_230018"	"Interface"
+	"#str_230019"	"Les grandes tailles peuvent être réduites pour tenir dans la fenêtre."
+	"#str_230020"	"Non;2x;4x;8x;16x"
+	"#str_230021"	"Entrez un nombre entier de 320 à 16384."
+	"#str_230022"	"Entrez un nombre entier de 240 à 16384."
+	"#str_230023"	"Choisissez un écran, une taille et une fréquence compatibles avant d’appliquer."
+	"#str_230024"	"La taille personnalisée sert au plein écran exclusif. La modifier sélectionne la résolution personnalisée."
 }

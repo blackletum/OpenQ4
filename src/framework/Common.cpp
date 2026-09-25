@@ -29,17 +29,24 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
+#include "NativeInputDispatch.h"
 //#include "../renderer/Image.h"
 #include "../bse/BSE_API.h"
 #include "../imagetools/ImageTools.h"
 #include "../render_geo/RenderGeometry.h"
 #include "../renderer/RendererModule.h"
+#include "../ui/RetainedUI.h"
+#include "../ui/SettingsService.h"
 #include "ArenaCampaign.h"
 #include "CVarCompletionSnapshot.h"
 #include "GameModuleDiagnostics.h"
 #include "RenderDoc.h"
 #include "ParallelJobSystem.h"
 #include "LevelEditor.h"
+#include "DurableFile.h"
+#include "SettingsPersistence.h"
+#include "PerformancePreset.h"
+#include "FileSystemPathValidation.h"
 #include "../sys/NetworkEndpoint.h"
 
 #if defined( USE_SDL3 )
@@ -362,6 +369,9 @@ static void Common_ThrottlePresentationFrame( void ) {
 }
 
 void openQ4_BeginPresentationFrame( void ) {
+    static std::uint64_t nativeInputPresentation = 0;
+    if (nativeInputPresentation != UINT64_MAX) ++nativeInputPresentation;
+    NativeInput_BeginFrame(nativeInputPresentation);
 	if ( idAsyncNetwork::serverDedicated.GetInteger() == 1 ) {
 		Common_ResetPresentationThrottle();
 	} else {
@@ -721,6 +731,7 @@ public:
 	virtual rvISourceControl *	GetSourceControl( void );
 	virtual void				ActivateTool( bool active );
 	virtual void				WriteConfigToFile( const char *filename );
+	bool					WriteConfigToFileChecked( const char *filename, bool coordinatorOwnsLock, std::string& error );
 	virtual void				WriteFlaggedCVarsToFile( const char *filename, int flags, const char *setCmd );
 	virtual void				ModViewThink( void );
 	virtual void				RunAlwaysThinkGUIs( int time );
@@ -2069,40 +2080,198 @@ void idCommonLocal::WriteFlaggedCVarsToFile( const char *filename, int flags, co
 idCommonLocal::WriteConfigToFile
 ==================
 */
-void idCommonLocal::WriteConfigToFile( const char *filename ) {
-	idFile *f;
-#ifdef ID_WRITE_VERSION
-	ID_TIME_T t;
-	char *curtime;
-	idStr runtag;
-	idFile_Memory compressed( "compressed" );
-	idBase64 out;
-#endif
-
-	f = fileSystem->OpenFileWrite( filename );
-	if ( !f ) {
-		Printf ("Couldn't write %s.\n", filename );
-		return;
+// The legacy serializers ignore Write/Printf return values. Record failures in
+// the sink, including formatting truncation, before publishing any bytes.
+class idCheckedConfigMemory : public idFile_Memory {
+public:
+	explicit idCheckedConfigMemory( const char *name ) : idFile_Memory( name ), failed( false ) {}
+	bool Failed() const { return failed; }
+	int Write( const void *buffer, int len ) override {
+		if ( failed || len < 0 || ( len > 0 && buffer == NULL ) ||
+			static_cast<size_t>( len ) > openq4::DurableFileMaxBytes - static_cast<size_t>( Length() ) ) {
+			failed = true;
+			return 0;
+		}
+		if ( len == 0 ) return 0;
+		const int written = idFile_Memory::Write( buffer, len );
+		if ( written != len ) failed = true;
+		return written;
 	}
+	int Printf( const char *fmt, ... ) override {
+		va_list args;
+		va_start( args, fmt );
+		const int written = Format( fmt, args, true );
+		va_end( args );
+		return written;
+	}
+	int VPrintf( const char *fmt, va_list args ) override { return Format( fmt, args, false ); }
+private:
+	int Format( const char *fmt, va_list args, bool crlf ) {
+		char buffer[4096];
+		const int length = idStr::vsnPrintf( buffer, sizeof( buffer ), fmt, args );
+		if ( length < 0 || length >= static_cast<int>( sizeof( buffer ) ) ) {
+			failed = true;
+			return 0;
+		}
+		if ( !crlf ) return Write( buffer, length );
+		idStr text( buffer );
+		text.Replace( "\n", "\r\n" );
+		return Write( text.c_str(), text.Length() );
+	}
+	bool failed;
+};
 
+static bool Common_SettingsSaveDirectory( std::string& directory, std::string& error ) {
+	if ( fileSystem == NULL || !fileSystem->IsInitialized() || cvarSystem == NULL ) {
+		error = "configuration filesystem is unavailable";
+		return false;
+	}
+	std::string root = cvarSystem->GetCVarString( "fs_savepath" );
+	if ( root.empty() || root.size() > 32768 ) {
+		error = "configuration save root is empty or oversized";
+		return false;
+	}
+	size_t prefix = 0;
+#ifdef _WIN32
+	for ( char& c : root ) if ( c == '\\' ) c = '/';
+	if ( root.size() >= 3 && ( ( root[0] >= 'A' && root[0] <= 'Z' ) || ( root[0] >= 'a' && root[0] <= 'z' ) ) &&
+		root[1] == ':' && root[2] == '/' ) {
+		prefix = 3;
+	} else if ( root.size() > 2 && root[0] == '/' && root[1] == '/' ) {
+		// UNC paths require both a server and a share before our game directory.
+		const size_t share = root.find( '/', 2 );
+		if ( share != std::string::npos && share + 1 < root.size() ) prefix = 2;
+	}
+#else
+	if ( root[0] == '/' ) prefix = 1;
+#endif
+	if ( prefix == 0 ) {
+		error = "configuration save root must be an absolute native path";
+		return false;
+	}
+	if ( root.size() > prefix && root.back() == '/' ) root.pop_back();
+	const char *reason = NULL;
+	if ( root.size() > prefix && !FS_ValidateRelativeWritePath( root.c_str() + prefix, &reason ) ) {
+		error = std::string( "invalid configuration save root: " ) + reason;
+		return false;
+	}
+	if ( root.back() != '/' ) root += '/';
+	directory = root + "baseoq4/";
+	error.clear();
+	return true;
+}
+
+static void Common_CreateSettingsParent( const std::string& path ) {
+	// CreateOSPath recognizes only the native separator. DurableFile accepts
+	// these exact slash paths without VFS case correction or search fallbacks.
+	std::string nativePath = path;
+#ifdef _WIN32
+	for ( char& c : nativePath ) if ( c == '/' ) c = '\\';
+#endif
+	fileSystem->CreateOSPath( nativePath.c_str() );
+}
+
+bool Common_SettingsPersistencePaths( std::string& journal, std::string& lock, std::string& error ) {
+	std::string directory;
+	if ( !Common_SettingsSaveDirectory( directory, error ) ) return false;
+	const std::string resolvedJournal = directory + "ui-settings-recovery.dat";
+	const std::string resolvedLock = directory + ".settings-recovery.lock";
+	Common_CreateSettingsParent( resolvedJournal );
+	journal = resolvedJournal;
+	lock = resolvedLock;
+	error.clear();
+	return true;
+}
+
+bool idCommonLocal::WriteConfigToFileChecked( const char *filename, bool coordinatorOwnsLock, std::string& error ) {
+	if ( !coordinatorOwnsLock && UI_SettingsBlocksConfigWrite() ) {
+		error = "settings recovery blocks configuration writes";
+		return false;
+	}
+	const char *reason = NULL;
+	if ( !FS_ValidateRelativeWritePath( filename, &reason ) ) {
+		error = std::string( "invalid configuration filename: " ) + reason;
+		return false;
+	}
+	const std::string firstSegment = std::string( filename ).substr( 0, std::string( filename ).find( '/' ) );
+	if ( idStr::Icmp( firstSegment.c_str(), "ui-settings-recovery.dat" ) == 0 ||
+		idStr::Icmp( firstSegment.c_str(), ".settings-recovery.lock" ) == 0 ) {
+		error = "configuration filename is reserved for settings recovery";
+		return false;
+	}
+	// Callbacks from serialization must not enter a second write, even when the
+	// coordinator already owns the process-external lease.
+	static bool writing = false;
+	if ( writing ) { error = "configuration write is already active"; return false; }
+	struct WriteScope {
+		bool& active;
+		explicit WriteScope( bool& value ) : active( value ) { active = true; }
+		~WriteScope() { active = false; }
+	} scope( writing );
+
+	std::string journal, lock;
+	if ( !Common_SettingsPersistencePaths( journal, lock, error ) ) return false;
+	openq4::DurableFileLease lease;
+	if ( !coordinatorOwnsLock ) {
+		if ( !lease.TryAcquire( lock, error ) ) return false;
+		std::string pending;
+		const openq4::DurableReadResult status = openq4::DurableReadExact( journal, openq4::DurableFileMaxBytes, pending, error );
+		if ( status == openq4::DurableReadResult::Failed ) return false;
+		if ( status == openq4::DurableReadResult::Present ) {
+			error = "settings recovery journal blocks configuration writes";
+			return false;
+		}
+	}
+	// Derive the destination from the same root snapshot used by the lease,
+	// rather than re-reading a CVar or consulting the active mod's search path.
+	const std::string destination = journal.substr( 0, journal.find_last_of( '/' ) + 1 ) + filename;
+	idCheckedConfigMemory memory( "configuration" );
 #ifdef ID_WRITE_VERSION
-	assert( config_compressor );
-	t = time( NULL );
-	curtime = ctime( &t );
-	runtag = cvarSystem->GetCVarString( "si_version" );
+	if ( config_compressor == NULL ) { error = "configuration version compressor is unavailable"; return false; }
+	ID_TIME_T t = time( NULL );
+	const char *curtime = ctime( &t );
+	if ( curtime == NULL ) { error = "configuration version timestamp is unavailable"; return false; }
+	idStr runtag = cvarSystem->GetCVarString( "si_version" );
 	runtag += " - ";
 	runtag += curtime;
+	idCheckedConfigMemory compressed( "compressed" );
 	config_compressor->Init( &compressed, true, 8 );
-	config_compressor->Write( runtag.c_str(), runtag.Length() );
-	config_compressor->FinishCompress( );
+	const int consumed = config_compressor->Write( runtag.c_str(), runtag.Length() );
+	config_compressor->FinishCompress();
+	if ( consumed != runtag.Length() || compressed.Failed() ) {
+		error = "configuration version compression failed";
+		return false;
+	}
+	idBase64 out;
 	out.Encode( (const byte *)compressed.GetDataPtr(), compressed.Length() );
-	f->Printf( "// %s\n", out.c_str() );
+	memory.Printf( "// %s\n", out.c_str() );
 #endif
-
-	idKeyInput::WriteBindings( f );
-	cvarSystem->WriteFlaggedVariables( CVAR_ARCHIVE, "seta", f );
-	fileSystem->CloseFile( f );
+	idKeyInput::WriteBindings( &memory );
+	cvarSystem->WriteFlaggedVariables( CVAR_ARCHIVE, "seta", &memory );
+	if ( memory.Failed() ) { error = "configuration serialization failed or exceeded its size limit"; return false; }
+	const std::string bytes( memory.GetDataPtr(), memory.Length() );
+	Common_CreateSettingsParent( destination );
+	const bool committed = openq4::DurableReplaceExact( destination, bytes, error );
+	// A failed durability barrier may follow an already-visible rename.
+	fileSystem->ClearDirCache();
+	return committed;
 }
+
+bool Common_WriteSettingsConfiguration( bool coordinatorOwnsLock, std::string& error ) {
+	if ( !commonLocal.WriteConfigToFileChecked( CONFIG_FILE, coordinatorOwnsLock, error ) ) return false;
+	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );
+	return true;
+}
+
+void idCommonLocal::WriteConfigToFile( const char *filename ) {
+	// Keep the public void ABI; the settings coordinator uses the checked API.
+	if ( UI_SettingsBlocksConfigWrite() ) return;
+	std::string error;
+	if ( !WriteConfigToFileChecked( filename, false, error ) ) {
+		Printf( "Couldn't write configuration: %s.\n", error.c_str() );
+	}
+}
+
 
 /*
 ===============
@@ -2117,6 +2286,7 @@ void idCommonLocal::WriteConfiguration( void ) {
 	if ( !com_fullyInitialized ) {
 		return;
 	}
+	if ( UI_SettingsBlocksConfigWrite() ) return;
 #ifndef ID_DEDICATED
 	// Arena owns a temporary transaction of archived multiplayer rules. Do not
 	// serialize that transaction; once it restores the player's values, the
@@ -2129,17 +2299,10 @@ void idCommonLocal::WriteConfiguration( void ) {
 	if ( !( cvarSystem->GetModifiedFlags() & CVAR_ARCHIVE ) ) {
 		return;
 	}
+	std::string error;
+	if ( !WriteConfigToFileChecked( CONFIG_FILE, false, error ) ) return;
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );
-
-	// disable printing out the "Writing to:" message
-	bool developer = com_developer.GetBool();
-	com_developer.SetBool( false );
-
-	WriteConfigToFile( CONFIG_FILE );
-	session->WriteCDKey( );
-
-	// restore the developer cvar
-	com_developer.SetBool( developer );
+	session->WriteCDKey();
 }
 
 /*
@@ -2619,122 +2782,22 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 #endif
 }
 
-typedef struct openQ4PerformancePreset_s {
-	const char *name;
-	int machineSpec;
-	const char *rendererBenchmarkPreset;
-	int screenFraction;
-	int multiSamples;
-	int postAA;
-	int maxFps;
-	int anisotropy;
-	int downSizeLimit;
-	int downSize;
-	int ignoreHighQuality;
-	int usePrecompressedTextures;
-	int maxSoundsPerShader;
-	int useShadowMap;
-	int shadowMapSize;
-	int shadowMapMaxUpdates;
-	int bloom;
-	int ssao;
-	int hdrToneMap;
-	int motionBlur;
-	int crt;
-	int useLightGrid;
-	int uploadMegs;
-	int uploadFrameBuffers;
-	int numberOfSpeakers;
-	int useEAXReverb;
-	int maxEmitterChannels;
-} openQ4PerformancePreset_t;
-
-static const openQ4PerformancePreset_t OPENQ4_PERFORMANCE_PRESETS[] = {
-	{ "minimum", 0, "low",
-		50, 0, 0, 30,
-		1, 512, 1, 1, 1, 1,
-		0, 512, 1, 0, 0, 0, 0, 0, 1, 8, 3,
-		2, 0, 24 },
-	{ "lowpower", 0, "low",
-		75, 0, 0, 30,
-		1, 1024, 1, 1, 1, 1,
-		0, 512, 1, 0, 0, 0, 0, 0, 1, 8, 3,
-		2, 0, 32 },
-	{ "performance", 1, "baseline",
-		85, 0, 1, 60,
-		2, 0, 0, 0, 1, 0,
-		0, 1024, 2, 0, 0, 0, 0, 0, 1, 16, 4,
-		2, 0, 40 },
-	{ "balanced", 2, "baseline",
-		100, 2, 1, 120,
-		4, 0, 0, 0, 1, 0,
-		0, 1024, 0, 0, 0, 0, 0, 0, 1, 16, 4,
-		6, 1, 48 },
-	{ "quality", 3, "modern",
-		100, 4, 1, 144,
-		8, 0, 0, 0, 1, 0,
-		0, 1024, 0, 0, 0, 0, 0, 0, 1, 32, 4,
-		6, 1, 48 },
-	// image_usePrecompressedTextures stays at 1 here even though retail's top
-	// machine spec used 0. In openQ4 that cvar also gates user-supplied DDS
-	// replacement packs, so 0 silently discarded a player's high-resolution BC7
-	// art the moment they touched the settings menu - the reverse of what the
-	// highest preset should do.
-	{ "ultra", 3, "high-end",
-		100, 8, 1, 240,
-		16, 0, 0, 0, 1, 0,
-		0, 2048, 0, 0, 0, 0, 0, 0, 1, 32, 4,
-		6, 1, 48 }
-};
-
-static const int OPENQ4_PERFORMANCE_PRESET_COUNT = static_cast<int>( sizeof( OPENQ4_PERFORMANCE_PRESETS ) / sizeof( OPENQ4_PERFORMANCE_PRESETS[0] ) );
-static const char *OPENQ4_DEFAULT_PERFORMANCE_PRESET = "balanced";
+using openQ4PerformancePreset_t = openq4::PerformancePreset;
+static const auto& OPENQ4_PERFORMANCE_PRESETS = openq4::PerformancePresets();
+static const int OPENQ4_PERFORMANCE_PRESET_COUNT = openq4::PerformancePresetCount;
+static const char *OPENQ4_DEFAULT_PERFORMANCE_PRESET = openq4::PerformancePresetDefaultName;
 static const int OPENQ4_PERFORMANCE_PRESET_MAX_SHADOW_UPDATES = 1024;
 static const int OPENQ4_PERFORMANCE_PRESET_MIN_UPLOAD_FRAME_BUFFERS = 3;
 static const int OPENQ4_PERFORMANCE_PRESET_MAX_UPLOAD_FRAME_BUFFERS = 8;
 static const int OPENQ4_PERFORMANCE_PRESET_MAX_EMITTER_CHANNELS = 48;
 static const int OPENQ4_PERFORMANCE_PRESET_UNLIMITED_BUDGET_RANK = 0x7fffffff;
-static const int OPENQ4_PERFORMANCE_PRESET_UNKNOWN_SYSTEM_RAM_MB = 8192;
-static const int OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB = 2048;
-static const int OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_SYSTEM_RAM_MB = 4 * 1024 * 1024;
-static const int OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB = 256 * 1024;
+static const int OPENQ4_PERFORMANCE_PRESET_UNKNOWN_SYSTEM_RAM_MB = openq4::PerformancePresetUnknownSystemRamMB;
+static const int OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB = openq4::PerformancePresetUnknownVideoRamMB;
+static const int OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_SYSTEM_RAM_MB = openq4::PerformancePresetMaxSystemRamMB;
+static const int OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB = openq4::PerformancePresetMaxVideoRamMB;
 
-static const char *OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[] = {
-	"com_performancePreset",
-	"com_machineSpec",
-	"r_rendererBenchmarkPreset",
-	"r_screenFraction",
-	"r_multiSamples",
-	"r_postAA",
-	"com_maxfps",
-	"image_anisotropy",
-	"image_usePrecompressedTextures",
-	"image_downSize",
-	"image_downSizeLimit",
-	"image_downSizeSpecular",
-	"image_downSizeBump",
-	"image_downSizeSpecularLimit",
-	"image_downSizeBumpLimit",
-	"image_ignoreHighQuality",
-	"image_writeGeneratedImages",
-	"s_maxSoundsPerShader",
-	"r_useShadowMap",
-	"r_shadowMapSize",
-	"r_shadowMapMaxUpdatesPerView",
-	"r_bloom",
-	"r_ssao",
-	"r_hdrToneMap",
-	"r_motionBlur",
-	"r_crt",
-	"r_useLightGrid",
-	"r_rendererUploadMegs",
-	"r_rendererUploadFrameBuffers",
-	"s_numberOfSpeakers",
-	"s_useEAXReverb",
-	"s_maxEmitterChannels"
-};
-
-static const int OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT = static_cast<int>( sizeof( OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS ) / sizeof( OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS[0] ) );
+static const auto& OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS = openq4::PerformancePresetTargets();
+static const int OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT = openq4::PerformancePresetTargetCount;
 
 static bool Common_PerformancePresetTargetIsDeclared( const char *name ) {
 	if ( name == NULL || name[0] == '\0' ) {
@@ -2749,16 +2812,7 @@ static bool Common_PerformancePresetTargetIsDeclared( const char *name ) {
 }
 
 static const openQ4PerformancePreset_t *Common_FindPerformancePreset( const char *name ) {
-	if ( name == NULL || name[0] == '\0' ) {
-		return NULL;
-	}
-
-	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_COUNT; ++i ) {
-		if ( idStr::Icmp( OPENQ4_PERFORMANCE_PRESETS[i].name, name ) == 0 ) {
-			return &OPENQ4_PERFORMANCE_PRESETS[i];
-		}
-	}
-	return NULL;
+ return name != NULL ? openq4::FindPerformancePreset(name) : NULL;
 }
 
 static const openQ4PerformancePreset_t *Common_DefaultPerformancePreset( void ) {
@@ -2916,49 +2970,23 @@ static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &pres
 		return false;
 	}
 
+ openq4::PerformancePresetAssignments expansion; std::string expansionError;
+ if (!openq4::ExpandPerformancePreset(preset,expansion,expansionError)) {
+  if (!quiet) common->Warning("Performance preset '%s' could not expand: %s",preset.name,expansionError.c_str());
+  return false;
+ }
+
 	openQ4PerformancePresetCVarBackup_t backups[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT];
 	const int savedModifiedFlags = cvarSystem->GetModifiedFlags();
 	Common_BackupPerformancePresetCVars( backups );
 
-	bool applied = true;
-	applied &= Common_SetPerformancePresetInt( preset.name, "com_machineSpec", preset.machineSpec, quiet );
-
-	applied &= Common_SetPerformancePresetString( preset.name, "r_rendererBenchmarkPreset", preset.rendererBenchmarkPreset, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_screenFraction", preset.screenFraction, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_multiSamples", preset.multiSamples, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_postAA", preset.postAA, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "com_maxfps", preset.maxFps, quiet );
-
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_anisotropy", preset.anisotropy, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_usePrecompressedTextures", preset.usePrecompressedTextures, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSize", preset.downSize, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeLimit", preset.downSizeLimit, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeSpecular", preset.downSize, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeBump", preset.downSize, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeSpecularLimit", 64, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_downSizeBumpLimit", preset.downSize != 0 ? 256 : 0, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_ignoreHighQuality", preset.ignoreHighQuality, quiet );
-	// 1 at every preset: the generated image cache is a load-time win at any
-	// quality level, and the downsize cvars above are part of its cache key, so
-	// a preset change is exactly when the new variants need to be written out
-	applied &= Common_SetPerformancePresetInt( preset.name, "image_writeGeneratedImages", 1, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "s_maxSoundsPerShader", preset.maxSoundsPerShader, quiet );
-
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_useShadowMap", preset.useShadowMap, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_shadowMapSize", preset.shadowMapSize, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_shadowMapMaxUpdatesPerView", preset.shadowMapMaxUpdates, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_bloom", preset.bloom, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_ssao", preset.ssao, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_hdrToneMap", preset.hdrToneMap, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_motionBlur", preset.motionBlur, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_crt", preset.crt, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_useLightGrid", preset.useLightGrid, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_rendererUploadMegs", preset.uploadMegs, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "r_rendererUploadFrameBuffers", preset.uploadFrameBuffers, quiet );
-
-	applied &= Common_SetPerformancePresetInt( preset.name, "s_numberOfSpeakers", preset.numberOfSpeakers, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "s_useEAXReverb", preset.useEAXReverb, quiet );
-	applied &= Common_SetPerformancePresetInt( preset.name, "s_maxEmitterChannels", preset.maxEmitterChannels, quiet );
+ bool applied = true;
+ for (size_t i=0;i+1<expansion.size();++i) {
+  const auto& assignment=expansion[i];
+  if (const auto number=std::get_if<int>(&assignment.value))
+   applied &= Common_SetPerformancePresetInt(preset.name,assignment.key,*number,quiet);
+  else applied &= Common_SetPerformancePresetString(preset.name,assignment.key,std::get<std::string>(assignment.value).c_str(),quiet);
+ }
 
 	// Commit the public selection marker only after every profile target accepted
 	// its value. Any unexpected normalization failure rolls the whole apply back.
@@ -2980,10 +3008,7 @@ static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &pres
 }
 
 static int Common_SanitizePerformancePresetMemoryMB( int rawMegabytes, int fallbackMegabytes, int maxReasonableMegabytes ) {
-	if ( rawMegabytes <= 0 || rawMegabytes > maxReasonableMegabytes ) {
-		return fallbackMegabytes;
-	}
-	return rawMegabytes;
+ return openq4::SanitizePerformancePresetMemoryMB(rawMegabytes,fallbackMegabytes,maxReasonableMegabytes);
 }
 
 static idStr Common_FormatPerformancePresetMemorySignal( int rawMegabytes, int effectiveMegabytes ) {
@@ -2996,69 +3021,45 @@ static idStr Common_FormatPerformancePresetMemorySignal( int rawMegabytes, int e
 	return text;
 }
 
+bool Common_CapturePerformancePresetSignals(openq4::PerformancePresetSignals& output,std::string& error) {
+ openq4::PerformancePresetSignals signals;
+ signals.explicitLowPower=Common_HasExplicitLowPowerHostSignal();
+ if (!signals.explicitLowPower) {
+  signals.raspberryPi=Common_HasRaspberryPiHostSignal();
+  if (!signals.raspberryPi) {
+   signals.steamDeck=idStr::Icmp(com_platformProfile.GetString(),"steamdeck")==0 || Common_HasSteamDeckHostSignal();
+   if (!signals.steamDeck) {
+    if (!renderSystem) { error="Renderer capability observation is unavailable";return false; }
+    signals.systemRamMB=Sys_GetSystemRam();signals.videoRamMB=Sys_GetVideoRam();
+    bool nv10or20=false;renderSystem->GetCardCaps(signals.legacyRenderer,nv10or20);
+    if (!signals.legacyRenderer) signals.arm64=Common_HostCpuIsArm64();
+   }
+  }
+ }
+ output=signals;error.clear();return true;
+}
 static const char *Common_DetectPerformancePresetName( idStr &reason ) {
-	if ( Common_HasExplicitLowPowerHostSignal() ) {
-		reason = "explicit low-power environment signal";
-		return "lowpower";
-	}
-
-	if ( Common_HasRaspberryPiHostSignal() ) {
-		reason = "Raspberry Pi host signal";
-		return "lowpower";
-	}
-
-	if ( idStr::Icmp( com_platformProfile.GetString(), "steamdeck" ) == 0 || Common_HasSteamDeckHostSignal() ) {
-		reason = "Steam Deck platform profile";
-		return "performance";
-	}
-
-	const int rawSysRam = Sys_GetSystemRam();
-	const int rawVidRam = Sys_GetVideoRam();
-	const int sysRam = Common_SanitizePerformancePresetMemoryMB(
-		rawSysRam,
-		OPENQ4_PERFORMANCE_PRESET_UNKNOWN_SYSTEM_RAM_MB,
-		OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_SYSTEM_RAM_MB );
-	const int vidRam = Common_SanitizePerformancePresetMemoryMB(
-		rawVidRam,
-		OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB,
-		OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB );
-	const idStr sysRamReason = Common_FormatPerformancePresetMemorySignal( rawSysRam, sysRam );
-	const idStr vidRamReason = Common_FormatPerformancePresetMemorySignal( rawVidRam, vidRam );
-	bool oldCard = false;
-	bool nv10or20 = false;
-	renderSystem->GetCardCaps( oldCard, nv10or20 );
-
-	if ( oldCard ) {
-		reason = "legacy renderer architecture";
-		return "minimum";
-	}
-
-	if ( Common_HostCpuIsArm64() ) {
-		if ( sysRam <= 4096 || vidRam <= 1024 ) {
-			reason = va( "ARM64 with constrained memory (%s RAM, %s VRAM)", sysRamReason.c_str(), vidRamReason.c_str() );
-			return "lowpower";
-		}
-		reason = va( "ARM64 host (%s RAM, %s VRAM)", sysRamReason.c_str(), vidRamReason.c_str() );
-		return "performance";
-	}
-
-	if ( sysRam <= 4096 || vidRam <= 1024 ) {
-		reason = va( "constrained memory (%s RAM, %s VRAM)", sysRamReason.c_str(), vidRamReason.c_str() );
-		return "lowpower";
-	}
-
-	if ( sysRam <= 8192 || vidRam <= 2048 ) {
-		reason = va( "modest memory/GPU budget (%s RAM, %s VRAM)", sysRamReason.c_str(), vidRamReason.c_str() );
-		return "performance";
-	}
-
-	if ( sysRam >= 16384 && vidRam >= 6144 ) {
-		reason = va( "high memory/GPU budget (%s RAM, %s VRAM)", sysRamReason.c_str(), vidRamReason.c_str() );
-		return "quality";
-	}
-
-	reason = va( "standard desktop budget (%s RAM, %s VRAM)", sysRamReason.c_str(), vidRamReason.c_str() );
-	return "balanced";
+ openq4::PerformancePresetSignals signals;std::string error;
+ if (!Common_CapturePerformancePresetSignals(signals,error)) {reason=error.c_str();return OPENQ4_DEFAULT_PERFORMANCE_PRESET;}
+ const auto detected=openq4::DetectPerformancePreset(signals);
+ using Reason=openq4::PerformancePresetReason;
+ if(detected.reason==Reason::ExplicitLowPower)reason="explicit low-power environment signal";
+ else if(detected.reason==Reason::RaspberryPi)reason="Raspberry Pi host signal";
+ else if(detected.reason==Reason::SteamDeck)reason="Steam Deck platform profile";
+ else if(detected.reason==Reason::LegacyRenderer)reason="legacy renderer architecture";
+ else{
+  const idStr sysRamReason=Common_FormatPerformancePresetMemorySignal(signals.systemRamMB,detected.systemRamMB);
+  const idStr vidRamReason=Common_FormatPerformancePresetMemorySignal(signals.videoRamMB,detected.videoRamMB);
+  switch(detected.reason){
+   case Reason::ArmLowMemory:reason=va("ARM64 with constrained memory (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
+   case Reason::Arm:reason=va("ARM64 host (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
+   case Reason::LowMemory:reason=va("constrained memory (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
+   case Reason::ModestMemory:reason=va("modest memory/GPU budget (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
+   case Reason::HighMemory:reason=va("high memory/GPU budget (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
+   default:reason=va("standard desktop budget (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
+  }
+ }
+ return detected.preset->name;
 }
 
 static bool Common_ApplyPerformancePresetCommand( const idCmdArgs &args, bool quiet = false ) {
@@ -4795,6 +4796,7 @@ void idCommonLocal::InitLanguageDict( bool applyStartupSysLang, bool allowAutoLa
 	fileSystem->FreeFileList(langFiles);
 
 	Sys_InitScanTable();
+	RetainedUI_LanguageChanged();
 }
 
 /*
@@ -5584,7 +5586,13 @@ void idCommonLocal::InitRenderSystem( void ) {
 		return;
 	}
 
-	renderSystem->InitOpenGL();
+	if ( UI_SettingsStartupActive() ) {
+		std::string recoveryError;
+		if ( !UI_SettingsInitializeDisplay( recoveryError ) ) {
+			FatalError( "Settings display recovery failed: %s. Recovery data was retained.", recoveryError.c_str() );
+			return;
+		}
+	} else renderSystem->InitOpenGL();
 
 	// imagetools is a static library, so the executable and the renderer module
 	// each hold a private copy of the texture-compression capability block that
@@ -5597,6 +5605,7 @@ void idCommonLocal::InitRenderSystem( void ) {
 		imageToolsCompressionCaps_t compressionCaps;
 		compressionCaps.textureCompressionAvailable = rendererConfig.textureCompressionAvailable;
 		compressionCaps.bptcTextureCompressionAvailable = rendererConfig.bptcTextureCompressionAvailable;
+		compressionCaps.etc2TextureCompressionAvailable = rendererConfig.etc2TextureCompressionAvailable;
 		ImageTools_SetCompressionCaps( compressionCaps );
 	}
 
@@ -5675,10 +5684,11 @@ static void Common_DrawScaledSmallString( float x, float y, float charWidth, flo
 }
 
 void idCommonLocal::PrintLoadingMessage( const char *msg ) {
-	if ( !( msg && *msg ) ) {
+	if ( !( msg && *msg ) || !renderSystem || !renderSystem->IsOpenGLRunning() ) {
 		return;
 	}
 
+	UI_SettingsRenderFrame settingsFrame;
 	renderSystem->BeginFrame( renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight() );
 
 	const float virtualWidth = static_cast<float>( SCREEN_WIDTH );
@@ -5738,7 +5748,11 @@ void idCommonLocal::PrintLoadingMessage( const char *msg ) {
 	Common_DrawScaledSmallString( textX, textY, charWidth, charHeight, msg,
 		idVec4( 0.94f, 0.62f, 0.05f, 1.0f ), true, declManager->FindMaterial( "fonts/english/bigchars", false ) );
 	renderSystem->SetColor( idVec4( 1.0f, 1.0f, 1.0f, 1.0f ) );
+	settingsFrame.Submitting();
 	renderSystem->EndFrame( NULL, NULL );
+	settingsFrame.Presented();
+	RetainedUI_FrameSubmitted();
+	UI_SettingsFrame( false ); // Startup/loading may observe recovery, never perform device or file work.
 }
 
 /*
@@ -5764,6 +5778,9 @@ void idCommonLocal::Frame( void ) {
 		// pump all the events
 		Sys_GenerateEvents();
 
+		// Settings cleanup/confirmation is independent of GUI/input ownership and
+		// SP pause. Finish it before deciding which values may reach disk.
+		UI_SettingsFrame();
 		// write config file if anything changed
 		WriteConfiguration(); 
 
@@ -5837,6 +5854,7 @@ idCommonLocal::GUIFrame
 void idCommonLocal::GUIFrame( bool execCmd, bool network ) {
 	openQ4_BeginPresentationFrame();
 	Sys_GenerateEvents();
+	UI_SettingsFrame( false ); // Poll only: loading callbacks must never restart recursively.
 	eventLoop->RunEventLoop( execCmd );	// and execute any commands
 	com_frameTime = GetUserCmdTime( com_ticNumber );
 	if ( network ) {
@@ -6291,6 +6309,7 @@ so first put back the callbacks captured when the module was loaded.
 static void Com_UnloadGameModuleBinary( intptr_t handle, idCVarCompletionSnapshot &completions ) {
 	completions.Restore();
 	completions.Clear();
+	Mem_UnregisterModuleStats( (memModuleStats_t) Sys_DLL_GetProcAddress( handle, MEM_MODULE_STATS_ENTRY_POINT ) );
 	Sys_DLL_Unload( handle );
 }
 
@@ -6406,9 +6425,14 @@ void idCommonLocal::LoadGameDLL( void ) {
 	if ( gameExport.version != GAME_API_VERSION ) {
 		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
-		common->FatalError( "wrong game DLL API version" );
+		common->FatalError( "wrong game DLL API version (expected %d, got %d)", GAME_API_VERSION, gameExport.version );
 		return;
 	}
+
+	// the game module links its own idlib archive; fold its allocation
+	// counters into the engine's total. Optional symbol, so a module built
+	// before this existed is simply left out rather than rejected.
+	Mem_RegisterModuleStats( (memModuleStats_t) Sys_DLL_GetProcAddress( gameDLL, MEM_MODULE_STATS_ENTRY_POINT ) );
 
 	game								= gameExport.game;
 	gameEdit							= gameExport.gameEdit;
@@ -6960,6 +6984,11 @@ void idCommonLocal::InitGame( void ) {
 
 	// cvars are initialized, but not the rendering system. Allow preference startup dialog
 	Sys_DoPreferences();
+	std::string settingsRecoveryError;
+	if ( !UI_SettingsStartup( settingsRecoveryError ) ) {
+		FatalError( "Settings startup recovery failed: %s. Recovery data was retained.", settingsRecoveryError.c_str() );
+		return;
+	}
 
 	// init the user command input code
 	usercmdGen->Init();
@@ -7028,7 +7057,7 @@ void idCommonLocal::InitGame( void ) {
 	// have to do this twice.. first one sets the correct r_mode for the renderer init
 	// this time around the backend is all setup correct.. a bit fugly but do not want
 	// to mess with all the gl init at this point.. an old vid card will never qualify for 
-	if ( sysDetect ) {
+	if ( sysDetect && !UI_SettingsStartupActive() ) {
 		SetMachineSpec();
 		Com_ExecMachineSpec_f( args );
 		cvarSystem->SetCVarInteger( "s_numberOfSpeakers", 6 );
@@ -7043,6 +7072,7 @@ idCommonLocal::ShutdownGame
 =================
 */
 void idCommonLocal::ShutdownGame( bool reloading ) {
+	UI_SettingsShutdown();
 	// Stop advertising a ready single-player module before any shutdown work can
 	// race the async thread or mutate game-owned state.
 	openQ4_singleplayerGameModuleReady.store( false, std::memory_order_release );

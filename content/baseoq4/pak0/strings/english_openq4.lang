@@ -142,6 +142,16 @@
 	"#str_229979"	"Hit Marker"
 	"#str_229982"	"Weapon Kick"
 	"#str_229983"	"RESTART LEVEL"
+
+	// Settings transaction status.
+	"#str_230007"	"Ready"
+	"#str_230008"	"Another settings window is editing these options."
+	"#str_230009"	"Open settings before editing."
+	"#str_230010"	"These changes could not be applied."
+	"#str_230011"	"Settings changed elsewhere. Review them and try again."
+	"#str_230012"	"The previous settings could not be restored."
+	"#str_230013"	"Changes are waiting for confirmation."
+	"#str_230014"	"Unsaved changes."
 	"#str_41200"	"Off"
 	"#str_41201"	"Self"
 	"#str_41202"	"Enemy"
@@ -1003,4 +1013,51 @@
 	"#str_42944"	"-"
 	"#str_42945"	"Click: select   Right drag: orbit   Shift + right drag: pan   Wheel: zoom   F: frame"
 	"#str_42946"	"Experimental"
+	// SigmaTouch editor labels (emileb Android support).
+	"#str_43000"	"Show menu"
+	"#str_43001"	"Quick save"
+	"#str_43002"	"Quick load"
+	"#str_43003"	"Show keyboard"
+	"#str_43004"	"Use mouse"
+	"#str_43005"	"Console"
+	"#str_43006"	"Show custom controls"
+	"#str_43007"	"Show weapon numbers"
+	"#str_43008"	"Next weapon"
+	"#str_43009"	"Previous weapon"
+	"#str_43010"	"Movement buttons (WASD)"
+	"#str_43011"	"Left click"
+
+	// Display application, confirmation and durable recovery.
+	"#str_229990"	"Applying display settings…"
+	"#str_229991"	"Restoring previous display settings…"
+	"#str_229992"	"Saving display settings…"
+	"#str_229993"	"Keep these display settings?"
+	"#str_229994"	"Keep"
+	"#str_229995"	"Revert"
+	"#str_229996"	"Retry"
+	"#str_229997"	"Settings were accepted, but saving did not finish. Retry to finish saving."
+	"#str_229998"	"10%;25%;50%;75%;85%;100%;125%;150%;200%"
+	"#str_229999"	"Keep editing"
+
+	// Transient numeric editor clipboard feedback.
+	"#str_230001"	"Could not read the clipboard. Try again."
+	"#str_230002"	"Could not copy to the clipboard. Your text is unchanged."
+	"#str_230003"	"Clipboard text does not fit this single-line field."
+
+	// Precise SYSTEM numeric field validation (decimal point input).
+	"#str_230004"	"Enter a number from 0.5 to 2."
+	"#str_230005"	"Enter a number from 0 to 1."
+	"#str_230006"	"Commit each field, or discard your unfinished edits."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"UI scale"
+	"#str_230016"	"Text size"
+	"#str_230017"	"Reset UI sizes"
+	"#str_230018"	"Interface"
+	"#str_230019"	"Large sizes may be reduced to fit the window."
+	"#str_230020"	"Off;2x;4x;8x;16x"
+	"#str_230021"	"Enter a whole number from 320 to 16384."
+	"#str_230022"	"Enter a whole number from 240 to 16384."
+	"#str_230023"	"Choose a supported display, size and refresh rate before applying."
+	"#str_230024"	"Custom size is used by exclusive fullscreen. Editing it selects Custom resolution."
 }

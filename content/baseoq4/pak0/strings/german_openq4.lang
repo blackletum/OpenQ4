@@ -1,5 +1,5 @@
 // string table
-// german (openQ4 translation)
+// english
 //
 
 {
@@ -142,6 +142,16 @@
 	"#str_229979"	"Trefferanzeige"
 	"#str_229982"	"Waffenrückstoß"
 	"#str_229983"	"LEVEL-NEUSTART"
+
+	// Settings transaction status.
+	"#str_230007"	"Bereit"
+	"#str_230008"	"Diese Optionen werden bereits in einem anderen Einstellungsfenster bearbeitet."
+	"#str_230009"	"Öffnen Sie vor dem Bearbeiten die Einstellungen."
+	"#str_230010"	"Diese Änderungen konnten nicht angewendet werden."
+	"#str_230011"	"Die Einstellungen wurden an anderer Stelle geändert. Prüfen Sie sie und versuchen Sie es erneut."
+	"#str_230012"	"Die vorherigen Einstellungen konnten nicht wiederhergestellt werden."
+	"#str_230013"	"Änderungen warten auf Bestätigung."
+	"#str_230014"	"Ungespeicherte Änderungen."
 	"#str_41200"	"Aus"
 	"#str_41201"	"Selbst"
 	"#str_41202"	"Gegner"
@@ -1003,4 +1013,51 @@
 	"#str_42944"	"-"
 	"#str_42945"	"Klick: Auswahl   Rechts ziehen: Drehen   Umschalt + rechts: Schwenken   Rad: Zoom   F: Auswahl"
 	"#str_42946"	"Experimentell"
+	// SigmaTouch editor labels (emileb Android support).
+	"#str_43000"	"Menü anzeigen"
+	"#str_43001"	"Schnellspeichern"
+	"#str_43002"	"Schnellladen"
+	"#str_43003"	"Tastatur anzeigen"
+	"#str_43004"	"Maus verwenden"
+	"#str_43005"	"Konsole"
+	"#str_43006"	"Eigene Bedienelemente anzeigen"
+	"#str_43007"	"Waffennummern anzeigen"
+	"#str_43008"	"Nächste Waffe"
+	"#str_43009"	"Vorherige Waffe"
+	"#str_43010"	"Bewegungstasten (WASD)"
+	"#str_43011"	"Linksklick"
+
+	// Display application, confirmation and durable recovery.
+	"#str_229990"	"Anzeigeeinstellungen werden angewendet…"
+	"#str_229991"	"Vorherige Anzeigeeinstellungen werden wiederhergestellt…"
+	"#str_229992"	"Anzeigeeinstellungen werden gespeichert…"
+	"#str_229993"	"Diese Anzeigeeinstellungen beibehalten?"
+	"#str_229994"	"Beibehalten"
+	"#str_229995"	"Zurücksetzen"
+	"#str_229996"	"Erneut versuchen"
+	"#str_229997"	"Die Einstellungen wurden übernommen, aber nicht vollständig gespeichert. Versuchen Sie es erneut."
+	"#str_229998"	"10%;25%;50%;75%;85%;100%;125%;150%;200%"
+	"#str_229999"	"Weiter bearbeiten"
+
+	// Transient numeric editor clipboard feedback.
+	"#str_230001"	"Die Zwischenablage konnte nicht gelesen werden. Versuchen Sie es erneut."
+	"#str_230002"	"Der Text konnte nicht in die Zwischenablage kopiert werden. Er bleibt unverändert."
+	"#str_230003"	"Der Text aus der Zwischenablage passt nicht in dieses einzeilige Feld."
+
+	// Precise SYSTEM numeric field validation (decimal point input).
+	"#str_230004"	"Geben Sie eine Zahl von 0.5 bis 2 ein."
+	"#str_230005"	"Geben Sie eine Zahl von 0 bis 1 ein."
+	"#str_230006"	"Bestätigen Sie jedes Feld oder verwerfen Sie Ihre unvollständigen Änderungen."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Oberflächenskalierung"
+	"#str_230016"	"Textgröße"
+	"#str_230017"	"Oberflächengrößen zurücksetzen"
+	"#str_230018"	"Oberfläche"
+	"#str_230019"	"Große Elemente werden bei Bedarf an das Fenster angepasst."
+	"#str_230020"	"Aus;2x;4x;8x;16x"
+	"#str_230021"	"Geben Sie eine ganze Zahl von 320 bis 16384 ein."
+	"#str_230022"	"Geben Sie eine ganze Zahl von 240 bis 16384 ein."
+	"#str_230023"	"Wählen Sie vor dem Anwenden einen unterstützten Bildschirm, eine Auflösung und eine Bildwiederholrate."
+	"#str_230024"	"Die eigene Auflösung gilt für exklusives Vollbild. Beim Bearbeiten wird die eigene Auflösung ausgewählt."
 }

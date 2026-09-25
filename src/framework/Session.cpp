@@ -29,7 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
+#include "NativeInputDispatch.h"
 #include "Session_local.h"
+#include "NativeInputPublications.h"
 #include "ArenaCampaign.h"
 #include "BuildVersion.h"
 #include "../sys/NetworkEndpoint.h"
@@ -50,7 +52,10 @@ If you have questions concerning this license or the applicable additional terms
 #undef protected
 #undef private
 #include "../imagetools/ImageTools.h"
-#include "../ui/Window.h"
+#include "../ui/RetainedUI.h"
+#include "../ui/SettingsService.h"
+#include "../ui/UserInterfaceManaged.h"
+#include "../ui/UserInterfaceRetained.h"
 
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar	idSessionLocal::com_minTics( "com_minTics", "1", CVAR_SYSTEM, "" );
@@ -3706,10 +3711,12 @@ void idSessionLocal::Clear() {
 	
 	insideUpdateScreen = false;
 	insidePacifierUpdate = false;
+	openq4::NativeInputBeforeSessionChange();
 	insideExecuteMapChange = false;
 	stopDepth = 0;
 	preserveWipeDuringStop = false;
 
+	openq4::NativeInputBeforeSessionChange();
 	loadingSaveGame = false;
 	savegameFile = NULL;
 	savegameVersion = 0;
@@ -3756,7 +3763,11 @@ void idSessionLocal::Clear() {
 	cinematicStateValid = false;
 	cinematicActive = false;
 	mapSpawned = false;
+	openq4::NativeInputBeforeSessionChange();
 	guiActive = NULL;
+	guiSystem = guiSystemParent = NULL;
+	guiSystemParentHandle = NULL;
+	systemGuiTransition = systemGuiBackEvent = false;
 	demoReturnGui = NULL;
 	demoOverlayVisible = false;
 	demoBrowserMode = true;
@@ -3811,6 +3822,7 @@ idSessionLocal::idSessionLocal
 ===============
 */
 idSessionLocal::idSessionLocal() {
+	openq4::NativeInputBeforeSessionChange();
 	guiInGame = guiMainMenu = guiIntro \
 		= guiRestartMenu = guiLoading = guiGameOver = guiActive \
 		= guiTest = guiMsg = guiMsgRestore = guiTakeNotes = guiDemoMenu = NULL;
@@ -3880,6 +3892,7 @@ void idSessionLocal::StopInternal( bool preserveWipe ) {
 		if ( outermostStop && savegameFile != NULL ) {
 			fileSystem->CloseFile( savegameFile );
 			savegameFile = NULL;
+			openq4::NativeInputBeforeSessionChange();
 			loadingSaveGame = false;
 		}
 
@@ -3899,6 +3912,7 @@ void idSessionLocal::StopInternal( bool preserveWipe ) {
 		}
 
 		insideUpdateScreen = false;
+		openq4::NativeInputBeforeSessionChange();
 		insideExecuteMapChange = false;
 
 		// drop all guis
@@ -4225,11 +4239,11 @@ static void Session_OpenQ4Browser_f( const idCmdArgs &args ) {
 			"anim_mainOut::notime", "anim_mpBrowseIn::notime"
 		};
 		for ( int i = 0; i < static_cast<int>( sizeof( windows ) / sizeof( windows[ 0 ] ) ); ++i ) {
-			const idWinVar *variable = gui->GetDesktop() != NULL ?
-				gui->GetDesktop()->GetWinVarByName( windows[ i ], true ) : NULL;
-			const idStr value = Session_BrowserDiagnosticText( variable != NULL ? variable->c_str() : "" );
+			idStr presentation;
+			const bool found = gui->GetPresentationValue( windows[ i ], presentation );
+			const idStr value = Session_BrowserDiagnosticText( presentation.c_str() );
 			common->Printf( "BROWSER_WINDOW key=%s found=%d value=%s\n",
-				windows[ i ], variable != NULL, value.c_str() );
+				windows[ i ], found, value.c_str() );
 		}
 		return;
 	}
@@ -4291,30 +4305,59 @@ static void Session_OpenQ4Browser_f( const idCmdArgs &args ) {
 
 static void Session_OpenQ4GuiGet_f( const idCmdArgs &args ) {
 	idUserInterface *gui = session->GetActiveGUI();
-	if ( args.Argc() != 2 || gui == NULL || gui->GetDesktop() == NULL ) {
+	if ( args.Argc() != 2 || gui == NULL ) {
 		common->Printf( "usage: openq4_guiGet <window::variable> with an active GUI\n" );
 		return;
 	}
-	idWinVar *variable = gui->GetDesktop()->GetWinVarByName( args.Argv( 1 ), true );
-	if ( variable == NULL ) {
+	idStr value;
+	if ( !gui->GetPresentationValue( args.Argv( 1 ), value ) ) {
 		common->Printf( "openq4_guiGet: unknown GUI variable\n" );
 		return;
 	}
-	common->Printf( "GUI_VALUE %s=%s\n", args.Argv( 1 ), variable->c_str() );
+	common->Printf( "GUI_VALUE %s=%s\n", args.Argv( 1 ), value.c_str() );
+}
+
+static void Session_RetainedGui_f( const idCmdArgs &args ) {
+#ifndef ID_DEDICATED
+	idUserInterface* gui = sessLocal.GetActiveGUI();
+	if ( UI_RetainedDiagnostic( gui, args ) ) {
+		sessLocal.DispatchCommand( gui, "openq4-retained-actions" );
+		return;
+	}
+#endif
+	common->Printf( "openq4_retainedGui: requires a retained test/active GUI and report | inspect <id> | widget <id> | focus <id> | menu <action> <0|1> | number <begin|replace|select|preedit|input|undo|redo|commit|keep|reload|cancel> <id> [text or offsets] | state <id> <value> | pending <key> <value> | presentation <alias> <value> <override:0|1> | event <name> | trigger | update | save | restore\n" );
+}
+
+static void Session_SystemSettings_f( const idCmdArgs &args ) {
+	if ( args.Argc() == 2 ) {
+		if ( !idStr::Icmp( args.Argv( 1 ), "open" ) ) {
+			common->Printf( "OPENQ4_SYSTEM operation=open result=%d\n", sessLocal.OpenSystemSettings() ? 1 : 0 );
+			sessLocal.ReportSystemSettings();
+			return;
+		}
+		if ( !idStr::Icmp( args.Argv( 1 ), "back" ) ) {
+			common->Printf( "OPENQ4_SYSTEM operation=back result=%d\n", sessLocal.ReturnSystemSettings() ? 1 : 0 );
+			sessLocal.ReportSystemSettings();
+			return;
+		}
+		if ( !idStr::Icmp( args.Argv( 1 ), "report" ) ) {
+			sessLocal.ReportSystemSettings();
+			return;
+		}
+	}
+	common->Printf( "usage: openq4_system open | report | back (requires ui_retainedSystem 1 and the normal main menu)\n" );
 }
 
 static void Session_OpenQ4GuiSet_f( const idCmdArgs &args ) {
 	idUserInterface *gui = session->GetActiveGUI();
-	if ( args.Argc() != 3 || gui == NULL || gui->GetDesktop() == NULL ) {
+	if ( args.Argc() != 3 || gui == NULL ) {
 		common->Printf( "usage: openq4_guiSet <window::variable> <value> with an active GUI\n" );
 		return;
 	}
-	idWinVar *variable = gui->GetDesktop()->GetWinVarByName( args.Argv( 1 ), true );
-	if ( variable == NULL ) {
+	if ( !gui->SetPresentationValue( args.Argv( 1 ), args.Argv( 2 ) ) ) {
 		common->Printf( "openq4_guiSet: unknown GUI variable\n" );
 		return;
 	}
-	variable->Set( args.Argv( 2 ) );
 	gui->StateChanged( common->GetPresentationTime() );
 }
 
@@ -4334,6 +4377,7 @@ static void Session_GuiEvent_f( const idCmdArgs &args ) {
 	}
 
 	activeGui->HandleNamedEvent( eventName );
+	sessLocal.PumpApplicationActions( activeGui );
 }
 #endif
 
@@ -4343,10 +4387,27 @@ idSessionLocal::TestGUI
 ================
 */
 void idSessionLocal::TestGUI( const char *guiName ) {
-	if ( guiName && *guiName ) {
-		guiTest = uiManager->FindGui( guiName, true, false, true );
-	} else {
-		guiTest = NULL;
+	// The name can point into the current test instance. Stage a distinct view
+	// before releasing it, and retain the live test if replacement fails.
+	const idStr path( guiName != NULL ? guiName : "" );
+	idUserInterface *next = NULL;
+	if ( !path.IsEmpty() ) {
+		next = uiManager->FindGui( path, true, true, false );
+		if ( next == NULL ) { return; }
+	}
+	idUserInterface *previous = guiTest;
+	openq4::NativeInputBeforeSessionChange();
+	guiTest = NULL;
+	if ( previous != NULL && previous != guiActive ) {
+		previous->Activate( false, common->GetPresentationTime() );
+		PumpApplicationActions( previous );
+		uiManager->DeAlloc( previous );
+	}
+	openq4::NativeInputBeforeSessionChange();
+	guiTest = next;
+	if ( guiTest != NULL ) {
+		guiTest->Activate( true, common->GetPresentationTime() );
+		PumpApplicationActions( guiTest );
 	}
 }
 
@@ -4765,8 +4826,10 @@ void idSessionLocal::StartPlayingRenderDemo( idStr demoName ) {
 		}
 	}
 
+	openq4::NativeInputBeforeSessionChange();
 	insideExecuteMapChange = true;
 	UpdateScreen();
+	openq4::NativeInputBeforeSessionChange();
 	insideExecuteMapChange = false;
 	guiLoading->SetStateString( "demo", "" );
 
@@ -4824,8 +4887,10 @@ void idSessionLocal::TimeRenderDemo( const char *demoName, bool twice ) {
 		guiLoading->SetStateString( "demo", common->GetLanguageDict()->GetString( "#str_04852" ) );
 		guiLoading->StateChanged( common->GetPresentationTime() );
 		while ( readDemo ) {
+			openq4::NativeInputBeforeSessionChange();
 			insideExecuteMapChange = true;
 			UpdateScreen();
+			openq4::NativeInputBeforeSessionChange();
 			insideExecuteMapChange = false;
 			AdvanceRenderDemo( true );
 		}
@@ -5534,6 +5599,8 @@ Exits with mapSpawned = false
 ===============
 */
 void idSessionLocal::UnloadMap() {
+	RetainedUI_Close();
+	CloseSystemSettings();
 	// A level-load generation owns worker-visible file handles and immutable
 	// staging buffers. Join it before any game, render-world, renderer-module,
 	// or filesystem state used by the outgoing map can be destroyed.
@@ -5969,6 +6036,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	// cause prints to force screen updates as a pacifier,
 	// and draw the loading gui instead of game draws
+	openq4::NativeInputBeforeSessionChange();
 	insideExecuteMapChange = true;
 
 	// if this works out we will probably want all the sizes in a def file although this solution will 
@@ -6037,6 +6105,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	if ( loadingSaveGame && savegameFile ) {
 		if ( game->InitFromSaveGame( fullMapName, rw, savegameFile ) == false ) {
 			// If the loadgame failed, restart the map with the player persistent data
+			openq4::NativeInputBeforeSessionChange();
 			loadingSaveGame = false;
 			fileSystem->CloseFile( savegameFile );
 			savegameFile = NULL;
@@ -6275,6 +6344,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	console->ClearNotifyLines();
 
 	// stop drawing the laoding screen
+	openq4::NativeInputBeforeSessionChange();
 	insideExecuteMapChange = false;
 
 	Sys_SetPhysicalWorkMemory( -1, -1 );
@@ -6886,6 +6956,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 		return false;
 	}
 
+	openq4::NativeInputBeforeSessionChange();
 	loadingSaveGame = false;
 	savegameFile = NULL;
 
@@ -6951,6 +7022,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	}
 	savegameVersion = loadedSavegameVersion;
 
+	openq4::NativeInputBeforeSessionChange();
 	loadingSaveGame = true;
 	savegameFile = loadGameFile;
 	loadGameFile = NULL;
@@ -6981,6 +7053,7 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 
 	if ( loadingSaveGame ) {
 		fileSystem->CloseFile( savegameFile );
+		openq4::NativeInputBeforeSessionChange();
 		loadingSaveGame = false;
 		savegameFile = NULL;
 	}
@@ -7040,11 +7113,31 @@ bool idSessionLocal::DeleteGame( const char *saveName ) {
 idSessionLocal::ProcessEvent
 ===============
 */
+bool idSessionLocal::QueryNativeInputPublication(openq4::NativeSessionPublication& out) const noexcept {
+    if (!Sys_EventDispositionBoundThread()) return false;
+    const auto transition = openq4::NativeInputSessionTransition();
+    openq4::NativeSessionPublication value;
+    value.current = reinterpret_cast<std::uintptr_t>(guiTest ? guiTest : guiActive);
+    value.transition = transition;
+    value.inputAllowed = transition && value.current && !insideExecuteMapChange && !loadingSaveGame &&
+        !com_asyncInput.GetBool() && !openq4::Console_BlocksNativeInput() && !RetainedUI_IsOpen();
+    out = value; return true;
+}
+bool openq4::Session_QueryNativeInputPublication(NativeSessionPublication& out) noexcept {
+    return sessLocal.QueryNativeInputPublication(out);
+}
+bool idSessionLocal::IsGUIActive() const {
+	return guiActive != NULL || guiTest != NULL || RetainedUI_IsOpen();
+}
+
 bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
+    if (!NativeInput_SessionCurrent()) return false;
+	if ( event->evType == SE_RETAINED_UI ) return RetainedUI_ProcessEvent( event );
 	// hitting escape anywhere brings up the menu
-	if ( !guiActive && event->evType == SE_KEY && event->evValue2 == 1 &&
+	if ( !guiActive && !guiTest && !RetainedUI_IsOpen() && event->evType == SE_KEY && event->evValue2 == 1 &&
 		( event->evValue == K_ESCAPE || event->evValue == K_JOY7 || event->evValue == K_JOY8 ) ) {
 		console->Close();
+		if (!NativeInput_SessionCurrent()) return true;
 		if ( IsDemoPlaybackActive() ) {
 			OpenDemoMenu( false );
 			return true;
@@ -7053,6 +7146,7 @@ bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
 			idUserInterface	*gui = NULL;
 			escReply_t		op;
 			op = game->HandleESC( &gui );
+			if (!NativeInput_SessionCurrent()) return true;
 			if ( op == ESC_IGNORE ) {
 				return true;
 			} else if ( op == ESC_GUI ) {
@@ -7066,21 +7160,30 @@ bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
 
 	// let the pull-down console take it if desired
 	if ( console->ProcessEvent( event, false ) ) {
+        if (!NativeInput_SessionCurrent()) return true;
+		RetainedUI_FrameInput();
 		return true;
 	}
+    if (!NativeInput_SessionCurrent()) return false;
+	if ( RetainedUI_IsOpen() ) return RetainedUI_ProcessEvent( event );
 
 	// if we are testing a GUI, send all events to it
 	if ( guiTest ) {
 		// hitting escape exits the testgui
 		if ( event->evType == SE_KEY && event->evValue2 == 1 && event->evValue == K_ESCAPE ) {
-			guiTest = NULL;
+			TestGUI( NULL );
 			return true;
 		}
 		
 		static const char *cmd;
 		cmd = guiTest->HandleEvent( event, common->GetPresentationTime() );
+        if (!NativeInput_SessionCurrent()) return true;
 		if ( cmd && cmd[0] ) {
-			common->Printf( "testGui event returned: '%s'\n", cmd );
+			bool closeRequested = false;
+			if ( UI_DispatchApplicationActions( guiTest, cmd, closeRequested ) ) {
+                if (!NativeInput_SessionCurrent()) return true;
+				if ( closeRequested ) TestGUI( NULL );
+			} else common->Printf( "testGui event returned: '%s'\n", cmd );
 		}
 		return true;
 	}
@@ -7546,7 +7649,7 @@ void idSessionLocal::Draw() {
 			// ordinary in-game "gameDraw" path.
 			rw->RenderScene( &currentDemoRenderView );
 			renderSystem->DrawDemoPics();
-		} else if ( guiActive->State().GetBool( "gameDraw" ) ) {
+		} else if ( guiActive == guiSystem || guiActive->State().GetBool( "gameDraw" ) ) {
 			if ( mapSpawned && !com_skipGameDraw.GetBool() && GetLocalClientNum() >= 0 ) {
 				bool gameDraw = game->Draw( GetLocalClientNum() );
 				if ( !gameDraw ) {
@@ -7683,6 +7786,7 @@ void idSessionLocal::Draw() {
 	}
 
 	// draw the wipe material on top of this if it hasn't completed yet
+	RetainedUI_Draw();
 	DrawWipeModel();
 	
 	// draw debug graphs
@@ -7729,16 +7833,20 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 
 	renderSystem->SetLoadingScreenSwapIntervalBypass( insideExecuteMapChange );
 
+	UI_SettingsRenderFrame settingsFrame;
 	renderSystem->BeginFrame( renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight() );
 
 	// draw everything
 	Draw();
 
+	settingsFrame.Submitting();
 	if ( com_speeds.GetBool() ) {
 		renderSystem->EndFrame( &time_frontend, &time_backend );
 	} else {
 		renderSystem->EndFrame( NULL, NULL );
 	}
+	settingsFrame.Presented();
+	RetainedUI_FrameSubmitted();
 
 	insideUpdateScreen = false;
 }
@@ -7883,7 +7991,7 @@ void idSessionLocal::Frame() {
 
 	//------------ single player game tics --------------
 
-	if ( !mapSpawned || guiActive ) {
+	if ( !mapSpawned || IsGUIActive() ) {
 		if ( !com_asyncInput.GetBool() ) {
 			// early exit, won't do RunGameTic .. but still need to update mouse position for GUIs
 			usercmdGen->GetDirectUsercmd();
@@ -7895,7 +8003,7 @@ void idSessionLocal::Frame() {
 		return;
 	}
 
-	if ( guiActive ) {
+	if ( IsGUIActive() ) {
 		lastGameTic = latchedTicNumber;
 		UpdateFramePacingStats( frameStartMsec, requestedWaitMsec, actualWaitMsec, 0 );
 		return;
@@ -8234,6 +8342,13 @@ void idSessionLocal::Init() {
 
 	cmdSystem->AddCommand( "demoShot", Session_DemoShot_f, CMD_FL_SYSTEM, "writes a screenshot for a demo" );
 	cmdSystem->AddCommand( "testGUI", Session_TestGUI_f, CMD_FL_SYSTEM, "tests a gui" );
+#ifndef ID_DEDICATED
+	cmdSystem->AddCommand( "openq4_retainedGui", Session_RetainedGui_f, CMD_FL_SYSTEM, "inspect a normal retained GUI or submit semantic diagnostics without device input" );
+	cmdSystem->AddCommand( "openq4_system", Session_SystemSettings_f, CMD_FL_SYSTEM, "open, return or inspect the opt-in normal SYSTEM child without device input" );
+#endif
+	// A rejected recoverable restart can leave no device until the next safe
+	// settings frame restores it. Never issue drawing commands into that gap.
+	if ( !renderSystem || !renderSystem->IsOpenGLRunning() ) return;
 
 #ifndef	ID_DEDICATED
 	cmdSystem->AddCommand( "GuiEvent", Session_GuiEvent_f, CMD_FL_SYSTEM, "sends a named event to the active gui" );
@@ -8288,8 +8403,10 @@ void idSessionLocal::Init() {
 	whiteMaterial = declManager->FindMaterial( "_white" );
 
 	guiInGame = NULL;
+	openq4::NativeInputBeforeSessionChange();
 	guiTest = NULL;
 
+	openq4::NativeInputBeforeSessionChange();
 	guiActive = NULL;
 	guiHandle = NULL;
 
@@ -8361,7 +8478,9 @@ void idSessionLocal::UpdateSoundWorldFocus() {
 }
 
 void idSessionLocal::SetPlayingSoundWorld() {
-	if ( guiActive && ( guiActive == guiMainMenu || guiActive == guiIntro || guiActive == guiLoading || ( guiActive == guiMsg && !mapSpawned ) ) ) {
+	const bool systemMenuActive = guiSystem != NULL &&
+		( guiActive == guiSystem || ( guiActive == guiMsg && guiMsgRestore == guiSystem ) );
+	if ( guiActive && ( guiActive == guiMainMenu || systemMenuActive || guiActive == guiIntro || guiActive == guiLoading || ( guiActive == guiMsg && !mapSpawned ) ) ) {
 		SetPlayingSoundWorld( menuSoundWorld );
 	} else {
 		SetPlayingSoundWorld( sw );

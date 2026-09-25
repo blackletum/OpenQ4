@@ -102,8 +102,10 @@ def validate_sdl3_backend_input() -> None:
     pump = function_body(source, "bool Sys_SDL_PumpEvents(void) {")
     button_helper = function_body(source, "static void SDL3_QueueMouseButtonEvent(int key, bool down, int eventTime, bool pollState) {")
 
-    # Keyboard keys must queue unconditionally so "press any key" works.
-    require(pump, "Sys_QueEvent(eventTime, SE_KEY, key, down, 0, NULL);", "SDL3 keyboard SE_KEY queueing")
+    # Unclaimed keyboard events still reach the legacy loading gate, carrying
+    # the modifier/repeat metadata used by both UI implementations.
+    require(pump, "if (!retained && key != K_PRINT_SCR", "SDL3 legacy keyboard fallback")
+    require(pump, "Sys_QueEvent(eventTime, SE_KEY, key, down, static_cast<int>(metadata.size()), payload);", "SDL3 keyboard SE_KEY queueing")
     require(pump, "SDL_EVENT_TEXT_INPUT", "SDL3 text input handling")
 
     # Mouse buttons are normally dropped when the mouse is neither captured nor

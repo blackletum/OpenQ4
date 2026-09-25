@@ -38,6 +38,8 @@ No texture is ever used that does not have a corresponding idImage.
 ====================================================================
 */
 
+#include "RendererConsumedPolicy.h"
+
 static const int	MAX_TEXTURE_LEVELS = 14;
 
 // How is this texture used?  Determines the storage and color format
@@ -106,19 +108,12 @@ clamped; applying them the other way round would let a low ceiling silently
 swallow the first few picmip steps.
 ================================================
 */
-struct imageDownsizePolicy_t {
-	int			maxDimension;	// hard ceiling on either axis, 0 = no ceiling
-	int			mipShift;		// whole mip levels dropped after the ceiling
-	int			minDimension;	// mipShift stops once the larger axis reaches this
-
-	imageDownsizePolicy_t() : maxDimension( 0 ), mipShift( 0 ), minDimension( 1 ) {}
-
-	bool		IsActive() const { return maxDimension > 0 || mipShift > 0; }
-};
-
 // Resolves the image reduction cvars for one image. Implemented next to those
 // cvars in ImageManager.cpp; every loader path and the cache key go through it.
 void R_GetImageDownsizePolicy( const char *name, textureUsage_t usage, bool allowDownSize, imageDownsizePolicy_t &policy );
+void R_ResolveImageDownsizePolicy( const imageDownsizeInputs_t& inputs, const char* name, textureUsage_t usage, bool allowDownSize, imageDownsizePolicy_t& policy );
+textureUsage_t R_ResolveMaterialHighQualityUsage( const materialQualityInputs_t& inputs, textureUsage_t usage, bool forceHighQuality );
+unsigned int R_ResolveMaterialNoMipFlags( const materialQualityInputs_t& inputs, unsigned int flags );
 
 // Reduces width/height in place. Safe for non power of two and degenerate sizes.
 void R_ApplyImageDownsizePolicy( const imageDownsizePolicy_t &policy, int &width, int &height );
@@ -126,6 +121,10 @@ void R_ApplyImageDownsizePolicy( const imageDownsizePolicy_t &policy, int &width
 // Number of whole mip levels between the source size and the policy result, for
 // loaders that select a level out of an existing mip chain instead of resampling.
 int R_ImageDownsizePolicyMipSkip( const imageDownsizePolicy_t &policy, int width, int height, int availableLevels );
+// authoredLevels == 0 selects decoded resampling; positive levels select only
+// stored DDS mips. False leaves output unchanged.
+bool R_ResolveImageReduction(const imageDownsizePolicy_t& policy, int width, int height, int authoredLevels, imageReductionResult_t& output);
+bool R_ImageReductionIsExact(const imageDownsizePolicy_t& policy, const imageReductionResult_t& result);
 
 // User-selectable sampling for TF_DEFAULT images. The names intentionally
 // mirror Quake 4's image_filter values, while this backend-neutral state keeps
@@ -155,9 +154,21 @@ imageFilterState_t R_GetDefaultImageFilterState();
 
 #define	MAX_IMAGE_NAME	256
 
+uint64_t R_ImagePolicyNewResourceIdentity() noexcept;
+void R_ImagePolicyResourceDestroyed() noexcept;
+
 class idImage {
 public:
 	idImage(const char* name);
+	~idImage() { R_ImagePolicyResourceDestroyed(); }
+	idImage(const idImage&) = delete;
+	idImage& operator=(const idImage&) = delete;
+	uint64_t GetImagePolicyIdentity() const { return imagePolicyIdentity; }
+	// Callback-free; complete observations only. False preserves output.
+	bool GetConsumedPolicy(imageConsumedPolicy_t& output) const;
+    bool GetPortableContent(imagePortableContent_t& output) const;
+    imageDeclaredPolicy_t GetDeclaredPolicy() const { return {filter,repeat,usage,cubeFiles,flags,allowDownSize}; }
+	void InvalidateConsumedPolicy();
 
 	const char* GetName() const { return imgName; }
 
@@ -207,6 +218,7 @@ public:
 	textureUsage_t GetUsage() const { return usage; }
 	bool		IsDefaulted() const { return defaulted; }
 	bool		IsScratchImage() const { return scratchImage; }
+	bool IsFileBacked() const { return generatorFunction == NULL && !opts.isPersistant && !scratchImage; }
 
 	void		SetReferencedOutsideLevelLoad() { referencedOutsideLevelLoad = true; }
 	void		SetReferencedInsideLevelLoad() { levelLoadReferenced = true; }
@@ -245,7 +257,12 @@ public:
 	// done under any normal circumstances, and probably not at all on consoles.
 	void		Resize(int width, int height);
 
-	bool		IsCompressed() const { return ( opts.format == FMT_DXT1 || opts.format == FMT_DXT5 || opts.format == FMT_BC7 ); }
+	// every block-compressed format: gates the compressed upload path, the
+	// 4-pixel alignment asserts and the block-size arithmetic
+	bool		IsCompressed() const {
+		return ( opts.format == FMT_DXT1 || opts.format == FMT_DXT5 || opts.format == FMT_BC7 ||
+				 opts.format == FMT_ETC2_RGB8 || opts.format == FMT_ETC2_RGBA8 || opts.format == FMT_EAC_RG11 );
+	}
 
 	void		SetTexParameters();	// update aniso and trilinear
 
@@ -259,7 +276,7 @@ public:
 	// against. It differs from _name whenever a dds/ replacement supplies the
 	// pixels, and passing it keeps the cache key in step with the reduction that
 	// is actually applied to those pixels.
-	static void			GetGeneratedName(idStr& _name, const char* _policyName, const textureUsage_t& _usage, const cubeFiles_t& _cube, bool allowDownSize = true, unsigned int flags = 0);
+	static void			GetGeneratedName(idStr& _name, const char* _policyName, const textureUsage_t& _usage, const cubeFiles_t& _cube, bool allowDownSize = true, unsigned int flags = 0, const imageDownsizePolicy_t* consumed = NULL);
 
 	unsigned int		GetDeviceHandle(void) { return texnum; }
 private:
@@ -301,11 +318,15 @@ private:
 	unsigned int				dataFormat;
 	unsigned int				dataType;
 	uint64_t			storageGeneration;
+	friend class imageConsumedLoad_t;
+	imageConsumedPolicy_t consumedPolicy{};
+	uint64_t consumedLoadRevision = 0;
+	const uint64_t		imagePolicyIdentity;
 
 
 };
 
-ID_INLINE idImage::idImage(const char* name) : imgName(name) {
+ID_INLINE idImage::idImage(const char* name) : imgName(name), imagePolicyIdentity(R_ImagePolicyNewResourceIdentity()) {
 	texnum = TEXTURE_NOT_LOADED;
 	internalFormat = 0;
 	dataFormat = 0;
@@ -388,6 +409,7 @@ public:
 
 	// reloads all apropriate images after a vid_restart
 	void				ReloadImages(bool all, bool fileBackedOnly = false);
+	void ClearCheckedImagePolicyChanges(); // Only after an exact checked restart.
 
 	// reloads every image when a texture reduction cvar changed this frame
 	void				CheckCvars();
@@ -522,7 +544,7 @@ bool R_ResolvePreferredDDSImageSource(const char* name, idStr& ddsName, ID_TIME_
 // enables per-candidate DDS probe memoization for the duration of a level
 // load; disabling also clears all memoized probe results
 void R_SetDDSProbeCacheActive(bool active);
-bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp, textureUsage_t usage, const imageDownsizePolicy_t& downsizePolicy, bool useMipmaps);
+bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp, textureUsage_t usage, const imageDownsizePolicy_t& downsizePolicy, bool useMipmaps, imageReductionResult_t* reduction = NULL, const imageFileContent_t* expected = NULL);
 bool R_ImageDDS_RunSelfTest();
 // pic is in top to bottom raster format
 bool R_LoadCubeImages(const char* cname, cubeFiles_t extensions, byte* pic[6], int* size, ID_TIME_T* timestamp);

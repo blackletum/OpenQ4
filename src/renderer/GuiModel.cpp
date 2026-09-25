@@ -303,6 +303,23 @@ void idGuiModel::EmitSurface( guiModelSurface_t *surf, float modelMatrix[16], fl
 		return;
 	}
 
+	// GUI geometry drew from tri->indexes directly, which is a client-memory
+	// index pointer: legal in a compatibility context and REMOVED in a core
+	// profile and in OpenGL ES, where a bound element-array buffer is the only
+	// way to draw indexed geometry. Without this the entire GUI -- menu, HUD,
+	// every in-world screen -- silently draws nothing on those profiles.
+	//
+	// r_useIndexBuffers is already forced to 2 for them in idVertexCache::Init,
+	// but that only governs geometry that asks the cache for an index range;
+	// this path never asked.
+	if ( r_useIndexBuffers.GetInteger() >= 2 ) {
+		tri->indexCache = vertexCache.AllocFrameTemp( tri->indexes,
+				tri->numIndexes * sizeof( tri->indexes[0] ), true );
+		if ( !tri->indexCache ) {
+			return;
+		}
+	}
+
 	renderEntity_t renderEntity;
 	memset( &renderEntity, 0, sizeof( renderEntity ) );
 	memcpy( renderEntity.shaderParms, surf->color, sizeof( surf->color ) );
@@ -526,7 +543,10 @@ void idGuiModel::DrawStretchPic( const idDrawVert *dverts, const glIndex_t *dind
 		surf->material = hShader;
 	}
 
-	if ( surf->numVerts > Q4_GUI_MODEL_MAX_SURFACE_VERTS ) {
+	// A retained vector draw can append thousands of vertices at once. Split
+	// before that append: checking only the previous size can put two valid
+	// batches into a surface larger than a frame allocation block.
+	if ( surf->numVerts && !clip && vertCount > Q4_GUI_MODEL_MAX_SURFACE_VERTS - surf->numVerts ) {
 		AdvanceSurf();
 	}
 
@@ -572,6 +592,9 @@ void idGuiModel::DrawStretchPic( const idDrawVert *dverts, const glIndex_t *dind
 			}
 
 			const int windingPointCount = w.GetNumPoints();
+			if ( surf->numVerts && windingPointCount > Q4_GUI_MODEL_MAX_SURFACE_VERTS - surf->numVerts ) {
+				AdvanceSurf();
+			}
 			const idDrawVert *sourceVert = &dverts[dindexes[i]];
 			int	numVerts = verts.Num();
 			verts.SetNum( numVerts + windingPointCount, false );

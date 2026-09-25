@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "DeviceContext.h"
 #include "Window.h"
+#include "LegacyGuiImport.h"
 #include "UserInterfaceLocal.h"
 #include "../framework/Session.h"
 #include "EditWindow.h"
@@ -691,6 +692,7 @@ idWindow::~idWindow
 ================
 */
 idWindow::~idWindow() {
+	UI_LegacyObservationDestroyed(this);
 	CleanUp();
 }
 
@@ -1602,6 +1604,7 @@ idWindow::EvalRegs
 float idWindow::EvalRegs(int test, bool force) {
 	static float regs[MAX_EXPRESSION_REGISTERS];
 	static idWindow *lastEval = NULL;
+	UI_LegacyObservationCache(this,&lastEval);
 
 	if (!force && test >= 0 && test < MAX_EXPRESSION_REGISTERS && lastEval == this) {
 		return regs[test];
@@ -1613,6 +1616,7 @@ float idWindow::EvalRegs(int test, bool force) {
 		regList.SetToRegs(regs);
 		EvaluateRegisters(regs);
 		regList.GetFromRegs(regs);
+		if (UI_LegacyObservationActive(this)) UI_LegacyObservationEvaluation(this,regs,expressionRegisters.Num(),&matColor,matColor.w());
 	}
 
 	if (test >= 0 && test < MAX_EXPRESSION_REGISTERS) {
@@ -3308,6 +3312,7 @@ idWindow::Parse
 ================
 */
 bool idWindow::Parse( idParser *src, bool rebuild) {
+	UI_LegacyObservationParse(this,true,false);
 	idToken token, token2, token3, token4, token5, token6, token7;
 	idStr work;
 
@@ -3809,6 +3814,7 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 	}
 #endif
 
+	UI_LegacyObservationParse(this,false,ret);
 	return ret;
 }
 
@@ -4143,13 +4149,20 @@ intptr_t idWindow::ParseTerm( idParser *src,	idWinVar *var, intptr_t component )
 
 	// see if it is a table name
 	const idDeclTable *table = static_cast<const idDeclTable *>( declManager->FindType( DECL_TABLE, token.c_str(), false ) );
+	const unsigned observation = UI_LegacyObservationActive(this) ?
+		UI_LegacyObservationTerm(this,src,token,table ? table->Index() : -1) : 0;
+	const auto emit = [&](intptr_t left, intptr_t right, wexpOpType_t type) {
+		const int result = EmitOp(left,right,type);
+		UI_LegacyObservationOp(this,observation,numOps-1,result,type,left,right);
+		return result;
+	};
 	if ( table ) {
 		a = table->Index();
 		// parse a table expression
 		src->ExpectTokenString("[");
 		b = ParseExpression(src);
 		src->ExpectTokenString("]");
-		return EmitOp( a, b, WOP_TYPE_TABLE );
+		return emit( a, b, WOP_TYPE_TABLE );
 	}
 	
 	if (var == NULL) {
@@ -4169,15 +4182,15 @@ intptr_t idWindow::ParseTerm( idParser *src,	idWinVar *var, intptr_t component )
 					src->UnreadToken(&token);
 				}
 			}
-			return EmitOp(a, b, WOP_TYPE_VAR);
+			return emit(a, b, WOP_TYPE_VAR);
 		} else if (dynamic_cast<idWinFloat*>(var)) {
-			return EmitOp(a, b, WOP_TYPE_VARF);
+			return emit(a, b, WOP_TYPE_VARF);
 		} else if (dynamic_cast<idWinInt*>(var)) {
-			return EmitOp(a, b, WOP_TYPE_VARI);
+			return emit(a, b, WOP_TYPE_VARI);
 		} else if (dynamic_cast<idWinBool*>(var)) {
-			return EmitOp(a, b, WOP_TYPE_VARB);
+			return emit(a, b, WOP_TYPE_VARB);
 		} else if (dynamic_cast<idWinStr*>(var)) {
-			return EmitOp(a, b, WOP_TYPE_VARS);
+			return emit(a, b, WOP_TYPE_VARS);
 		} else {
 			src->Warning("Var expression not vec4, float or int '%s'", token.c_str());
 		}
@@ -4188,7 +4201,7 @@ intptr_t idWindow::ParseTerm( idParser *src,	idWinVar *var, intptr_t component )
 		idStr::Copynz( p, token.c_str(), token.Length() + 1 );
 		a = (intptr_t)p;
 		b = -2;
-		return EmitOp(a, b, WOP_TYPE_VAR);
+		return emit(a, b, WOP_TYPE_VAR);
 	}
 
 }
@@ -5811,9 +5824,11 @@ void idWindow::FixupParms() {
 			// need to fix this up
 			const char *p = (const char*)(ops[i].a);
 			idWinVar *var = GetWinVarByName(p, true);
+			UI_LegacyObservationFixup(this,i,p,var);
 			delete []p;
 			ops[i].a = (intptr_t)var;
 			ops[i].b = -1;
+			UI_LegacyObservationResolved(this,i,ops[i].a,ops[i].b);
 		}
 	}
 	
@@ -5821,6 +5836,7 @@ void idWindow::FixupParms() {
 	if (flags & WIN_DESKTOP) {
 		CalcRects(0,0);
 	}
+	UI_LegacyObservationFixed(this);
 
 }
 

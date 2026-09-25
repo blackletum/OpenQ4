@@ -51,6 +51,14 @@ static idList<vkDeferredDestroy_t> vkDeferredDestroyOverflow[ VK_FRAMES_IN_FLIGH
 
 static const renderWindowServices_t *vkWindowServices = NULL;
 
+void VK_Device_BlockPresentation( renderDisplayOutcome_t outcome, VkResult error, const char *operation ) {
+	if ( vkCtx.presentationBlocked ) return;
+	vkCtx.presentationBlocked = true;
+	R_DisplayPresentationFailed( outcome, static_cast<int32_t>( error ) );
+	R_DisplayPresentationShutdown();
+	common->Warning( "Vulkan: %s failed (%d); presentation requires a full device restart", operation, (int)error );
+}
+
 extern idCVar r_vkValidation;
 extern idCVar r_vkDevice;
 extern idCVar r_vkSampleLocations;
@@ -111,6 +119,29 @@ static void VK_Device_RestrictSampleLocationDepthFormats( void ) {
 	}
 	common->Printf( "Vulkan: MSAA sample locations lower-left-standard counts=0x%x native-standard=%d\n",
 		(unsigned int)vkCtx.sampleLocationCounts, vkCtx.deviceProperties.limits.standardSampleLocations ? 1 : 0 );
+}
+
+int VK_Device_RequestedSwapInterval( void ) {
+	if ( R_IsRecoverableRendererRestart() ) {
+		const auto *request = R_GetRecoverableWindowRequest();
+		if ( request != NULL ) return request->swapInterval;
+	}
+	// Compare source values, not IsModified: loading-screen bypass toggles the
+	// modified flag without changing the player's setting. Same-value writes
+	// are idCVar no-ops and do not relinquish a typed request's ownership.
+	if ( vkCtx.strictSwapInterval && r_swapInterval.GetInteger() != vkCtx.strictSwapIntervalCvar ) {
+		vkCtx.strictSwapInterval = false;
+	}
+	return vkCtx.strictSwapInterval ? vkCtx.strictSwapIntervalValue : R_GetEffectiveSwapInterval();
+}
+
+static void VK_Device_RecordSwapInterval( int interval ) {
+	vkCtx.swapInterval = interval;
+	if ( R_IsRecoverableRendererRestart() ) {
+		vkCtx.strictSwapInterval = true;
+		vkCtx.strictSwapIntervalValue = interval;
+		vkCtx.strictSwapIntervalCvar = r_swapInterval.GetInteger();
+	}
 }
 
 /*
@@ -507,6 +538,33 @@ static bool VK_Device_CreateDepthImages( void ) {
 VK_Device_CreateSwapchain
 ====================
 */
+static bool VK_Device_SelectPresentMode( int requestedInterval, bool strict, VkPresentModeKHR &selected ) {
+	VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+	if ( requestedInterval == 0 || ( strict && requestedInterval == -1 ) ) {
+		uint32_t modeCount = 0;
+		VkResult modeResult = vkGetPhysicalDeviceSurfacePresentModesKHR( vkCtx.physicalDevice, vkCtx.surface, &modeCount, NULL );
+		if ( modeResult != VK_SUCCESS ) { R_DisplayPresentationFailed( RDP_RECREATE_FAILED, (int32_t)modeResult ); return false; }
+		if ( modeCount > 16 ) modeCount = 16;
+		VkPresentModeKHR modes[ 16 ];
+		modeResult = vkGetPhysicalDeviceSurfacePresentModesKHR( vkCtx.physicalDevice, vkCtx.surface, &modeCount, modes );
+		if ( modeResult != VK_SUCCESS && modeResult != VK_INCOMPLETE ) { R_DisplayPresentationFailed( RDP_RECREATE_FAILED, (int32_t)modeResult ); return false; }
+		for ( uint32_t i = 0; i < modeCount; i++ ) {
+			if ( requestedInterval == -1 ) {
+				if ( modes[ i ] == VK_PRESENT_MODE_FIFO_RELAXED_KHR ) presentMode = modes[ i ];
+				continue;
+			}
+			if ( modes[ i ] == VK_PRESENT_MODE_IMMEDIATE_KHR ) { presentMode = modes[ i ]; break; }
+			if ( modes[ i ] == VK_PRESENT_MODE_MAILBOX_KHR ) presentMode = modes[ i ];
+		}
+	}
+	if ( strict && requestedInterval != 1 && presentMode == VK_PRESENT_MODE_FIFO_KHR ) {
+		common->Warning( "Vulkan: requested swap interval %d has no supported present mode", requestedInterval );
+		return false;
+	}
+	selected = presentMode;
+	return true;
+}
+
 static bool VK_Device_CreateSwapchain( void ) {
 	VkSurfaceCapabilitiesKHR caps;
 	if ( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkCtx.physicalDevice, vkCtx.surface, &caps ) != VK_SUCCESS ) {
@@ -529,30 +587,14 @@ static bool VK_Device_CreateSwapchain( void ) {
 		return false;
 	}
 
-	// present mode from the effective swap interval: 0 = IMMEDIATE (or MAILBOX
-	// when IMMEDIATE is absent), else FIFO (always available). Read through
-	// R_GetEffectiveSwapInterval so the loading-screen vsync bypass
-	// (r_disableVSyncDuringLevelLoad) reaches Vulkan the way it reaches GL.
-	const int requestedInterval = R_GetEffectiveSwapInterval();
+	// Keep the applied typed interval across resize/out-of-date recreation.
+	// Legacy configuration resumes only when its source CVar value changes.
+	const auto* strictRequest = R_GetRecoverableWindowRequest();
+	if ( R_IsRecoverableRendererRestart() && ( strictRequest == NULL || strictRequest->swapInterval < -1 || strictRequest->swapInterval > 1 ) ) return false;
+	const int requestedInterval = VK_Device_RequestedSwapInterval();
+	const bool strict = R_IsRecoverableRendererRestart() || vkCtx.strictSwapInterval;
 	VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
-	if ( requestedInterval == 0 ) {
-		uint32_t modeCount = 0;
-		vkGetPhysicalDeviceSurfacePresentModesKHR( vkCtx.physicalDevice, vkCtx.surface, &modeCount, NULL );
-		if ( modeCount > 16 ) {
-			modeCount = 16;
-		}
-		VkPresentModeKHR modes[ 16 ];
-		vkGetPhysicalDeviceSurfacePresentModesKHR( vkCtx.physicalDevice, vkCtx.surface, &modeCount, modes );
-		for ( uint32_t i = 0; i < modeCount; i++ ) {
-			if ( modes[ i ] == VK_PRESENT_MODE_IMMEDIATE_KHR ) {
-				presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-				break;
-			}
-			if ( modes[ i ] == VK_PRESENT_MODE_MAILBOX_KHR ) {
-				presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-			}
-		}
-	}
+	if ( !VK_Device_SelectPresentMode( requestedInterval, strict, presentMode ) ) return false;
 
 	VkExtent2D extent = caps.currentExtent;
 	if ( extent.width == 0xFFFFFFFFu ) {
@@ -615,6 +657,7 @@ static bool VK_Device_CreateSwapchain( void ) {
 	const VkResult res = vkCreateSwapchainKHR( vkCtx.device, &sci, NULL, &newSwapchain );
 	if ( res != VK_SUCCESS ) {
 		common->Warning( "Vulkan: vkCreateSwapchainKHR failed (%d)", (int)res );
+		R_DisplayPresentationFailed( RDP_RECREATE_FAILED, (int32_t)res );
 		return false;
 	}
 
@@ -625,7 +668,6 @@ static bool VK_Device_CreateSwapchain( void ) {
 	vkCtx.swapchainFormat = chosen.format;
 	vkCtx.swapchainExtent = extent;
 	vkCtx.presentMode = presentMode;
-	vkCtx.swapInterval = requestedInterval;
 	vkCtx.swapchainTransferSrc = transferSrcSupported;
 
 	uint32_t count = 0;
@@ -690,6 +732,11 @@ static bool VK_Device_CreateSwapchain( void ) {
 	if ( !vkCtx.swapchainTransferSrc ) {
 		common->Warning( "Vulkan: swapchain does not support transfer-source captures; screenshots and backbuffer feedback are unavailable" );
 	}
+	const int actualInterval = presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR ? -1 :
+		presentMode == VK_PRESENT_MODE_FIFO_KHR ? 1 : 0;
+	VK_Device_RecordSwapInterval( requestedInterval );
+	R_DisplayPresentationParameters( 0, actualInterval, (int32_t)presentMode,
+		RDP_PARAMETER_SAMPLES | RDP_PARAMETER_SWAP_INTERVAL | RDP_PARAMETER_PRESENT_MODE );
 	return true;
 }
 
@@ -823,7 +870,7 @@ VK_Device_RecreateSwapchain
 ====================
 */
 bool VK_Device_RecreateSwapchain( void ) {
-	if ( !vkCtx.initialized ) {
+	if ( !vkCtx.initialized || vkCtx.presentationBlocked ) {
 		return false;
 	}
 	// Waiting for the device only covers submitted work. Retiring attachment
@@ -833,13 +880,12 @@ bool VK_Device_RecreateSwapchain( void ) {
 		common->Warning( "Vulkan: swapchain recreation requires a submitted frame" );
 		return false;
 	}
-	const VkResult idleResult = vkDeviceWaitIdle( vkCtx.device );
-	if ( idleResult != VK_SUCCESS ) {
-		common->Warning( "Vulkan: swapchain recreation device wait failed (%d)", (int)idleResult );
-		return false;
-	}
+	renderDisplayChangeScope_t presentation( RDP_RECREATE_FAILED );
+	const VkResult waited = vkDeviceWaitIdle( vkCtx.device );
+	if ( waited != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_WAIT_FAILED, waited, "swapchain idle wait" ); return false; }
 	R_RendererMetrics_ResetGpuFrameTiming( "Vulkan swapchain recreation" );
-	return VK_Device_CreateSwapchain();
+	if ( !VK_Device_CreateSwapchain() ) return false;
+	presentation.Succeeded(); return true;
 }
 
 /*
@@ -859,6 +905,7 @@ bool VK_Device_InjectStartupFailure( int stage ) {
 }
 
 bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
+	renderDisplayChangeScope_t presentation( RDP_INIT_FAILED );
 	memset( &vkCtx, 0, sizeof( vkCtx ) );
 	vkWindowServices = windowServices;
 
@@ -1244,6 +1291,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 
 	VK_Device_RestrictSampleLocationDepthFormats();
 	vkCtx.initialized = true;
+	presentation.Succeeded();
 	return true;
 }
 
@@ -1253,6 +1301,7 @@ VK_Device_Shutdown
 ====================
 */
 void VK_Device_Shutdown( void ) {
+	R_DisplayPresentationShutdown();
 	if ( vkCtx.device != VK_NULL_HANDLE ) {
 		vkDeviceWaitIdle( vkCtx.device );
 	}
@@ -1330,12 +1379,12 @@ VK_Device_PresentClearFrame
 ====================
 */
 void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
-	if ( !vkCtx.initialized ) {
+	if ( !vkCtx.initialized || vkCtx.presentationBlocked ) {
 		return;
 	}
 
 	// swap-interval changes require a swapchain rebuild
-	if ( r_swapInterval.GetInteger() != vkCtx.swapInterval ) {
+	if ( VK_Device_RequestedSwapInterval() != vkCtx.swapInterval ) {
 		if ( !VK_Device_RecreateSwapchain() ) {
 			return;
 		}
@@ -1345,10 +1394,12 @@ void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
 	vkCtx.frameSlot = ( vkCtx.frameSlot + 1 ) % VK_FRAMES_IN_FLIGHT;
 	vkCtx.recordingSlot = slot;
 
-	vkWaitForFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ], VK_TRUE, UINT64_MAX );
+	const VkResult waited = vkWaitForFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ], VK_TRUE, UINT64_MAX );
+	if ( waited != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_WAIT_FAILED, waited, "clear frame fence wait" ); return; }
 	// deferred destroys must never run while a submitted upload batch could
 	// still reference their images
 	VK_Device_WaitUploadBatch();
+	if ( vkCtx.presentationBlocked ) return;
 	VK_Device_FlushDeferredDestroys( slot );
 
 	uint32_t imageIndex = 0;
@@ -1362,19 +1413,23 @@ void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
 				vkCtx.acquireSemaphores[ slot ], VK_NULL_HANDLE, &imageIndex );
 	}
 	if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR ) {
+		if ( res == VK_ERROR_DEVICE_LOST ) VK_Device_BlockPresentation( RDP_ACQUIRE_FAILED, res, "clear frame acquire" );
+		else R_DisplayPresentationFailed( RDP_ACQUIRE_FAILED, (int32_t)res );
 		return;
 	}
 
-	vkResetFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ] );
-
 	VkCommandBuffer cmd = vkCtx.commandBuffers[ slot ];
-	vkResetCommandBuffer( cmd, 0 );
+	res = vkResetCommandBuffer( cmd, 0 );
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_RECORD_FAILED, res, "clear command reset" ); return; }
 
 	VkCommandBufferBeginInfo cbbi;
 	memset( &cbbi, 0, sizeof( cbbi ) );
 	cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	vkBeginCommandBuffer( cmd, &cbbi );
+	res = vkBeginCommandBuffer( cmd, &cbbi );
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_RECORD_FAILED, res, "clear command begin" ); return; }
+	res = vkResetFences( vkCtx.device, 1, &vkCtx.frameFences[ slot ] );
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_WAIT_FAILED, res, "clear fence reset" ); return; }
 
 	// UNDEFINED -> COLOR_ATTACHMENT
 	VkImageMemoryBarrier2 toColor;
@@ -1437,7 +1492,8 @@ void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
 	dep.pImageMemoryBarriers = &toPresent;
 	vkCmdPipelineBarrier2( cmd, &dep );
 
-	vkEndCommandBuffer( cmd );
+	res = vkEndCommandBuffer( cmd );
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_RECORD_FAILED, res, "clear command end" ); return; }
 
 	VkSemaphoreSubmitInfo waitInfo;
 	memset( &waitInfo, 0, sizeof( waitInfo ) );
@@ -1469,7 +1525,10 @@ void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
 	// the upload batch must precede any frame submission in queue order so
 	// this frame's fence covers it
 	VK_Device_FlushUploadBatch();
-	vkQueueSubmit2( vkCtx.graphicsQueue, 1, &si, vkCtx.frameFences[ slot ] );
+	if ( vkCtx.presentationBlocked ) return;
+	res = vkQueueSubmit2( vkCtx.graphicsQueue, 1, &si, vkCtx.frameFences[ slot ] );
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_SUBMIT_FAILED, res, "clear frame submit" ); return; }
+	R_DisplayPresentationSubmitted();
 
 	VkPresentInfoKHR pi;
 	memset( &pi, 0, sizeof( pi ) );
@@ -1481,8 +1540,11 @@ void VK_Device_PresentClearFrame( const float clearColor[ 4 ] ) {
 	pi.pImageIndices = &imageIndex;
 
 	res = vkQueuePresentKHR( vkCtx.graphicsQueue, &pi );
+	if ( res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR ) R_DisplayPresentationPresented();
+	else if ( res == VK_ERROR_OUT_OF_DATE_KHR ) R_DisplayPresentationFailed( RDP_PRESENT_FAILED, (int32_t)res );
+	else { VK_Device_BlockPresentation( RDP_PRESENT_FAILED, res, "clear frame present" ); return; }
 	if ( res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR ) {
-		VK_Device_RecreateSwapchain();
+		if ( !VK_Device_RecreateSwapchain() ) common->Warning( "Vulkan: swapchain recreation after clear present failed" );
 	}
 }
 
@@ -1496,40 +1558,54 @@ VK_Device_WaitUploadBatch / VK_Device_FlushUploadBatch / VK_Device_BatchedUpload
 static const VkDeviceSize VK_UPLOAD_BATCH_BYTE_BUDGET = 64u << 20;
 
 void VK_Device_WaitUploadBatch( void ) {
-	if ( !vkCtx.uploadBatchInFlight ) {
+	if ( !vkCtx.uploadBatchInFlight || vkCtx.presentationBlocked ) {
 		return;
 	}
-	vkWaitForFences( vkCtx.device, 1, &vkCtx.uploadFence, VK_TRUE, UINT64_MAX );
-	vkResetFences( vkCtx.device, 1, &vkCtx.uploadFence );
+	const uint64_t completedBatch = vkCtx.uploadBatchSerial;
+	const VkDevice completedDevice = vkCtx.device;
+	VkResult res = vkWaitForFences( vkCtx.device, 1, &vkCtx.uploadFence, VK_TRUE, UINT64_MAX );
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_WAIT_FAILED, res, "upload fence wait" ); return; }
+    if (!completedBatch || vkCtx.uploadBatchSerial != completedBatch || vkCtx.device != completedDevice ||
+        !vkCtx.uploadBatchInFlight || vkCtx.presentationBlocked) {
+        VK_Device_BlockPresentation(RDP_WAIT_FAILED, VK_ERROR_UNKNOWN, "upload completion identity changed"); return;
+    }
+	res = vkResetFences( vkCtx.device, 1, &vkCtx.uploadFence );
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_WAIT_FAILED, res, "upload fence reset" ); return; }
+    if (!completedBatch || vkCtx.uploadBatchSerial != completedBatch || vkCtx.device != completedDevice ||
+        !vkCtx.uploadBatchInFlight || vkCtx.presentationBlocked) {
+        VK_Device_BlockPresentation(RDP_WAIT_FAILED, VK_ERROR_UNKNOWN, "upload completion identity changed"); return;
+    }
 	for ( int i = 0; i < vkCtx.numUploadBatchInFlight; i++ ) {
 		vmaDestroyBuffer( vkCtx.allocator, vkCtx.uploadBatchInFlightBuffers[ i ],
 				vkCtx.uploadBatchInFlightAllocations[ i ] );
 	}
+    if (!completedBatch || vkCtx.uploadBatchSerial != completedBatch || vkCtx.device != completedDevice ||
+        !vkCtx.uploadBatchInFlight || vkCtx.presentationBlocked) {
+        VK_Device_BlockPresentation(RDP_WAIT_FAILED, VK_ERROR_UNKNOWN, "upload completion identity changed"); return;
+    }
 	vkCtx.numUploadBatchInFlight = 0;
 	vkCtx.uploadBatchInFlight = false;
+	vkCtx.uploadBatchCompletedSerial = completedBatch;
 }
 
 void VK_Device_FlushUploadBatch( void ) {
-	if ( !vkCtx.uploadBatchOpen ) {
+	if ( !vkCtx.uploadBatchOpen || vkCtx.presentationBlocked ) {
 		return;
 	}
-	vkEndCommandBuffer( vkCtx.uploadCommandBuffer );
+	VkResult res = vkEndCommandBuffer( vkCtx.uploadCommandBuffer );
 	vkCtx.uploadBatchOpen = false;
+	if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_RECORD_FAILED, res, "upload command end" ); return; }
 
 	VkSubmitInfo si;
 	memset( &si, 0, sizeof( si ) );
 	si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 	si.commandBufferCount = 1;
 	si.pCommandBuffers = &vkCtx.uploadCommandBuffer;
-	if ( vkQueueSubmit( vkCtx.graphicsQueue, 1, &si, vkCtx.uploadFence ) != VK_SUCCESS ) {
-		common->Warning( "Vulkan: upload batch submit failed (%d staged regions dropped)",
-				vkCtx.numUploadBatchPending );
-		for ( int i = 0; i < vkCtx.numUploadBatchPending; i++ ) {
-			vmaDestroyBuffer( vkCtx.allocator, vkCtx.uploadBatchPendingBuffers[ i ],
-					vkCtx.uploadBatchPendingAllocations[ i ] );
-		}
-		vkCtx.numUploadBatchPending = 0;
-		vkCtx.uploadBatchPendingBytes = 0;
+	res = vkQueueSubmit( vkCtx.graphicsQueue, 1, &si, vkCtx.uploadFence );
+	if ( res != VK_SUCCESS ) {
+		// Device loss does not prove no work was enqueued. Keep staging owned
+		// until full shutdown has retired the device instead of freeing it here.
+		VK_Device_BlockPresentation( RDP_SUBMIT_FAILED, res, "upload batch submit" );
 		return;
 	}
 	// opening a batch waits out the previous one first, so the in-flight list
@@ -1545,25 +1621,36 @@ void VK_Device_FlushUploadBatch( void ) {
 }
 
 bool VK_Device_BatchedUpload( vkImmediateRecord_t record, void *user,
-		VkBuffer staging, VmaAllocation stagingAllocation, VkDeviceSize stagingBytes ) {
-	if ( vkCtx.device == VK_NULL_HANDLE || vkCtx.uploadCommandBuffer == VK_NULL_HANDLE ) {
+		VkBuffer staging, VmaAllocation stagingAllocation, VkDeviceSize stagingBytes, uint64_t* acceptedBatch ) {
+	if ( vkCtx.device == VK_NULL_HANDLE || vkCtx.uploadCommandBuffer == VK_NULL_HANDLE || vkCtx.presentationBlocked ) {
 		return false;
 	}
 
 	if ( !vkCtx.uploadBatchOpen ) {
 		VK_Device_WaitUploadBatch();
-		vkResetCommandBuffer( vkCtx.uploadCommandBuffer, 0 );
+		if ( vkCtx.presentationBlocked ) return false;
+        const uint64_t nextBatch = R_ImagePolicyNewResourceIdentity();
+        if (!nextBatch) {
+            VK_Device_BlockPresentation(RDP_RECORD_FAILED, VK_ERROR_UNKNOWN, "upload observation serial exhausted");
+            return false;
+        }
+		VkResult res = vkResetCommandBuffer( vkCtx.uploadCommandBuffer, 0 );
+		if ( res != VK_SUCCESS ) { VK_Device_BlockPresentation( RDP_RECORD_FAILED, res, "upload command reset" ); return false; }
 		VkCommandBufferBeginInfo cbbi;
 		memset( &cbbi, 0, sizeof( cbbi ) );
 		cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-		if ( vkBeginCommandBuffer( vkCtx.uploadCommandBuffer, &cbbi ) != VK_SUCCESS ) {
+		res = vkBeginCommandBuffer( vkCtx.uploadCommandBuffer, &cbbi );
+		if ( res != VK_SUCCESS ) {
+			VK_Device_BlockPresentation( RDP_RECORD_FAILED, res, "upload command begin" );
 			return false;
 		}
+        vkCtx.uploadBatchSerial = nextBatch;
 		vkCtx.uploadBatchOpen = true;
 	}
 
 	record( vkCtx.uploadCommandBuffer, user );
+	if (acceptedBatch) *acceptedBatch = vkCtx.uploadBatchSerial;
 
 	if ( staging != VK_NULL_HANDLE ) {
 		vkCtx.uploadBatchPendingBuffers[ vkCtx.numUploadBatchPending ] = staging;

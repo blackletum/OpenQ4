@@ -182,11 +182,13 @@ def validate_full_vid_restart_font_contract(renderer_source: str) -> None:
         "static void R_PerformFullVidRestart( bool forceWindow )",
         "full video restart",
     )
+    teardown = function_body(renderer_source, "static void R_ShutdownDeviceForRestart( void )", "restart teardown")
+    require(restart, "R_ShutdownDeviceForRestart();", "shared restart teardown")
+    restart = restart.replace("R_ShutdownDeviceForRestart();", teardown)
     for token in (
         "R_DoneFreeType( true );",
         "globalImages->PurgeAllImages();",
-        "R_InitOpenGL();",
-        "globalImages->ReloadImages( true );",
+        "tr.InitOpenGL();",
         "R_InitFreeType();",
         "R_RefreshConsoleFontAtlas();",
     ):
@@ -194,12 +196,13 @@ def validate_full_vid_restart_font_contract(renderer_source: str) -> None:
     if not (
         restart.index("R_DoneFreeType( true );")
         < restart.index("globalImages->PurgeAllImages();")
-        < restart.index("R_InitOpenGL();")
-        < restart.index("globalImages->ReloadImages( true );")
+        < restart.index("tr.InitOpenGL();")
         < restart.index("R_InitFreeType();")
         < restart.index("R_RefreshConsoleFontAtlas();")
     ):
         raise AssertionError("Full vid_restart must release fonts before purge and rebuild them after image reload")
+    reject(restart, "R_InitOpenGL();", "backend-aware device restart")
+    reject(restart, "globalImages->ReloadImages", "single image reload owned by device startup")
 
     renderer_shutdown = function_body(
         renderer_source,
@@ -666,7 +669,7 @@ def validate_two_phase_game_api_contract() -> None:
         return
 
     game_api = read(game_api_path)
-    require(game_api, "const int GAME_API_VERSION\t\t= 48;", "current game API version")
+    require(game_api, "const int GAME_API_VERSION\t\t= 49;", "current game API version")
     require(
         game_api,
         "virtual void\t\t\t\tShutdownAfterDecls( void ) = 0;",
@@ -985,25 +988,36 @@ def validate_lifecycle_mutation_sensitivity() -> None:
         renderer.replace("\tR_DoneFreeType( true );", "", 1),
         "full vid_restart purges images without releasing font state",
     )
-    reload_images = "#endif\n\n\tR_InitFreeType();"
-    if renderer.count(reload_images) != 1:
-        raise AssertionError("Full vid_restart image-reload mutation anchor is not unique")
+    restart_device = "\ttr.InitOpenGL();\n\tcvarSystem->SetCVarBool( \"r_fullscreen\", latchedFullscreen );"
+    if renderer.count(restart_device) != 1:
+        raise AssertionError("Full vid_restart device-startup mutation anchor is not unique")
     expect_contract_rejection(
         validate_full_vid_restart_font_contract,
         renderer.replace(
-            reload_images,
-            "\tR_RefreshConsoleFontAtlas();\n" + reload_images,
+            restart_device,
+            "\tR_RefreshConsoleFontAtlas();\n" + restart_device,
             1,
         ),
         "console atlas refresh runs before persistent image allocation",
     )
+    expect_contract_rejection(
+        validate_full_vid_restart_font_contract,
+        renderer.replace(restart_device, restart_device.replace("tr.InitOpenGL();", "R_InitOpenGL();"), 1),
+        "full vid_restart bypasses native Vulkan device startup",
+    )
+    expect_contract_rejection(
+        validate_full_vid_restart_font_contract,
+        renderer.replace(restart_device, "\tglobalImages->ReloadImages( true );\n" + restart_device, 1),
+        "full vid_restart reloads images outside backend device startup",
+    )
 
     partial_refresh = "\t\t\tR_RefreshConsoleFontAtlas();"
-    if renderer.count(partial_refresh) != 1:
+    legacy_restart = function_body(renderer, "void R_VidRestart_f", "legacy restart mutation")
+    if legacy_restart.count(partial_refresh) != 1:
         raise AssertionError("Partial vid_restart console-refresh mutation anchor is not unique")
     expect_contract_rejection(
         validate_full_vid_restart_font_contract,
-        renderer.replace(partial_refresh, "", 1),
+        renderer.replace(legacy_restart, legacy_restart.replace(partial_refresh, "", 1), 1),
         "successful partial vid_restart leaves resolution-dependent console glyphs stale",
     )
 
@@ -1033,11 +1047,11 @@ def validate_lifecycle_mutation_sensitivity() -> None:
     )
 
     ttf_source = read(ROOT / "src" / "renderer" / "tr_fontTTF.cpp")
-    if ttf_source.count("opts.isPersistant = true;") != 1:
+    if ttf_source.count("\n\t\topts.isPersistant = true;\n") != 1:
         raise AssertionError("TrueType persistent-atlas mutation anchors are not exact")
     expect_contract_rejection(
         validate_ttf_persistent_atlas_contract,
-        ttf_source.replace("\topts.isPersistant = true;\n", "", 1),
+        ttf_source.replace("\n\t\topts.isPersistant = true;\n", "\n", 1),
         "GUI TrueType atlas is not recreated across full vid_restart",
     )
 

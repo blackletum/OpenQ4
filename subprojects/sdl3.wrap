@@ -4,6 +4,7 @@ source_url = https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/
 source_filename = SDL3-3.4.16.tar.gz
 source_hash = 7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
 patch_directory = sdl3
+diff_files = sdl3/clipboard-status.patch, sdl3/text-provenance.patch, sdl3/dispatch-fence.patch, sdl3/queue-consumer.patch, sdl3/queue-generation.patch
 
 [provide]
 dependency_names = sdl3

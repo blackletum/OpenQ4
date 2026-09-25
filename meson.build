@@ -8,7 +8,7 @@ project(
 
 host_system = host_machine.system()
 host_cpu_family = host_machine.cpu_family()
-if not ['windows', 'linux', 'darwin'].contains(host_system)
+if not ['windows', 'linux', 'darwin', 'android'].contains(host_system)
   error('Unsupported host system for openQ4 Meson build: ' + host_system)
 endif
 
@@ -30,6 +30,13 @@ elif host_system == 'darwin'
 endif
 engine_client_binary_name = meson.project_name() + '-client_' + binary_arch
 engine_ded_binary_name = meson.project_name() + '-ded_' + binary_arch
+module_filename_prefix = host_system == 'android' ? 'lib' : ''
+if host_system == 'android'
+  if host_cpu_family != 'aarch64'
+    error('Android currently supports the arm64-v8a ABI only.')
+  endif
+  engine_client_binary_name = 'quake4'
+endif
 
 if host_cpu_family != 'x86_64' and not (host_system == 'linux' and host_cpu_family == 'aarch64')
   warning(
@@ -53,7 +60,11 @@ if host_system != 'darwin' and macos_openal_provider != 'apple_framework'
   error('macos_openal_provider=' + macos_openal_provider + ' is only valid on macOS hosts.')
 endif
 
-if host_system == 'linux'
+if host_system == 'android'
+  if platform_backend_requested != 'sdl3'
+    error('Android requires platform_backend=sdl3.')
+  endif
+elif host_system == 'linux'
   if platform_backend_requested == 'legacy_win32'
     error('platform_backend=legacy_win32 is only valid on Windows hosts.')
   endif
@@ -204,6 +215,26 @@ build_game_mp = get_option('build_game_mp')
 needs_game_headers = build_engine or build_games
 install_root_dir = meson.project_source_root() / '.install'
 install_game_dir = install_root_dir / 'baseoq4'
+install_module_dir = install_game_dir
+install_engine_dir = install_root_dir
+if host_system == 'android'
+  # Keep mobile assets/native libraries together without replacing a staged
+  # desktop installation. The host app copies these into assets/ and jniLibs/.
+  install_root_dir = install_root_dir / 'android' / 'arm64-v8a'
+  install_game_dir = install_root_dir / 'baseoq4'
+  install_module_dir = install_root_dir / 'lib'
+  install_engine_dir = install_module_dir
+endif
+android_deps_root = get_option('android_deps_root').strip()
+sigmatouch_root = get_option('sigmatouch_root').strip()
+sigmatouch_controls_root = get_option('sigmatouch_controls_root').strip()
+build_sigmatouch = sigmatouch_root != ''
+if host_system != 'android' and (android_deps_root != '' or build_sigmatouch or sigmatouch_controls_root != '')
+  error('Android dependency and Sigma Touch options require an Android cross build.')
+endif
+if build_sigmatouch and sigmatouch_controls_root == ''
+  error('sigmatouch_root requires sigmatouch_controls_root.')
+endif
 game_libs_repo_root = ''
 game_libs_source_root = ''
 game_libs_repo_summary = 'not required'
@@ -212,6 +243,13 @@ game_stage_game_root = ''
 game_stage_mpgame_root = ''
 game_stage_game_include_rel = '.tmp/gamelibs_stage/src/game'
 game_stage_mpgame_include_rel = '.tmp/gamelibs_stage/src/mpgame'
+game_stage_output_rel = '.tmp/gamelibs_stage'
+if host_system != 'windows'
+  # A cross configure must not refresh files an active desktop build reads.
+  game_stage_output_rel = '.tmp/gamelibs_stage-' + host_system + '-' + binary_arch
+  game_stage_game_include_rel = game_stage_output_rel / 'src/game'
+  game_stage_mpgame_include_rel = game_stage_output_rel / 'src/mpgame'
+endif
 bse_source_root = meson.project_source_root() / 'src' / 'bse'
 game_sp_module_defs_file = ''
 game_mp_module_defs_file = ''
@@ -440,6 +478,527 @@ if get_option('build_native_tests')
   )
 endif
 
+# The retained runtime is isolated from engine PCH/platform/render headers.
+# It can be tested with the same layout/geometry code without creating a window.
+if build_engine or get_option('build_native_tests')
+  rmlui_project = subproject('rmlui')
+  jsoncpp_project = subproject('jsoncpp')
+  libtess2_project = subproject('libtess2')
+  openq4_retained_library = static_library(
+    'openq4-retained-ui',
+    files('src/ui/retained/Runtime.cpp', 'src/ui/retained/Document.cpp', 'src/ui/retained/DocumentEdit.cpp', 'src/ui/retained/Presentation.cpp', 'src/ui/retained/Behavior.cpp', 'src/ui/retained/State.cpp', 'src/ui/retained/Motion.cpp', 'src/ui/retained/Interaction.cpp', 'src/ui/retained/ValueControlView.cpp', 'src/ui/retained/NumberControlView.cpp', 'src/ui/retained/Input.cpp', 'src/ui/retained/TextInput.cpp', 'src/ui/retained/TextEdit.cpp', 'src/ui/retained/TextEditCommand.cpp', 'src/ui/retained/TextInputBroker.cpp', 'src/ui/retained/TextRun.cpp', 'src/ui/retained/Vector.cpp', 'src/ui/retained/VectorElement.cpp', 'src/ui/application/SettingsTransaction.cpp', 'src/ui/application/SettingsJournal.cpp', 'src/ui/application/SettingsEffectPlan.cpp', 'src/ui/application/SettingsDisplayController.cpp'),
+    files('src/ui/retained/TextInputBrokerWire.cpp'),
+    files('src/ui/retained/NativeTextDocument.cpp'),
+    files('src/ui/retained/NativeTextEditor.cpp'),
+    files('src/ui/retained/ScrollGeometry.cpp'),
+    files('src/ui/retained/ScrollbarView.cpp'),
+    files('src/ui/retained/PopupPlacement.cpp'),
+    dependencies: [rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep'), libtess2_project.get_variable('libtess2_dep')],
+    pic: true,
+    install: false,
+  )
+  openq4_retained_dep = declare_dependency(link_with: openq4_retained_library)
+  # Actual Windows SDK interfaces stay outside the portable runtime and engine
+  # PCH. This object has no native activation, SDL or dedicated-server dependency.
+  if host_system == 'windows'
+    openq4_windows_text_store_library = static_library('openq4-windows-text-store',
+      files('src/sys/sdl3/WindowsTextStore.cpp'),
+      dependencies: openq4_retained_dep, install: false)
+    openq4_windows_text_store_dep = declare_dependency(link_with: openq4_windows_text_store_library)
+    if get_option('build_native_tests')
+      openq4_windows_text_store_test = executable('openq4-ui-windows-text-store-test',
+        files('tools/tests/native/WindowsTextStoreTest.cpp'),
+        include_directories: include_directories('src'),
+        dependencies: [openq4_windows_text_store_dep, openq4_retained_dep], install: false)
+      test('openq4-ui-windows-text-store', openq4_windows_text_store_test, timeout: 30)
+    endif
+  endif
+  if get_option('build_native_tests')
+    openq4_ui_scroll_geometry_test = executable('openq4-ui-scroll-geometry-test',
+      files('tools/tests/native/UiScrollGeometryTest.cpp'),
+      dependencies: openq4_retained_dep, install: false)
+    test('openq4-ui-scroll-geometry', openq4_ui_scroll_geometry_test, timeout: 30)
+    openq4_ui_scrollbar_interaction_test = executable('openq4-ui-scrollbar-interaction-test',
+      files('tools/tests/native/UiScrollbarInteractionTest.cpp'),
+      include_directories: [root_include_dir, include_directories('src/ui/retained')],
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')], install: false)
+    test('openq4-ui-scrollbar-interaction', openq4_ui_scrollbar_interaction_test, timeout: 30)
+    openq4_ui_scrollbar_runtime_test = executable('openq4-ui-scrollbar-runtime-test',
+      files('tools/tests/native/UiScrollbarRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')], install: false)
+    test('openq4-ui-scrollbar-runtime', openq4_ui_scrollbar_runtime_test,
+      args: [meson.project_source_root() / 'content/baseoq4/pak0/guis/menu/settings/system.q4ui'], timeout: 30)
+    openq4_ui_choice_scroll_interaction_test = executable('openq4-ui-choice-scroll-interaction-test',
+      files('tools/tests/native/UiChoiceScrollInteractionTest.cpp'),
+      include_directories: [root_include_dir, include_directories('src/ui/retained')],
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')], install: false)
+    test('openq4-ui-choice-scroll-interaction', openq4_ui_choice_scroll_interaction_test, timeout: 30)
+    openq4_ui_choice_scroll_runtime_test = executable('openq4-ui-choice-scroll-runtime-test',
+      files('tools/tests/native/UiChoiceScrollRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')], install: false)
+    test('openq4-ui-choice-scroll-runtime', openq4_ui_choice_scroll_runtime_test,
+      args: [meson.project_source_root() / 'content/baseoq4/pak0/guis/menu/settings/system.q4ui'], timeout: 180)
+    openq4_ui_text_input_test = executable(
+      'openq4-ui-text-input-test',
+      files('tools/tests/native/UiTextInputTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-text-input', openq4_ui_text_input_test, timeout: 30)
+    openq4_ui_text_edit_test = executable(
+      'openq4-ui-text-edit-test',
+      files('tools/tests/native/UiTextEditTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-text-edit', openq4_ui_text_edit_test, timeout: 30)
+    openq4_ui_text_edit_command_test = executable(
+      'openq4-ui-text-edit-command-test',
+      files('tools/tests/native/UiTextEditCommandTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-text-edit-command', openq4_ui_text_edit_command_test, timeout: 30)
+    openq4_ui_text_input_broker_test = executable(
+      'openq4-ui-text-input-broker-test',
+      files('tools/tests/native/UiTextInputBrokerTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-text-input-broker', openq4_ui_text_input_broker_test, timeout: 30)
+    openq4_ui_text_input_broker_wire_test = executable(
+      'openq4-ui-text-input-broker-wire-test',
+      files('tools/tests/native/UiTextInputBrokerWireTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-text-input-broker-wire', openq4_ui_text_input_broker_wire_test, timeout: 30)
+    openq4_ui_native_text_document_test = executable(
+      'openq4-ui-native-text-document-test',
+      files('tools/tests/native/UiNativeTextDocumentTest.cpp'),
+      include_directories: include_directories('src'),
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-native-text-document', openq4_ui_native_text_document_test, timeout: 30)
+    openq4_ui_native_text_editor_test = executable(
+      'openq4-ui-native-text-editor-test',
+      files('tools/tests/native/UiNativeTextEditorTest.cpp'),
+      include_directories: include_directories('src'),
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-native-text-editor', openq4_ui_native_text_editor_test, timeout: 30)
+    openq4_ui_native_text_collection_test = executable(
+      'openq4-ui-native-text-collection-test',
+      files('tools/tests/native/UiNativeTextCollectionTest.cpp'),
+      include_directories: include_directories('src'),
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-native-text-collection', openq4_ui_native_text_collection_test, timeout: 30)
+    openq4_ui_number_draft_test = executable(
+      'openq4-ui-number-draft-test',
+      files('tools/tests/native/UiNumberDraftTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-number-draft', openq4_ui_number_draft_test, timeout: 30)
+    openq4_ui_number_native_test = executable(
+      'openq4-ui-number-native-test',
+      files('tools/tests/native/UiNumberNativeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-number-native', openq4_ui_number_native_test, timeout: 30)
+    openq4_ui_slider_decimal_test = executable(
+      'openq4-ui-slider-decimal-test',
+      files('tools/tests/native/UiSliderDecimalTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-slider-decimal', openq4_ui_slider_decimal_test, timeout: 30)
+    openq4_ui_number_native_view_test = executable(
+      'openq4-ui-number-native-view-test',
+      files('tools/tests/native/UiNumberNativeViewTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-number-native-view', openq4_ui_number_native_view_test, timeout: 30)
+    openq4_ui_text_run_test = executable(
+      'openq4-ui-text-run-test',
+      files('tools/tests/native/UiTextRunTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep')],
+      install: false,
+    )
+    test('openq4-ui-text-run', openq4_ui_text_run_test, timeout: 30)
+    openq4_ui_number_control_test = executable(
+      'openq4-ui-number-control-test',
+      files('tools/tests/native/UiNumberControlTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-number-control', openq4_ui_number_control_test, timeout: 30)
+    openq4_ui_number_snapshot_test = executable(
+      'openq4-ui-number-snapshot-test',
+      files('tools/tests/native/UiNumberSnapshotTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-number-snapshot', openq4_ui_number_snapshot_test, timeout: 30)
+    openq4_ui_number_runtime_test = executable(
+      'openq4-ui-number-runtime-test',
+      files('tools/tests/native/UiNumberRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-number-runtime', openq4_ui_number_runtime_test,
+      args: [meson.project_source_root() / 'tools/ui/fixtures/number-edit-smoke.q4ui'], timeout: 30)
+    openq4_ui_focus_reveal_test = executable(
+      'openq4-ui-focus-reveal-test',
+      files('tools/tests/native/UiFocusRevealTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-focus-reveal', openq4_ui_focus_reveal_test, timeout: 30)
+    openq4_ui_number_command_test = executable(
+      'openq4-ui-number-command-test',
+      files('tools/tests/native/UiNumberCommandTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-number-command', openq4_ui_number_command_test, timeout: 30)
+    openq4_ui_settings_transaction_test = executable(
+      'openq4-ui-settings-transaction-test',
+      files('tools/tests/native/UiSettingsTransactionTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-settings-transaction', openq4_ui_settings_transaction_test, timeout: 30)
+    ui_test_cpp = meson.get_compiler('cpp')
+    ui_native_owner_args = [meson.project_source_root() / 'tools/tests/ui_managed_native_owner.py',
+      '--compiler', ui_test_cpp.cmd_array()[-1], '--no-mutations']
+    if ui_test_cpp.get_id() == 'msvc'
+      ui_native_owner_args += ['--msvc', '--debug-crt']
+    endif
+    test('openq4-ui-managed-native-owner', py, args: ui_native_owner_args, timeout: 180)
+    foreach consumed_backend : ['gl', 'vulkan']
+      consumed_args = [meson.project_source_root() / 'tools/tests/renderer_consumed_policy.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1]]
+      if consumed_backend == 'vulkan'
+        consumed_args += ['--vulkan']
+      endif
+      test('openq4-ui-consumed-policy-' + consumed_backend, py, args: consumed_args, timeout: 120)
+    endforeach
+    test('openq4-ui-consumed-upload-batches', py,
+      args: [meson.project_source_root() / 'tools/tests/renderer_consumed_upload_batches.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 120)
+    test('openq4-ui-upload-storage', py,
+      args: [meson.project_source_root() / 'tools/tests/renderer_upload_storage.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 120)
+    test('openq4-ui-image-reduction', py,
+      args: [meson.project_source_root() / 'tools/tests/renderer_image_reduction.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 180)
+    test('openq4-ui-image-content', py,
+      args: [meson.project_source_root() / 'tools/tests/renderer_image_content.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 180)
+    foreach recovery_suite : ['owner', 'module', 'loader', 'codec', 'cold', 'lifecycle']
+      test('openq4-ui-image-recovery-' + recovery_suite, py,
+        args: [meson.project_source_root() / ('tools/tests/renderer_image_recovery_' + recovery_suite + '.py'),
+          '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 180)
+    endforeach
+    test('openq4-ui-native-input-route', py,
+      args: [meson.project_source_root() / 'tools/tests/native_input_route.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1], '--no-mutations'], timeout: 120)
+    retirement_args = [meson.project_source_root() / 'tools/tests/native_event_retirement.py',
+      '--compiler', ui_test_cpp.cmd_array()[-1], '--no-mutations']
+    if ui_test_cpp.get_id() == 'msvc'
+      retirement_args += ['--msvc-debug']
+    endif
+    test('openq4-ui-native-event-retirement', py, args: retirement_args, timeout: 180)
+    lifecycle_args = [meson.project_source_root() / 'tools/tests/native_input_lifecycle.py',
+      '--compiler', ui_test_cpp.cmd_array()[-1], '--no-mutations']
+    if ui_test_cpp.get_id() == 'msvc'
+      lifecycle_args += ['--msvc-debug']
+    endif
+    test('openq4-ui-native-input-lifecycle', py, args: lifecycle_args, timeout: 180)
+    driver_args = [meson.project_source_root() / 'tools/tests/native_input_driver.py',
+      '--compiler', ui_test_cpp.cmd_array()[-1]]
+    if ui_test_cpp.get_id() == 'msvc'
+      driver_args += ['--msvc-debug']
+    endif
+    test('openq4-ui-native-input-driver', py, args: driver_args, timeout: 180)
+    test('openq4-ui-legacy-observation', py,
+      args: [meson.project_source_root() / 'tools/tests/ui_legacy_observation.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 180)
+    test('openq4-ui-sound-recovery', py,
+      args: [meson.project_source_root() / 'tools/tests/sound_recovery.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1], '--no-mutations'], timeout: 180)
+    foreach image_policy_suite : ['restart', 'metadata']
+      test('openq4-ui-image-policy-' + image_policy_suite, py,
+        args: [meson.project_source_root() / ('tools/tests/renderer_image_policy_' + image_policy_suite + '.py'),
+          '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 180)
+    endforeach
+    test('openq4-ui-input-disposition', py,
+      args: [meson.project_source_root() / 'tools/tests/sdl3_input_disposition.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1], '--no-mutations'], timeout: 120)
+    test('openq4-ui-settings-effect-journal', py,
+      args: [meson.project_source_root() / 'tools/tests/ui_settings_effect_journal.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1], '--no-mutations'], timeout: 180)
+    openq4_ui_performance_presets_test = executable(
+      'openq4-ui-performance-presets-test',
+      files('tools/tests/native/UiPerformancePresetTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-performance-presets', openq4_ui_performance_presets_test, timeout: 30)
+    openq4_ui_system_presets_test = executable(
+      'openq4-ui-system-presets-test',
+      files('tools/tests/native/UiSystemPresetRuntimeTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-system-presets', openq4_ui_system_presets_test,
+      args: [meson.project_source_root() / 'content/baseoq4/pak0/guis/menu/settings/system.q4ui',
+        meson.project_source_root() / 'content/baseoq4/pak0/strings'], timeout: 900)
+    test('openq4-ui-system-presets-source', py,
+      args: [meson.project_source_root() / 'tools/tests/ui_system_presets.py'], timeout: 30)
+    openq4_ui_settings_exact_test = executable(
+      'openq4-ui-settings-exact-test', files('tools/tests/native/UiSettingsExactValueTest.cpp'),
+      include_directories: root_include_dir, dependencies: openq4_retained_dep, install: false,
+    )
+    test('openq4-ui-settings-exact', openq4_ui_settings_exact_test, timeout: 30)
+    openq4_ui_settings_journal_test = executable(
+      'openq4-ui-settings-journal-test',
+      files('tools/tests/native/UiSettingsJournalTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-settings-journal', openq4_ui_settings_journal_test, timeout: 30)
+    openq4_ui_settings_journal_exact_test = executable(
+      'openq4-ui-settings-journal-exact-test', files('tools/tests/native/UiSettingsJournalExactTest.cpp'),
+      include_directories: root_include_dir, dependencies: openq4_retained_dep, install: false,
+    )
+    test('openq4-ui-settings-journal-exact', openq4_ui_settings_journal_exact_test, timeout: 30)
+    openq4_ui_settings_display_test = executable(
+      'openq4-ui-settings-display-test',
+      files('tools/tests/native/UiSettingsDisplayControllerTest.cpp'),
+      dependencies: openq4_retained_dep,
+      include_directories: root_include_dir,
+      install: false,
+    )
+    test('openq4-ui-settings-display', openq4_ui_settings_display_test, timeout: 30)
+    openq4_ui_behavior_test = executable(
+      'openq4-ui-behavior-test',
+      files('tools/tests/native/UiBehaviorTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-behavior', openq4_ui_behavior_test, timeout: 30)
+    openq4_ui_presentation_test = executable(
+      'openq4-ui-presentation-test',
+      files('tools/tests/native/UiPresentationTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-presentation', openq4_ui_presentation_test, timeout: 30)
+    openq4_ui_presentation_runtime_test = executable(
+      'openq4-ui-presentation-runtime-test',
+      files('tools/tests/native/UiPresentationRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-presentation-runtime', openq4_ui_presentation_runtime_test, timeout: 30)
+    openq4_retained_test = executable(
+      'openq4-retained-ui-test',
+      files('tools/tests/native/RetainedUiTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-retained-ui', openq4_retained_test,
+      args: [meson.project_source_root() / 'tools/ui/fixtures/interaction-smoke.q4ui',
+             meson.project_source_root() / 'tools/ui/fixtures/binding-smoke.q4ui'], timeout: 30)
+    openq4_ui_value_schema_test = executable(
+      'openq4-ui-value-schema-test',
+      files('tools/tests/native/UiValueControlSchemaTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-value-schema', openq4_ui_value_schema_test, timeout: 30)
+    openq4_ui_value_interaction_test = executable(
+      'openq4-ui-value-interaction-test',
+      files('tools/tests/native/UiValueInteractionTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-value-interaction', openq4_ui_value_interaction_test, timeout: 30)
+    openq4_ui_modal_interaction_test = executable(
+      'openq4-ui-modal-interaction-test',
+      files('tools/tests/native/UiModalInteractionTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-modal-interaction', openq4_ui_modal_interaction_test, timeout: 30)
+    openq4_ui_modal_runtime_test = executable(
+      'openq4-ui-modal-runtime-test',
+      files('tools/tests/native/UiModalRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-modal-runtime', openq4_ui_modal_runtime_test, timeout: 30)
+    openq4_ui_mask_input_test = executable('openq4-ui-mask-input-test',
+      files('tools/tests/native/UiMaskInputTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-mask-input', openq4_ui_mask_input_test, timeout: 30)
+    openq4_ui_text_scale_test = executable('openq4-ui-text-scale-test',
+      files('tools/tests/native/UiTextScaleRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-text-scale', openq4_ui_text_scale_test, timeout: 30)
+    openq4_ui_font_cache_test = executable('openq4-ui-font-cache-test',
+      files('tools/tests/native/RetainedFontCacheTest.cpp', 'src/renderer/RetainedFontCache.cpp'),
+      include_directories: root_include_dir, install: false)
+    test('openq4-ui-font-cache', openq4_ui_font_cache_test, timeout: 60)
+    openq4_ui_system_text_scale_test = executable('openq4-ui-system-text-scale-test',
+      files('tools/tests/native/UiSystemTextScaleTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-text-scale', openq4_ui_system_text_scale_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 1800)
+    openq4_ui_system_interface_settings_test = executable('openq4-ui-system-interface-settings-test',
+      files('tools/tests/native/UiSystemInterfaceSettingsTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-interface-settings', openq4_ui_system_interface_settings_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 900)
+    openq4_ui_system_display_controls_test = executable('openq4-ui-system-display-controls-test',
+      files('tools/tests/native/UiSystemDisplayControlsTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-display-controls', openq4_ui_system_display_controls_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 600)
+    openq4_ui_system_dimensions_test = executable('openq4-ui-system-dimensions-test',
+      files('tools/tests/native/UiSystemDimensionsTest.cpp', 'src/framework/PerformancePreset.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-system-dimensions', openq4_ui_system_dimensions_test,
+      args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings'], timeout: 900)
+    openq4_ui_value_runtime_test = executable(
+      'openq4-ui-value-runtime-test',
+      files('tools/tests/native/UiValueRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false,
+    )
+    test('openq4-ui-value-runtime', openq4_ui_value_runtime_test, timeout: 30)
+    openq4_ui_document_test = executable(
+      'openq4-ui-document-test',
+      files('tools/tests/native/UiDocumentTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-document', openq4_ui_document_test, timeout: 30)
+    openq4_ui_document_edit_test = executable('openq4-ui-document-edit-test',
+      files('tools/tests/native/UiDocumentEditTest.cpp'),
+      include_directories: [root_include_dir, include_directories('src/ui/retained')],
+      dependencies: openq4_retained_dep, install: false)
+    test('openq4-ui-document-edit', openq4_ui_document_edit_test, timeout: 30)
+    openq4_ui_document_canvas_test = executable('openq4-ui-document-canvas-test',
+      files('tools/tests/native/UiDocumentCanvasTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-document-canvas', openq4_ui_document_canvas_test, timeout: 120)
+    openq4_ui_document_view_methods = custom_target('openq4-ui-document-view-methods',
+      input: 'src/ui/RetainedUI.cpp', output: 'ViewMethods.inc',
+      command: [py, files('tools/tests/ui_document_view_projection.py'), '@INPUT@', '@OUTPUT@'],
+      depend_files: files('tools/tests/filesystem_case_segments.py'))
+    openq4_ui_document_view_test = executable('openq4-ui-document-view-test',
+      files('tools/tests/native/UiDocumentViewTest.cpp'), openq4_ui_document_view_methods,
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-document-view', openq4_ui_document_view_test, timeout: 120)
+    openq4_ui_popup_placement_test = executable('openq4-ui-popup-placement-test',
+      files('tools/tests/native/UiPopupPlacementTest.cpp'),
+      include_directories: [root_include_dir, include_directories('src/ui/retained')],
+      dependencies: openq4_retained_dep, install: false)
+    test('openq4-ui-popup-placement', openq4_ui_popup_placement_test, timeout: 30)
+    openq4_ui_popup_placement_runtime_test = executable('openq4-ui-popup-placement-runtime-test',
+      files('tools/tests/native/UiPopupPlacementRuntimeTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, rmlui_project.get_variable('rmlui_dep'), jsoncpp_project.get_variable('jsoncpp_dep')],
+      install: false)
+    test('openq4-ui-popup-placement-runtime', openq4_ui_popup_placement_runtime_test,
+      args: [meson.project_source_root() / 'content/baseoq4/pak0/guis/menu/settings/system.q4ui',
+             meson.project_source_root() / 'content/baseoq4/pak0/strings'], timeout: 300)
+    test('openq4-ui-document-files', py,
+      args: [meson.project_source_root() / 'tools/tests/durable_file.py',
+        '--compiler', ui_test_cpp.cmd_array()[-1]], timeout: 180)
+    openq4_ui_state_test = executable(
+      'openq4-ui-state-test',
+      files('tools/tests/native/UiStateTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-state', openq4_ui_state_test,
+      args: [meson.project_source_root() / 'tools/ui/fixtures/binding-smoke.q4ui'], timeout: 30)
+    openq4_ui_vector_test = executable(
+      'openq4-ui-vector-test',
+      files('tools/tests/native/UiVectorTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+    test('openq4-ui-vector', openq4_ui_vector_test, timeout: 30)
+    executable(
+      'openq4-retained-ui-benchmark',
+      files('tools/tests/native/RetainedUiBenchmark.cpp'),
+      include_directories: root_include_dir,
+      dependencies: openq4_retained_dep,
+      install: false,
+    )
+  endif
+endif
+
 openq4_pak_files = []
 openq4_paks_generated_header = []
 if build_engine or build_games
@@ -581,7 +1140,7 @@ if needs_game_headers
     meson.project_source_root() / 'tools' / 'build' / 'stage_gamelibs.py',
     meson.project_source_root(),
     game_libs_repo_root,
-    meson.project_source_root() / '.tmp' / 'gamelibs_stage',
+    meson.project_source_root() / game_stage_output_rel,
     check: true,
   )
   game_stage_root = game_stage_result.stdout().strip()
@@ -658,7 +1217,7 @@ endif
 # ('gl' resolves to the module there). macOS and the legacy backends keep
 # the static renderer; the dedicated targets keep it everywhere until the
 # server front-end story changes.
-renderer_module_only_client = build_engine and get_option('build_renderer_gl') and use_sdl3_backend and (host_system == 'windows' or host_system == 'linux')
+renderer_module_only_client = build_engine and use_sdl3_backend and (host_system == 'android' or (get_option('build_renderer_gl') and (host_system == 'windows' or host_system == 'linux')))
 # Phase B7: the Windows SDL3 ded keeps the renderer front-end but links no GL
 windows_gl_free_ded = build_engine and host_system == 'windows' and use_sdl3_backend
 
@@ -679,6 +1238,7 @@ engine_source_discovery = run_command(
 )
 
 engine_source_paths = engine_source_discovery.stdout().strip().split('\n')
+engine_source_paths += ['src/ui/application/SystemSettingsHost.cpp', 'src/ui/application/SystemDisplay.cpp']
 if engine_source_paths.length() == 0
   error('tools/build/meson_sources.py returned no engine source files.')
 endif
@@ -928,7 +1488,11 @@ sdl3_dep = disabler()
 macos_graphics_bridge_dep = disabler()
 deps = []
 if build_engine
-  if host_system == 'linux' and use_sdl3_backend
+  if host_system == 'android'
+    # Shared engine headers still declare desktop GL types, but this client
+    # loads GLES as a module and must not build/link desktop GLEW or OpenGL.
+    glew_dep = declare_dependency()
+  elif host_system == 'linux' and use_sdl3_backend
     glew_sp = subproject('glew', default_options: glew_default_options)
     glew_dep = glew_sp.get_variable('glew_dep')
     glew_dedicated_dep = glew_sp.get_variable('glew_dedicated_dep')
@@ -954,7 +1518,64 @@ if build_engine
     default_options: fallback_opt,
   )
 
-  if host_system == 'darwin'
+  if host_system == 'android'
+    if android_deps_root == ''
+      error('Android requires -Dandroid_deps_root=<target-prefix>; see docs/dev/android-build.md.')
+    endif
+    foreach header : ['AL/al.h', 'SDL3/SDL.h']
+      if not fs_mod.is_file(android_deps_root / 'include' / header)
+        error('Missing Android target dependency header: ' + android_deps_root / 'include' / header)
+      endif
+    endforeach
+    foreach runtime : ['libSDL3.so', 'libopenal.so', 'libc++_shared.so']
+      if not fs_mod.is_file(android_deps_root / 'lib' / runtime)
+        error('Missing Android target runtime: ' + android_deps_root / 'lib' / runtime)
+      endif
+      install_data(android_deps_root / 'lib' / runtime, install_dir: install_engine_dir)
+    endforeach
+    # Khronos' notice also creates licenses/, so testing just that directory
+    # would allow an APK to silently omit its shared dependency notices.
+    foreach notice : ['sdl3/LICENSE.txt', 'openal-soft/COPYING', 'android-ndk/NOTICE.toolchain']
+      if not fs_mod.is_file(android_deps_root / 'licenses' / notice)
+        error('Missing Android dependency notice: ' + notice + '; prepare the target prefix with tools/build/prepare_android_deps.py.')
+      endif
+    endforeach
+    install_subdir(android_deps_root / 'licenses', install_dir: install_root_dir)
+    android_include_args = ['-I' + android_deps_root / 'include']
+    # Record the compiler/header values actually used, rather than relying on
+    # the host application's independently configured SDK and SDL defaults.
+    android_native_api = cpp.get_define('__ANDROID_API__').to_int()
+    if android_native_api < 24
+      error('openQ4 requires Android API 24 or later.')
+    endif
+    run_command(
+      py, meson.project_source_root() / 'tools/build/android_elf.py',
+      '--api', android_native_api.to_string(),
+      android_deps_root / 'lib/libSDL3.so',
+      android_deps_root / 'lib/libopenal.so',
+      android_deps_root / 'lib/libc++_shared.so',
+      check: true,
+    )
+    android_sdl_version = []
+    foreach part : ['MAJOR', 'MINOR', 'MICRO']
+      android_sdl_version += cpp.get_define('SDL_' + part + '_VERSION',
+        prefix: '#include <SDL3/SDL_version.h>', args: android_include_args)
+    endforeach
+    android_build_config = configuration_data()
+    android_build_config.set('ANDROID_API', android_native_api)
+    android_build_config.set('SDL_VERSION', '.'.join(android_sdl_version))
+    configure_file(
+      input: 'tools/build/android-build.json.in',
+      output: 'android-build.json',
+      configuration: android_build_config,
+      install: true,
+      install_dir: install_root_dir,
+    )
+    openal_dep = declare_dependency(
+      compile_args: android_include_args,
+      dependencies: cc.find_library('openal', dirs: [android_deps_root / 'lib'], required: true),
+    )
+  elif host_system == 'darwin'
     if macos_openal_provider == 'apple_framework'
       openal_dep = dependency('appleframeworks', modules: ['OpenAL'], required: true)
     else
@@ -995,7 +1616,12 @@ if build_engine
   endif
 
   if use_sdl3_backend
-    if host_system == 'linux' and not linux_x11_option.auto()
+    if host_system == 'android'
+      sdl3_dep = declare_dependency(
+        compile_args: android_include_args,
+        dependencies: cc.find_library('SDL3', dirs: [android_deps_root / 'lib'], required: true),
+      )
+    elif host_system == 'linux' and not linux_x11_option.auto()
       # A system SDL's compiled video-driver set cannot be changed by a Meson
       # feature option. Explicit linux_x11 modes therefore select the bundled
       # SDL so enabled/disabled is a real build contract rather than a hint
@@ -1037,6 +1663,14 @@ if build_engine
         cc.find_library('dxguid', required: true),
       ]
     endif
+  elif host_system == 'android'
+    deps += [
+      sdl3_dep,
+      cc.find_library('android', required: true),
+      cc.find_library('log', required: true),
+      cc.find_library('dl', required: true),
+      cc.find_library('m', required: true),
+    ]
   elif host_system == 'linux'
     deps += [
       dependency('threads', required: true),
@@ -1101,6 +1735,8 @@ if renderer_module_only_client
       windows_ole_dep,
       sdl3_dep,
     ]
+  elif host_system == 'android'
+    client_deps = deps
   else
     client_deps += [
       dependency('threads', required: true),
@@ -1110,6 +1746,128 @@ if renderer_module_only_client
     if linux_x11_helpers_enabled
       client_deps += [linux_x11_dep, linux_xext_dep]
     endif
+  endif
+endif
+
+if build_engine
+  client_deps += openq4_retained_dep
+  if host_system == 'windows'
+    client_deps += openq4_windows_text_store_dep
+  endif
+endif
+
+# Native-record translation is separate from the portable runtime and engine
+# PCH. A checked package capability, not SDL's version, enables the importer.
+if build_engine or get_option('build_native_tests')
+  text_ingress_args = []
+  text_ingress_headers = []
+  if build_engine and use_sdl3_backend
+    text_ingress_headers = [sdl3_dep.partial_dependency(compile_args: true, includes: true)]
+    if cpp.compiles('''
+      #if !defined(OPENQ4_SDL3_TEXT_PROVENANCE) || OPENQ4_SDL3_TEXT_PROVENANCE != 1
+      #error No verified private provider capability
+      #endif
+      #include <SDL3/SDL_openq4_text_provenance.h>
+      int main() { OQ4_TextRecord record{}; return record.version; }
+      ''', dependencies: text_ingress_headers, name: 'verified SDL native text provenance header')
+      text_ingress_args = ['-DOPENQ4_SDL_TEXT_PROVENANCE=1']
+    endif
+  endif
+  text_ingress_library = static_library('openq4-text-ingress',
+    files('src/sys/sdl3/TextProvenanceIngress.cpp'),
+    dependencies: [openq4_retained_dep] + text_ingress_headers,
+    cpp_args: text_ingress_args, pic: true, install: false)
+  text_ingress_dep = declare_dependency(link_with: text_ingress_library)
+  if build_engine
+    client_deps += text_ingress_dep
+  endif
+  if build_engine and use_sdl3_backend
+    native_queue_library = static_library('openq4-native-queue',
+      files('src/sys/sdl3/NativeQueueBatch.cpp', 'src/sys/sdl3/NativeQueueSource.cpp',
+        'src/sys/sdl3/NativeEventDisposition.cpp'),
+      files('src/ui/application/NativeTextCollectionCoordinator.cpp'),
+      files('src/ui/application/ManagedNativeTextOwner.cpp'),
+      include_directories: [root_include_dir, include_directories('subprojects/packagefiles/sdl3/include')],
+      dependencies: [openq4_retained_dep] + text_ingress_headers,
+      cpp_args: ['-DUSE_SDL3'], pic: true, install: false)
+    native_queue_dep = declare_dependency(link_with: native_queue_library)
+    client_deps += native_queue_dep
+    if host_system == 'windows'
+      # Exact store/provider collection adapter; creation never enables input.
+      windows_collection_bridge_library = static_library('openq4-windows-text-collection-bridge',
+        files('src/sys/sdl3/WindowsTextCollectionBridge.cpp'),
+        include_directories: [root_include_dir, include_directories('subprojects/packagefiles/sdl3/include')],
+        dependencies: [openq4_windows_text_store_dep, openq4_retained_dep] + text_ingress_headers,
+        cpp_args: ['-DUSE_SDL3'], install: false)
+      windows_collection_bridge_dep = declare_dependency(link_with: windows_collection_bridge_library)
+      client_deps += windows_collection_bridge_dep
+      # Native construction/cleanup stay outside the engine PCH. The controller
+      # requires explicit checked Session admission; linking never enables it.
+      windows_text_session_sdk_deps = [windows_ole_dep, cc.find_library('uuid', required: true)]
+      windows_text_session_library = static_library('openq4-windows-text-session',
+        files('src/sys/sdl3/WindowsTextSession.cpp', 'src/sys/sdl3/WindowsNativeInputRouteSource.cpp'),
+        include_directories: [root_include_dir, include_directories('subprojects/packagefiles/sdl3/include')],
+        dependencies: [windows_collection_bridge_dep, openq4_windows_text_store_dep, openq4_retained_dep, native_queue_dep] + text_ingress_headers + windows_text_session_sdk_deps,
+        cpp_args: ['-DUSE_SDL3'], install: false)
+      windows_text_session_dep = declare_dependency(link_with: windows_text_session_library, dependencies: windows_text_session_sdk_deps)
+      client_deps += windows_text_session_dep
+    endif
+  endif
+  if get_option('build_native_tests') and build_engine and use_sdl3_backend
+    text_ingress_test_headers = [root_include_dir, include_directories('subprojects/packagefiles/sdl3/include')]
+    # Match the explicitly prepared SDL tree used by the SDK CI qualification.
+    native_facts_sdl_headers = meson.project_source_root() / 'subprojects/SDL3-3.4.10/include'
+    if fs_mod.is_file(native_facts_sdl_headers / 'SDL3/SDL_events.h')
+      native_facts_args = ['--compiler', cpp.cmd_array()[-1], '--no-mutations',
+        '--sdl-include', native_facts_sdl_headers]
+      if cpp.get_id() == 'msvc'
+        native_facts_args += ['--msvc-debug']
+      endif
+      test('openq4-ui-native-input-facts', py,
+        args: [meson.project_source_root() / 'tools/tests/native_input_facts.py'] + native_facts_args, timeout: 180)
+      test('openq4-ui-native-input-terminal', py,
+        args: [meson.project_source_root() / 'tools/tests/native_input_terminal.py'] + native_facts_args, timeout: 180)
+      if host_system == 'windows'
+        test('openq4-ui-windows-native-input-facts', py,
+          args: [meson.project_source_root() / 'tools/tests/windows_text_session.py', '--route-facts'] + native_facts_args,
+          timeout: 180)
+      endif
+    endif
+    native_collection_coordinator_test = executable('openq4-ui-native-collection-coordinator-test',
+      files('tools/tests/native/UiNativeCollectionCoordinatorTest.cpp'),
+      include_directories: text_ingress_test_headers,
+      dependencies: [openq4_retained_dep, native_queue_dep] + text_ingress_headers, install: false)
+    test('openq4-ui-native-collection-coordinator', native_collection_coordinator_test, timeout: 30)
+    native_event_disposition_test = executable('openq4-ui-native-event-disposition-test',
+      files('tools/tests/native/NativeRouteAccountingTest.cpp'),
+      include_directories: text_ingress_test_headers,
+      dependencies: [openq4_retained_dep, native_queue_dep] + text_ingress_headers, install: false)
+    test('openq4-ui-native-event-disposition', native_event_disposition_test, timeout: 30)
+    if host_system == 'windows'
+      windows_collection_bridge_test = executable('openq4-ui-windows-text-collection-bridge-test',
+        files('tools/tests/native/WindowsTextCollectionBridgeTest.cpp'),
+        include_directories: text_ingress_test_headers + [include_directories('src')],
+        dependencies: [windows_collection_bridge_dep, openq4_windows_text_store_dep, openq4_retained_dep] + text_ingress_headers,
+        cpp_args: ['-DUSE_SDL3'], install: false)
+      test('openq4-ui-windows-text-collection-bridge', windows_collection_bridge_test, timeout: 30)
+      windows_text_session_test = executable('openq4-ui-windows-text-session-test',
+        files('tools/tests/native/WindowsTextSessionTest.cpp'),
+        include_directories: text_ingress_test_headers + [include_directories('src')],
+        dependencies: [windows_text_session_dep, windows_collection_bridge_dep, openq4_windows_text_store_dep, openq4_retained_dep, native_queue_dep] + text_ingress_headers,
+        cpp_args: ['-DUSE_SDL3'], install: false)
+      test('openq4-ui-windows-text-session', windows_text_session_test, timeout: 30)
+    endif
+    text_ingress_test = executable('openq4-ui-text-ingress-test',
+      files('tools/tests/native/UiTextProvenanceIngressTest.cpp'),
+      include_directories: text_ingress_test_headers,
+      dependencies: [openq4_retained_dep, text_ingress_dep] + text_ingress_headers,
+      cpp_args: text_ingress_args, install: false)
+    test('openq4-ui-text-ingress', text_ingress_test, timeout: 30)
+    text_ingress_unsupported_test = executable('openq4-ui-text-ingress-unsupported-test',
+      files('tools/tests/native/UiTextProvenanceIngressTest.cpp', 'src/sys/sdl3/TextProvenanceIngress.cpp'),
+      include_directories: text_ingress_test_headers,
+      dependencies: [openq4_retained_dep] + text_ingress_headers, install: false)
+    test('openq4-ui-text-ingress-unsupported', text_ingress_unsupported_test, timeout: 30)
   endif
 endif
 
@@ -1204,7 +1962,7 @@ if host_system == 'darwin'
   endif
 endif
 
-if host_system == 'linux'
+if host_system == 'linux' or host_system == 'android'
   linux_compile_hardening_args = []
   foreach hardening_arg : ['-fstack-protector-strong', '-D_FORTIFY_SOURCE=2']
     if cpp.has_argument(hardening_arg) and cc.has_argument(hardening_arg)
@@ -1237,6 +1995,19 @@ endif
 if use_sdl3_backend
   shared_cpp_args += ['-DUSE_SDL3=1']
   shared_c_args += ['-DUSE_SDL3=1']
+endif
+
+if host_system == 'android'
+  shared_cpp_args += ['-DID_GL_HARDLINK']
+  shared_c_args += ['-DID_GL_HARDLINK']
+  if build_engine
+    shared_cpp_args += android_include_args
+    shared_c_args += android_include_args
+  endif
+  if build_sigmatouch
+    shared_cpp_args += ['-DOPENQ4_SIGMATOUCH=1']
+    shared_c_args += ['-DOPENQ4_SIGMATOUCH=1']
+  endif
 endif
 
 if host_system == 'linux' and use_sdl3_backend and linux_x11_helpers_enabled
@@ -1404,6 +2175,15 @@ if build_engine
     endif
   endif
 
+  # The inventory and transfers call the client owned-queue ledger. Keep them out of dedicated
+  # sources, which deliberately do not link the client native queue library.
+  if use_sdl3_backend
+    openq4_engine_sources += files(
+      'src/sys/sdl3/NativeInputEmissionInventory.cpp',
+      'src/sys/sdl3/NativeInputTransfers.cpp',
+      'src/sys/sdl3/NativeInputDriver.cpp')
+  endif
+
   bse_library = static_library(
     'openq4_bse',
     bse_sources,
@@ -1411,7 +2191,7 @@ if build_engine
     cpp_args: bse_cpp_args,
     c_args: bse_c_args,
     cpp_pch: pch_headers,
-    pic: host_system == 'linux',
+    pic: host_system == 'linux' or host_system == 'android',
     install: false,
   )
 
@@ -1425,7 +2205,7 @@ if build_engine
     cpp_args: engine_cpp_args,
     c_args: engine_c_args,
     cpp_pch: pch_headers,
-    pic: host_system == 'linux',
+    pic: host_system == 'linux' or host_system == 'android',
     install: false,
   )
 
@@ -1438,7 +2218,7 @@ if build_engine
     cpp_args: engine_cpp_args,
     c_args: engine_c_args,
     cpp_pch: pch_headers,
-    pic: host_system == 'linux',
+    pic: host_system == 'linux' or host_system == 'android',
     install: false,
   )
 endif
@@ -1447,7 +2227,71 @@ if build_engine
   client_link_with = [bse_library, imagetools_library, render_geo_library]
   dedicated_link_with = [bse_library, imagetools_library, render_geo_library]
 
-  if host_system == 'windows'
+  if build_sigmatouch
+    # The external host uses its patched SDL callback/input API. Stock SDL3
+    # cannot link this glue, even though it is enough for standalone Android.
+    if not fs_mod.is_file(sigmatouch_root / '..' / '..' / 'SDL_beloko_extra.h')
+      error('Sigma Touch requires its host SDL_beloko_extra.h two levels above sigmatouch_root, as included by Clibs_OpenTouch.')
+    endif
+    foreach callback : ['SDL_SetSwapBufferCallBack', 'SDL_ShowMouseCallBack', 'SDL_MouseMoveCallBack', 'SDL_SetShowKeyboardCallBack', 'SDL_NewEGLCreated', 'SDL_SendKeyboardText', 'SDL_SendKeyboardKey', 'Android_JNI_SendMessage']
+      if not cpp.has_function(callback, prefix: 'extern "C" void ' + callback + '();', dependencies: sdl3_dep)
+        error('Sigma Touch requires a compatible host SDL3 exporting ' + callback + '; the standard standalone SDL3 build cannot be used.')
+      endif
+    endforeach
+    sigmatouch_sources = files(
+      'mobile/game_interface.cpp',
+      'mobile/touch_interface_quake4.cpp',
+      sigmatouch_root / 'sigma/android_jni.cpp',
+      sigmatouch_root / 'touch_interface_base.cpp',
+      sigmatouch_root / 'LogWritter.c',
+      sigmatouch_root / 'fts.c',
+      sigmatouch_root / 'rand.c',
+    )
+    sigmatouch_deps = [
+      sdl3_dep,
+      cc.find_library('touchcontrols', dirs: [android_deps_root / 'lib'], required: true),
+      cc.find_library('saffal', dirs: [android_deps_root / 'lib'], required: true),
+      cc.find_library('GLESv3', required: true),
+      cc.find_library('EGL', required: true),
+      cc.find_library('log', required: true),
+    ]
+    # The host's headers have their own types; do not inject the engine PCH.
+    sigmatouch_library = static_library(
+      'openq4_sigmatouch',
+      sigmatouch_sources,
+      include_directories: [include_directories('mobile'), include_directories(sigmatouch_root), include_directories(sigmatouch_controls_root)],
+      dependencies: sigmatouch_deps,
+      cpp_args: ['-DOPENQ4_SIGMATOUCH=1', '-DUSE_SDL3=1', '-DENGINE_NAME="quake4"'],
+      c_args: ['-DOPENQ4_SIGMATOUCH=1', '-DUSE_SDL3=1', '-DENGINE_NAME="quake4"'],
+      pic: true,
+      install: false,
+    )
+    # JNI entry points are discovered by the VM, not by linker references.
+    # link_whole keeps that glue in the application shared library.
+  endif
+
+  if host_system == 'android'
+    android_link_whole = []
+    if build_sigmatouch
+      android_link_whole += sigmatouch_library
+      client_deps += sigmatouch_deps
+    endif
+    shared_library(
+      engine_client_binary_name,
+      openq4_engine_sources,
+      include_directories: engine_include_dirs,
+      dependencies: client_deps,
+      link_with: client_link_with,
+      link_whole: android_link_whole,
+      cpp_args: client_engine_cpp_args,
+      c_args: engine_c_args,
+      cpp_pch: pch_headers,
+      link_args: engine_link_args + ['-Wl,-z,defs'],
+      name_prefix: 'lib',
+      install: true,
+      install_dir: install_engine_dir,
+    )
+  elif host_system == 'windows'
     executable(
       engine_client_binary_name,
       openq4_engine_sources,
@@ -1556,7 +2400,7 @@ if build_engine
       install: true,
       install_dir: install_root_dir,
     )
-  else
+  elif host_system != 'android'
     executable(
       engine_ded_binary_name,
       openq4_dedicated_sources,
@@ -1605,7 +2449,7 @@ elif host_system == 'darwin'
   darwin_game_module_export_list = files('tools/build/darwin_game_module.exp')
   game_module_link_args += '-Wl,-exported_symbols_list,' + darwin_game_module_export_list[0].full_path()
   game_module_link_depends += darwin_game_module_export_list
-elif host_system == 'linux'
+elif host_system == 'linux' or host_system == 'android'
   game_module_link_args += linux_module_link_hardening_args
   if cpp.has_link_argument('-Wl,-z,defs')
     game_module_link_args += '-Wl,-z,defs'
@@ -1632,7 +2476,7 @@ if build_engine or build_games
     c_args: game_common_c_args,
     cpp_pch: game_idlib_pch_headers,
     override_options: game_target_override_options,
-    pic: host_system == 'linux',
+    pic: host_system == 'linux' or host_system == 'android',
     gnu_symbol_visibility: host_system == 'windows' ? 'default' : 'hidden',
     install: false,
   )
@@ -1644,7 +2488,7 @@ if build_engine or build_games
     c_args: game_common_c_args,
     cpp_pch: game_idlib_pch_headers,
     override_options: game_target_override_options,
-    pic: host_system == 'linux',
+    pic: host_system == 'linux' or host_system == 'android',
     gnu_symbol_visibility: host_system == 'windows' ? 'default' : 'hidden',
     install: false,
   )
@@ -1657,7 +2501,7 @@ endif
 # OPENQ4_SDL3_CONTEXT_IMPL and drives the engine window through
 # renderWindowServices_t).
 build_renderer_gl = get_option('build_renderer_gl')
-if build_renderer_gl and (host_system == 'darwin' or platform_backend != 'sdl3')
+if build_renderer_gl and (host_system == 'darwin' or host_system == 'android' or platform_backend != 'sdl3')
   build_renderer_gl = false
 endif
 
@@ -1667,13 +2511,45 @@ endif
 # stays opt-in behind r_renderApi vulkan with OpenGL as the default renderer.
 # MoltenVK is not a native Metal renderer and must never be described as one.
 build_renderer_vk = get_option('build_renderer_vk')
-if build_renderer_vk and platform_backend != 'sdl3'
+if build_renderer_vk and (platform_backend != 'sdl3' or host_system == 'android')
   build_renderer_vk = false
 endif
 renderer_vk_binary_name = 'renderer-vk_' + binary_arch
 
 renderer_gl_binary_name = 'renderer-gl_' + binary_arch
-if build_engine and (build_renderer_gl or build_renderer_vk)
+
+# emileb's GLES renderer is required on Android and explicitly selectable on
+# desktop. Never silently ship an ANGLE copied from another installed product.
+renderer_gles_binary_name = 'renderer-gles_' + binary_arch
+gles_option = get_option('build_renderer_gles')
+build_renderer_gles = build_engine and (gles_option.enabled() or (host_system == 'android' and not gles_option.disabled()))
+if build_engine and host_system == 'android' and gles_option.disabled()
+  error('Android requires the GLES renderer module.')
+endif
+if build_renderer_gles and not use_sdl3_backend
+  error('build_renderer_gles requires platform_backend=sdl3.')
+endif
+gles_root = get_option('gles_root').strip()
+angle_staged_dir = meson.project_source_root() / '.tmp' / 'angle-macos'
+angle_gles_lib = disabler()
+gles_deps = []
+gles_development_angle = false
+if build_renderer_gles
+  if host_system == 'android'
+    gles_deps = [cc.find_library('GLESv3', required: true), cc.find_library('EGL', required: true), cc.find_library('log', required: true)]
+  else
+    gles_library_dirs = []
+    if gles_root != ''
+      gles_library_dirs += [gles_root / 'lib']
+    elif host_system == 'darwin'
+      gles_library_dirs += [angle_staged_dir]
+      gles_development_angle = true
+    endif
+    angle_gles_lib = cpp.find_library('GLESv2', dirs: gles_library_dirs, required: true)
+    gles_deps = [angle_gles_lib, cpp.find_library('EGL', dirs: gles_library_dirs, required: true)]
+  endif
+endif
+if build_engine and (build_renderer_gl or build_renderer_vk or build_renderer_gles)
   # the modules' own idlib copy, compiled with engine flavor so codegen and
   # interface layout match the renderer sources
   renderer_idlib_library = static_library(
@@ -1683,7 +2559,7 @@ if build_engine and (build_renderer_gl or build_renderer_vk)
     cpp_args: engine_cpp_args,
     c_args: engine_c_args,
     cpp_pch: pch_headers,
-    pic: host_system == 'linux',
+    pic: host_system == 'linux' or host_system == 'android',
     install: false,
   )
 endif
@@ -1732,6 +2608,113 @@ if build_renderer_gl and build_engine
     name_prefix: '',
     install: true,
     install_dir: install_root_dir,
+  )
+endif
+
+# Experimental macOS OpenGL ES clear probe (Android GLES backend bring-up).
+#
+# openQ4's GL 1.x entry points bind at link time, so on macOS they resolve from
+# OpenGL.framework and an EGL/ANGLE ES context is never actually driven. This
+# target is the minimal proof of the opposite arrangement: link ANGLE's
+# libGLESv2 and no desktop GL, then clear and present through it. It is the
+# link-shape a future renderer-gles module has to use.
+#
+# Local development only: it needs an ANGLE staged by
+# tools/build/prepare_macos_angle.sh and is never installed or packaged.
+build_gles_probe = host_system == 'darwin' and build_renderer_gles
+if build_gles_probe
+  if not angle_gles_lib.found()
+    warning('ANGLE not staged; skipping the GLES clear probe. Run tools/build/prepare_macos_angle.sh to enable it.')
+  else
+    executable(
+      'openq4-gles-probe',
+      files('src/renderer/GLES/gles_clear_probe.cpp'),
+      include_directories: engine_include_dirs,
+      dependencies: [sdl3_dep, angle_gles_lib],
+      cpp_args: engine_cpp_args,
+      # @loader_path so the staged ANGLE resolves next to the probe binary,
+      # matching how a shipped module would find its own runtime.
+      link_args: ['-Wl,-rpath,@loader_path'],
+      install: false,
+    )
+  endif
+endif
+
+# Experimental OpenGL ES renderer module.
+#
+# The shared renderer front-end again, but with GL resolved through
+# renderer/GLES/qgl_gles.h against a real ES driver instead of GLEW against
+# desktop GL. Unlike renderer-vk this KEEPS the ModernGL translation units --
+# GLES is still GL, so the executor, shader library, state cache, upload
+# manager and render-graph resources are reused rather than rewritten -- and
+# keeps tr_backend.cpp, whose five references into the dropped legacy TUs are
+# supplied by renderer/GLES/gles_Backend.cpp.
+#
+# Never installed: the ANGLE it links is a local development aid.
+if build_renderer_gles
+  renderer_gles_source_discovery = run_command(
+    py,
+    meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+    '--emit',
+    'renderer_gles',
+    check: true,
+  )
+  renderer_gles_source_paths = renderer_gles_source_discovery.stdout().strip().split('\n')
+  if renderer_gles_source_paths.length() == 0
+    error('tools/build/meson_sources.py returned no renderer_gles source files.')
+  endif
+  renderer_gles_sources = files(renderer_gles_source_paths)
+
+  renderer_gles_module_args = engine_cpp_args + [
+    '-DOPENQ4_RENDERER_MODULE',
+    '-DOPENQ4_RENDERER_GLES_MODULE',
+    '-DOPENQ4_SDL3_CONTEXT_IMPL',
+    '-DOPENQ4_RENDERER_BACKEND_NAME="gles"',
+    '-DOPENQ4_RENDERER_BACKEND_DESC="openQ4 OpenGL ES renderer module"',
+  ]
+
+  renderer_gles_export_list = []
+  renderer_gles_link_args = []
+  if host_system == 'darwin'
+    renderer_gles_export_list = files('tools/build/macos_renderer_module.exp')
+    renderer_gles_link_args = [
+      '-Wl,-exported_symbols_list,' + renderer_gles_export_list[0].full_path(),
+      '-Wl,-dead_strip',
+      '-Wl,-headerpad_max_install_names',
+      '-Wl,-install_name,@loader_path/' + renderer_gles_binary_name + '.dylib',
+      '-Wl,-rpath,@loader_path',
+    ]
+  elif host_system == 'linux' or host_system == 'android'
+    renderer_gles_export_list = files('tools/build/linux_renderer_module.map')
+    renderer_gles_link_args = linux_module_link_hardening_args + [
+      '-Wl,--version-script=' + renderer_gles_export_list[0].full_path(),
+      '-Wl,-z,defs',
+    ]
+    gles_deps += [cc.find_library('m', required: true), cc.find_library('dl', required: true)]
+  endif
+
+  # shared_library, not shared_module: meson links shared_module on darwin as an
+  # MH_BUNDLE with -undefined dynamic_lookup, which drops the undefined-symbol
+  # closure. That closure is the point here -- it is what proves the module has
+  # no desktop GL left in it.
+  renderer_gles_module_target = shared_library(
+    renderer_gles_binary_name,
+    renderer_gles_sources,
+    include_directories: [
+      engine_include_dirs,
+      include_directories('src/external/gles'),
+    ],
+    cpp_args: renderer_gles_module_args,
+    c_args: engine_c_args,
+    cpp_pch: pch_headers,
+    link_with: [renderer_idlib_library, imagetools_library, render_geo_library],
+    dependencies: gles_deps,
+    link_args: renderer_gles_link_args,
+    link_depends: renderer_gles_export_list,
+    gnu_symbol_visibility: 'hidden',
+    name_prefix: module_filename_prefix,
+    install: not gles_development_angle,
+    install_dir: install_engine_dir,
   )
 endif
 
@@ -1906,7 +2889,7 @@ if build_games and build_game_sp
       '--source',
       '@INPUT@',
       '--destination',
-      meson.current_build_dir() / 'baseoq4' / (game_sp_binary_name + game_module_filename_suffix),
+      meson.current_build_dir() / 'baseoq4' / (module_filename_prefix + game_sp_binary_name + game_module_filename_suffix),
       '--stamp',
       '@OUTPUT@',
     ],
@@ -1927,7 +2910,7 @@ if build_games and build_game_mp
       '--source',
       '@INPUT@',
       '--destination',
-      meson.current_build_dir() / 'baseoq4' / (game_mp_binary_name + game_module_filename_suffix),
+      meson.current_build_dir() / 'baseoq4' / (module_filename_prefix + game_mp_binary_name + game_module_filename_suffix),
       '--stamp',
       '@OUTPUT@',
     ],
@@ -1952,6 +2935,12 @@ install_data(
   install_dir: install_root_dir,
   rename: 'openQ4.ico',
 )
+
+install_data('LICENSE', 'CONTRIBUTORS.md', install_dir: install_root_dir)
+install_data('LICENSES/KHRONOS-GLES-MIT.txt', install_dir: install_root_dir / 'licenses')
+install_data('docs/licenses/RmlUi.txt', install_dir: install_root_dir / 'licenses')
+install_data('docs/licenses/JsonCpp.txt', install_dir: install_root_dir / 'licenses')
+install_data('docs/licenses/libtess2.txt', install_dir: install_root_dir / 'licenses')
 
 install_data(
   'assets/icons/quake4.icns',
@@ -2084,7 +3073,9 @@ summary(
     'OpenAL': openal_dep.found(),
     'stb_vorbis': stb_vorbis_dep.found(),
     'Precompiled headers': get_option('use_pch'),
-    'Dedicated server target': build_engine,
+    'Dedicated server target': build_engine and host_system != 'android',
+    'GLES renderer module': build_renderer_gles,
+    'Sigma Touch host adapter': build_sigmatouch,
     'Linux dedicated headless link split': build_engine and host_system == 'linux',
     'Install root': install_root_dir,
   },

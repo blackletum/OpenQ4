@@ -142,6 +142,16 @@
 	"#str_229979"	"Marcador de impacto"
 	"#str_229982"	"Retroceso del arma"
 	"#str_229983"	"REINICIAR NIVEL"
+
+	// Settings transaction status.
+	"#str_230007"	"Listo"
+	"#str_230008"	"Otra ventana de ajustes está modificando estas opciones."
+	"#str_230009"	"Abre los ajustes antes de modificarlos."
+	"#str_230010"	"No se han podido aplicar estos cambios."
+	"#str_230011"	"Los ajustes se han modificado en otra parte. Revísalos e inténtalo de nuevo."
+	"#str_230012"	"No se han podido restaurar los ajustes anteriores."
+	"#str_230013"	"Hay cambios pendientes de confirmación."
+	"#str_230014"	"Cambios sin guardar."
 	"#str_41200"	"Off"
 	"#str_41201"	"Self"
 	"#str_41202"	"Enemy"
@@ -1003,4 +1013,51 @@
 	"#str_42944"	"-"
 	"#str_42945"	"Clic: seleccionar   Arrastre derecho: orbitar   Mayús + derecho: desplazar   Rueda: zoom   F: encuadrar"
 	"#str_42946"	"Experimental"
+	// SigmaTouch editor labels (emileb Android support).
+	"#str_43000"	"Mostrar menú"
+	"#str_43001"	"Guardado rápido"
+	"#str_43002"	"Carga rápida"
+	"#str_43003"	"Mostrar teclado"
+	"#str_43004"	"Usar ratón"
+	"#str_43005"	"Consola"
+	"#str_43006"	"Mostrar controles personalizados"
+	"#str_43007"	"Mostrar números de armas"
+	"#str_43008"	"Arma siguiente"
+	"#str_43009"	"Arma anterior"
+	"#str_43010"	"Botones de movimiento (WASD)"
+	"#str_43011"	"Clic izquierdo"
+
+	// Display application, confirmation and durable recovery.
+	"#str_229990"	"Aplicando ajustes de pantalla…"
+	"#str_229991"	"Restaurando los ajustes de pantalla anteriores…"
+	"#str_229992"	"Guardando ajustes de pantalla…"
+	"#str_229993"	"¿Mantener estos ajustes de pantalla?"
+	"#str_229994"	"Mantener"
+	"#str_229995"	"Revertir"
+	"#str_229996"	"Reintentar"
+	"#str_229997"	"Se han aceptado los ajustes, pero no se han terminado de guardar. Reintenta para completar el guardado."
+	"#str_229998"	"10%;25%;50%;75%;85%;100%;125%;150%;200%"
+	"#str_229999"	"Seguir editando"
+
+	// Transient numeric editor clipboard feedback.
+	"#str_230001"	"No se pudo leer el portapapeles. Inténtalo de nuevo."
+	"#str_230002"	"No se pudo copiar al portapapeles. El texto no ha cambiado."
+	"#str_230003"	"El texto del portapapeles no es válido para este campo de una sola línea."
+
+	// Precise SYSTEM numeric field validation (decimal point input).
+	"#str_230004"	"Introduce un número de 0.5 a 2."
+	"#str_230005"	"Introduce un número de 0 a 1."
+	"#str_230006"	"Confirma cada campo o descarta los cambios sin terminar."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Escala de interfaz"
+	"#str_230016"	"Tamaño del texto"
+	"#str_230017"	"Restablecer tamaños"
+	"#str_230018"	"Interfaz"
+	"#str_230019"	"Los tamaños grandes pueden reducirse para caber en la ventana."
+	"#str_230020"	"No;2x;4x;8x;16x"
+	"#str_230021"	"Introduce un número entero de 320 a 16384."
+	"#str_230022"	"Introduce un número entero de 240 a 16384."
+	"#str_230023"	"Elige una pantalla, un tamaño y una frecuencia compatibles antes de aplicar."
+	"#str_230024"	"El tamaño personalizado se usa en pantalla completa exclusiva. Al editarlo se selecciona la resolución personalizada."
 }

@@ -48,7 +48,7 @@ struct idMath {
 };
 struct idStr {
     std::string s;
-    idStr(const char* v):s(v){}
+    idStr(const char* v=""):s(v){}
     const char* c_str()const{return s.c_str();}
     static int Icmp(const char* a,const char* b){return std::string(a).compare(b);}
 };
@@ -126,7 +126,15 @@ struct Dict {
     bool GetInt(const char* n,const char* fallback,int& value){auto i=values.find(n);
         value=i==values.end()?atoi(fallback):i->second;return i!=values.end();}
 };
-struct idUserInterface {idWindow desktop;Dict dict;idWindow* GetDesktop(){return &desktop;}Dict& State(){return dict;}};
+struct idUserInterface {
+    idWindow desktop;Dict dict;Dict& State(){return dict;}
+    bool GetPresentationValue(const char* name,idStr& out) {
+        const char* local=std::strncmp(name,"desktop::",9)==0?name+9:name;
+        auto found=desktop.values.find(local);
+        if(found==desktop.values.end())return false;
+        out=idStr(found->second.s.c_str());return true;
+    }
+};
 @MENU_OPTION@
 enum {PITCH,YAW,ROLL,AXIS_ROLL=0,AXIS_SIDE,AXIS_FORWARD,AXIS_YAW,AXIS_PITCH,AXIS_UP,UB_STRAFE};
 constexpr int BUTTON_WEAPONWHEEL=512;

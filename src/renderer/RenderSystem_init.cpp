@@ -31,10 +31,12 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 #include "LevelShotDepth.h"
+#include "RendererResourceSettings.h"
 #include "../imagetools/DXT/DXTCodec.h"
 #include "CelShading.h"
 #include "RendererBootstrap.h"
 #include "RendererModule.h"
+#include "RenderModuleAPI.h"
 #include "GLDebugScope.h"
 #include "GLStateCache.h"
 #include "RendererBenchmarks.h"
@@ -75,6 +77,33 @@ If you have questions concerning this license or the applicable additional terms
 
 // functions that are not called every frame
 
+static bool r_recoverableRendererRestart = false;
+static bool r_forceWindowRendererRestart = false;
+static bool r_recoverableRendererRestore = false;
+static const renderWindowRequest_t *r_recoverableWindowRequest = NULL;
+// Only Init opens this gate. Device success closes it permanently until a full
+// renderer Init, so a normal ShutdownOpenGL cannot masquerade as cold recovery.
+static bool r_initialRendererDevicePending = false;
+
+struct rendererRestartFailure_t {
+	idStr reason;
+	explicit rendererRestartFailure_t( const char *text ) : reason( text ) {}
+};
+
+bool R_IsRecoverableRendererRestart( void ) { return r_recoverableRendererRestart; }
+bool R_ForceWindowForRendererRestart( void ) { return r_forceWindowRendererRestart; }
+const renderWindowRequest_t *R_GetRecoverableWindowRequest( void ) { return r_recoverableWindowRequest; }
+void R_RejectRecoverableRendererRestart( const char *reason ) {
+	if ( r_recoverableRendererRestart ) throw rendererRestartFailure_t( reason );
+}
+
+static bool R_RendererRestartError( char *error, int errorSize, const char *reason ) {
+	if ( error != NULL && errorSize > 0 ) idStr::Copynz( error, reason, errorSize );
+	return false;
+}
+
+static bool R_InitRendererDevice( bool legacyPolicy, bool forceWindow, char *error, int errorSize );
+
 static void R_ErrorForUnsupportedCompatibilityOpenGL( void ) {
 	common->Error( "%s", common->GetLanguageDict()->GetString( "#str_41106" ) );
 }
@@ -102,6 +131,17 @@ static void R_RecordMissingRequiredOpenGLFeature( const char *name ) {
 static bool R_CheckRequiredExtension( const char *name ) {
 	const bool available = R_CheckExtension( const_cast<char *>( name ) );
 	if ( !available ) {
+		// These "required" features are the fixed-function and ARB-assembly
+		// extensions the legacy ARB2 path is built on. A profile that removed
+		// fixed-function cannot report them by definition, so their absence is
+		// expected rather than fatal: such a context is served by the modern
+		// programmable path, and RendererCaps_SupportsTier already refuses the
+		// legacy tier for it. Applies to OpenGL ES at any version and to a
+		// desktop core profile.
+		if ( glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES
+			|| glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_CORE ) {
+			return false;
+		}
 		R_RecordMissingRequiredOpenGLFeature( name );
 	}
 	return available;
@@ -221,7 +261,7 @@ glconfig_t	glConfig;
 
 static void GfxInfo_f( void );
 
-const char *r_rendererArgs[] = { "best", "arb", "arb2", "Cg", "exp", "nv10", "nv20", "r200", NULL };
+const char *r_rendererArgs[] = { "best", "arb2", "modern", "glesd3", "arb", "Cg", "exp", "nv10", "nv20", "r200", NULL };
 const char *r_glTierArgs[] = { "auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46", NULL };
 const char *r_rendererBenchmarkPresetArgs[] = { "low", "baseline", "modern", "high-end", NULL };
 const char *r_multiSamplesArgs[] = { "0", "2", "4", "8", "16", NULL };
@@ -321,7 +361,7 @@ idCVar r_celShadingWorldDebug( "r_celShadingWorldDebug", "0", CVAR_RENDERER | CV
 idCVar r_msaaResolveDepth( "r_msaaResolveDepth", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "resolve depth when blitting MSAA render targets" );
 idCVar r_msaaAlphaToCoverage( "r_msaaAlphaToCoverage", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable alpha-to-coverage for perforated materials on MSAA render targets" );
 idCVar r_mode( "r_mode", "-2", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "video mode number (-2 = desktop native, -1 = custom, 0+ = predefined)" );
-idCVar r_displayRefresh( "r_displayRefresh", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NOCHEAT, "optional display refresh rate option for vid mode", 0.0f, 1000.0f );
+idCVar r_displayRefresh( "r_displayRefresh", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NOCHEAT | CVAR_ARCHIVE, "optional display refresh rate option for vid mode", 0.0f, 1000.0f );
 idCVar r_fullscreen( "r_fullscreen", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0 = windowed, 1 = full screen" );
 idCVar r_hiddenWindow( "r_hiddenWindow", "0", CVAR_RENDERER | CVAR_BOOL, "create a hidden OpenGL window for batch renderer jobs" );
 idCVar r_customWidth( "r_customWidth", "1920", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen width. set r_mode to -1 to activate" );
@@ -471,6 +511,8 @@ idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
+idCVar r_glesContext( "r_glesContext", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "request an OpenGL ES 3.0 context instead of desktop GL; bring-up aid for the Android GLES backend, on desktop this needs an EGL/GLES translation layer (ANGLE)" );
+idCVar r_glCoreProfileFirst( "r_glCoreProfileFirst", "0", CVAR_RENDERER | CVAR_BOOL, "with a forced r_glTier, try core-profile contexts before the compatibility fallback; needed to reach the modern path on drivers that cap compatibility below 3.3 (macOS caps it at 2.1), diagnostic only" );
 idCVar r_vkValidation( "r_vkValidation", "0", CVAR_RENDERER | CVAR_BOOL, "enable Vulkan validation layers for the Vulkan renderer module and rendererVkProbe" );
 idCVar r_vkSampleLocations( "r_vkSampleLocations", "1", CVAR_RENDERER | CVAR_BOOL, "use lower-left standard MSAA locations when supported; read at Vulkan initialization" );
 idCVar r_vkStartupFailure( "r_vkStartupFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -539,7 +581,7 @@ idCVar r_levelshotSupersample( "r_levelshotSupersample", "1", CVAR_RENDERER | CV
 idCVar r_skipSuppress( "r_skipSuppress", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the per-view suppressions" );
 idCVar r_skipPostProcess( "r_skipPostProcess", "0", CVAR_RENDERER | CVAR_BOOL, "skip all post-process renderings" );
 idCVar r_skipLightScale( "r_skipLightScale", "0", CVAR_RENDERER | CVAR_BOOL, "don't do any post-interaction light scaling, makes things dim on low-dynamic range cards" );
-idCVar r_skipSky( "r_skipSky", "0", CVAR_RENDERER | CVAR_BOOL, "skip sky rendering" );
+idCVar r_skipSky( "r_skipSky", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "skip sky rendering" );
 idCVar r_skipInteractions( "r_skipInteractions", "0", CVAR_RENDERER | CVAR_BOOL, "skip all light/surface interaction drawing" );
 idCVar r_skipDynamicTextures( "r_skipDynamicTextures", "0", CVAR_RENDERER | CVAR_BOOL, "don't dynamically create textures" );
 idCVar r_skipCopyTexture( "r_skipCopyTexture", "0", CVAR_RENDERER | CVAR_BOOL, "do all rendering, but don't actually copyTexSubImage2D" );
@@ -648,7 +690,7 @@ idCVar r_useCombinerDisplayLists( "r_useCombinerDisplayLists", "1", CVAR_RENDERE
 idCVar r_useDepthBoundsTest( "r_useDepthBoundsTest", "1", CVAR_RENDERER | CVAR_BOOL, "use depth bounds test to reduce shadow fill" );
 
 idCVar r_screenFraction( "r_screenFraction", "100", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "main-scene resolution scale percentage; values above 100 enable offscreen supersampling", 10, 200 );
-idCVar r_resolutionScaleMode( "r_resolutionScaleMode", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "screen-fraction mode below native resolution: 0 = legacy cropped viewport, 1 = bilinear upscale, 2 = high-quality upscale; supersampling uses the scene-target resolve path", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
+idCVar r_resolutionScaleMode( "r_resolutionScaleMode", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "screen-fraction mode below native resolution: 0 = legacy cropped viewport, 1 = bilinear upscale, 2 = high-quality upscale, 3 = nearest-neighbour upscale (sharp, no blur). On OpenGL ES 1 and 2 crop the world render and blit it back out bilinear and 3 does the same with a point filter, all three leaving the HUD and menus at native resolution; supersampling uses the scene-target resolve path", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_resolutionScaleSharpness( "r_resolutionScaleSharpness", "0.4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "sharpening amount for high-quality resolution scaling", 0.0f, 1.5f );
 idCVar r_demonstrateBug( "r_demonstrateBug", "0", CVAR_RENDERER | CVAR_BOOL, "used during development to show IHV's their problems" );
 idCVar r_usePortals( "r_usePortals", "1", CVAR_RENDERER | CVAR_BOOL, " 1 = use portals to perform area culling, otherwise draw everything" );
@@ -1135,6 +1177,7 @@ void R_PublishCompressionCapsToImageTools( void ) {
 	imageToolsCompressionCaps_t compressionCaps;
 	compressionCaps.textureCompressionAvailable = glConfig.textureCompressionAvailable;
 	compressionCaps.bptcTextureCompressionAvailable = glConfig.bptcTextureCompressionAvailable;
+	compressionCaps.etc2TextureCompressionAvailable = glConfig.etc2TextureCompressionAvailable;
 	ImageTools_SetCompressionCaps( compressionCaps );
 }
 
@@ -1144,13 +1187,9 @@ R_CheckPortableExtensions
 
 ==================
 */
-static void R_CheckPortableExtensions( void ) {
-	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_CHECK_PORTABLE_EXTENSIONS );
-	glConfig.glVersion = atof( glConfig.version_string );
-	R_ClearMissingRequiredOpenGLFeatures();
-
+static bool R_InitOpenGLExtensionLoader( char *error, int errorSize ) {
 	if ( !GLimp_EnsureActiveContext( "GLEW initialization" ) ) {
-		common->FatalError( "Unable to make OpenGL context current for GLEW initialization\n" );
+		return R_RendererRestartError( error, errorSize, "Unable to make OpenGL context current for GLEW initialization" );
 	}
 	common->Printf("Init Glew...\n");
 
@@ -1158,13 +1197,33 @@ static void R_CheckPortableExtensions( void ) {
 	const GLenum glewResult = glewInit();
 	if ( glewResult != GLEW_OK ) {
 		const GLubyte *glewError = glewGetErrorString( glewResult );
-		common->FatalError( "Failed to init GLEW: %s\n", glewError != NULL ? reinterpret_cast<const char *>( glewError ) : "unknown error" );
+		return R_RendererRestartError( error, errorSize, va( "Failed to init GLEW: %s", glewError != NULL ? reinterpret_cast<const char *>( glewError ) : "unknown error" ) );
 	}
 	while ( glGetError() != GL_NO_ERROR ) {
 	}
+	return true;
+}
+
+static bool R_CheckPortableExtensions( bool legacyPolicy, char *error, int errorSize ) {
+	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_R_CHECK_PORTABLE_EXTENSIONS );
+	glConfig.glVersion = atof( glConfig.version_string );
+	R_ClearMissingRequiredOpenGLFeatures();
+	if ( !R_InitOpenGLExtensionLoader( error, errorSize ) ) return false;
 
 	GLCapabilityProbe_Build( glConfig.backendCaps, glConfig.version_string, glConfig.extensions_string );
 	glConfig.extensions_string = GLCapabilityProbe_ExtensionString();
+
+	// The atof() above cannot read an "OpenGL ES <n>.<n> ..." version string
+	// and leaves 0.0 behind. The probe parses both spellings, so adopt its
+	// result now that it has run.
+	glConfig.glVersion = glConfig.backendCaps.glVersion;
+
+	// A profile with no fixed-function stage: desktop core, or OpenGL ES at any
+	// version. Several checks below are written against compatibility-only
+	// extension strings and enums, which such a profile cannot answer.
+	const bool programmableOnlyProfile =
+		glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES
+		|| glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_CORE;
 
 	// GL_ARB_multitexture
 	glConfig.multitextureAvailable = R_CheckRequiredExtension( "GL_ARB_multitexture" );
@@ -1184,6 +1243,24 @@ static void R_CheckPortableExtensions( void ) {
 		}
 		glGetIntegerv(GL_MAX_TEXTURE_COORDS_ARB, (GLint*)&glConfig.maxTextureCoords);
 		glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS_ARB, (GLint*)&glConfig.maxTextureImageUnits);
+	} else if ( programmableOnlyProfile ) {
+		// GL_ARB_multitexture is compatibility-only, so the block above never
+		// runs here and every limit would stay 0 -- which makes GL_SelectTexture
+		// and idImage::Bind reject every unit and the frame comes out black.
+		// GL_MAX_TEXTURE_IMAGE_UNITS is the core query and is what actually
+		// bounds a fragment shader's samplers. GL_MAX_TEXTURE_UNITS and
+		// GL_MAX_TEXTURE_COORDS describe fixed-function stages that do not
+		// exist, so mirror the image-unit count rather than querying them.
+		glGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS, (GLint *)&glConfig.maxTextureImageUnits );
+		if ( glConfig.maxTextureImageUnits <= 0 ) {
+			glConfig.maxTextureImageUnits = 16;		// the ES 3.0 / GL 3.3 floor
+		}
+		if ( glConfig.maxTextureImageUnits > MAX_MULTITEXTURE_UNITS ) {
+			glConfig.maxTextureImageUnits = MAX_MULTITEXTURE_UNITS;
+		}
+		glConfig.maxTextureUnits = glConfig.maxTextureImageUnits;
+		glConfig.maxTextureCoords = glConfig.maxTextureImageUnits;
+		glConfig.multitextureAvailable = true;
 	}
 
 	glConfig.maxDrawBuffers = 1;
@@ -1226,7 +1303,22 @@ static void R_CheckPortableExtensions( void ) {
 		common->Printf( "X..texture compression entry points incomplete\n" );
 	}
 	const bool textureCompressionAvailable = textureCompressionAdvertised && textureCompressionEntryPointsAvailable;
-	if ( textureCompressionAvailable && R_CheckExtension( "GL_EXT_texture_compression_s3tc" ) ) {
+	// OpenGL ES never advertises GL_EXT_texture_compression_s3tc. ANGLE splits the
+	// same formats across GL_EXT_texture_compression_dxt1 (which defines both the
+	// RGB and RGBA DXT1 tokens) and GL_ANGLE_texture_compression_dxt5, and only
+	// offers the sRGB variant under the s3tc name. The engine uploads exactly
+	// GL_COMPRESSED_RGBA_S3TC_DXT1_EXT and GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, so
+	// those two extensions cover everything FMT_DXT1/FMT_DXT5 need.
+	//
+	// Getting this wrong is not a quiet quality downgrade: a rejected DXT header
+	// makes R_BinaryImageHeaderSupportedByRenderer fail, so every precompressed
+	// image is regenerated from source art as FMT_RGB565 -- slowly, and lazily
+	// enough that placeholders are visible until a level load completes.
+	const bool s3tcSpelled = R_CheckExtension( "GL_EXT_texture_compression_s3tc" );
+	const bool dxtSpelledSeparately =
+		R_CheckExtension( "GL_EXT_texture_compression_dxt1" ) &&
+		R_CheckExtension( "GL_ANGLE_texture_compression_dxt5" );
+	if ( textureCompressionAvailable && ( s3tcSpelled || dxtSpelledSeparately ) ) {
 		glConfig.textureCompressionAvailable = true;
 	} else {
 		glConfig.textureCompressionAvailable = false;
@@ -1236,6 +1328,26 @@ static void R_CheckPortableExtensions( void ) {
 	glConfig.bptcTextureCompressionAvailable =
 		textureCompressionAvailable &&
 		bptcTextureCompressionAdvertised;
+
+	// ETC2 and EAC are core in OpenGL ES 3.0 -- no extension string to check,
+	// and every device that can run this renderer has them. That is the whole
+	// point: on the Adreno 650 class, which advertises no S3TC at all, this is
+	// the only compressed format the driver will take, and without it every
+	// texture lands at FMT_RGBA8.
+	//
+	// Deliberately NOT enabled for desktop GL. Core since 4.3 there too, but
+	// desktop drivers commonly satisfy that by decompressing to RGBA in the
+	// driver, which is slower than uncompressed and no smaller. Desktop has
+	// S3TC and does not need this path.
+	glConfig.etc2TextureCompressionAvailable =
+		( glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES ) &&
+		glConfig.glVersion >= 3.0f &&
+		textureCompressionEntryPointsAvailable;
+	if ( glConfig.etc2TextureCompressionAvailable ) {
+		common->Printf( "...using ETC2/EAC texture compression (core in ES 3.0)\n" );
+	} else {
+		common->Printf( "X..ETC2/EAC texture compression not used on this context\n" );
+	}
 
 	// push the compression capabilities into the shared imagetools library,
 	// which gates precompressed-DDS selection without reading renderer globals
@@ -1279,7 +1391,15 @@ static void R_CheckPortableExtensions( void ) {
 	// This isn't very important, but some pathological case might cause a clamp error and give a shadow bug.
 	// Nvidia also believes that future hardware may be able to run faster with this enabled to avoid the
 	// serialization of clamping.
-	if ( R_CheckExtension( "GL_EXT_stencil_wrap" ) ) {
+	// Promoted to core in OpenGL 2.0 and in OpenGL ES 2.0, so neither a core
+	// nor an ES context advertises the extension string -- probing for it
+	// there silently selects the saturating GL_INCR/GL_DECR, which clamps
+	// nested shadow volumes and breaks the order-equivalence the two-sided
+	// single-pass stencil path depends on.
+	const bool stencilWrapIsCore =
+		glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES
+		|| glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_CORE;
+	if ( stencilWrapIsCore || R_CheckExtension( "GL_EXT_stencil_wrap" ) ) {
 		tr.stencilIncr = GL_INCR_WRAP_EXT;
 		tr.stencilDecr = GL_DECR_WRAP_EXT;
 	} else {
@@ -1328,6 +1448,15 @@ static void R_CheckPortableExtensions( void ) {
 
 	// ARB_vertex_buffer_object
 	glConfig.ARBVertexBufferObjectAvailable = R_CheckExtension( "GL_ARB_vertex_buffer_object" );
+	if ( !glConfig.ARBVertexBufferObjectAvailable && programmableOnlyProfile ) {
+		// Buffer objects are core since GL 1.5 and ES 2.0, so the extension
+		// string is absent on these profiles and the probe above finds nothing.
+		// Believing it drops the engine onto the virtual-memory vertex cache
+		// ("Vertex cache is SLOW"), which leaves every ambientCache->vbo at 0.
+		// Every scene surface then fails the modern geometry path with
+		// MISSING_VERTEX_BUFFER: measured on game/mcc_1, 654 of ~662 draws.
+		glConfig.ARBVertexBufferObjectAvailable = true;
+	}
 	if ( glConfig.ARBVertexBufferObjectAvailable && !R_HasARBVertexBufferObjectEntryPoints() ) {
 		common->Printf( "X..GL_ARB_vertex_buffer_object entry points incomplete; using virtual-memory vertex cache\n" );
 		glConfig.ARBVertexBufferObjectAvailable = false;
@@ -1381,9 +1510,16 @@ static void R_CheckPortableExtensions( void ) {
 	}
 
 	// check for minimum set
-	if ( !glConfig.multitextureAvailable || !glConfig.textureEnvCombineAvailable || !glConfig.cubeMapAvailable
-		|| !glConfig.envDot3Available ) {
-			R_ErrorForMissingRequiredOpenGLFeatures();
+	//
+	// This minimum is the legacy ARB2 path's, expressed as compatibility-only
+	// extension strings. A profile without fixed-function cannot report them,
+	// so the check is meaningless there and would fail a context the modern
+	// path is perfectly able to drive -- see R_CheckRequiredExtension.
+	if ( !programmableOnlyProfile
+		&& ( !glConfig.multitextureAvailable || !glConfig.textureEnvCombineAvailable || !glConfig.cubeMapAvailable
+		|| !glConfig.envDot3Available ) ) {
+			if ( legacyPolicy ) R_ErrorForMissingRequiredOpenGLFeatures();
+			return R_RendererRestartError( error, errorSize, "Required OpenGL compatibility features are unavailable" );
 	}
 
  	// GL_EXT_depth_bounds_test
@@ -1397,9 +1533,16 @@ static void R_CheckPortableExtensions( void ) {
 	glConfig.backendCaps.maxColorAttachments = glConfig.maxColorAttachments;
 	glConfig.backendCaps.hasARBVertexProgram = glConfig.ARBVertexProgramAvailable;
 	glConfig.backendCaps.hasARBFragmentProgram = glConfig.ARBFragmentProgramAvailable;
-	glConfig.backendCaps.hasVBO = glConfig.ARBVertexBufferObjectAvailable;
-	glConfig.backendCaps.hasPBO = glConfig.pixelBufferObjectAvailable;
-	glConfig.backendCaps.hasGLSL = glConfig.GLSLProgramAvailable;
+	if ( !programmableOnlyProfile ) {
+		// These mirror the compatibility-only extension strings back into the
+		// caps. On a core or ES profile those strings are absent for features
+		// that are core, so copying them here would undo what the capability
+		// probe already worked out from the version -- and a 4.1 core context
+		// would report VBO:0 GLSL:0 and drop to NullRenderer.
+		glConfig.backendCaps.hasVBO = glConfig.ARBVertexBufferObjectAvailable;
+		glConfig.backendCaps.hasPBO = glConfig.pixelBufferObjectAvailable;
+		glConfig.backendCaps.hasGLSL = glConfig.GLSLProgramAvailable;
+	}
 	glConfig.backendCaps.hasSRGBTextures = glConfig.textureSRGBAvailable;
 	glConfig.backendCaps.hasFramebufferSRGB = glConfig.framebufferSRGBAvailable;
 	glConfig.backendCaps.hasMRT = glConfig.maxDrawBuffers >= 4 && glConfig.maxColorAttachments >= 4;
@@ -1431,6 +1574,7 @@ static void R_CheckPortableExtensions( void ) {
 			RendererTier_Name( glConfig.rendererTier ) );
 	}
 
+	return true;
 }
 
 
@@ -1715,6 +1859,26 @@ the GL bring-up does.
 ====================
 */
 bool R_GetInitialWindowSize( bool fullScreen, int *width, int *height ) {
+	if ( R_IsRecoverableRendererRestart() ) {
+		int requestedWidth = 0, requestedHeight = 0;
+		if ( r_recoverableWindowRequest != NULL ) {
+			requestedWidth = r_recoverableWindowRequest->parms.width; requestedHeight = r_recoverableWindowRequest->parms.height;
+		} else if ( !fullScreen || R_ForceWindowForRendererRestart() || r_hiddenWindow.GetBool() ) {
+			requestedWidth = r_windowWidth.GetInteger(); requestedHeight = r_windowHeight.GetInteger();
+		} else if ( r_mode.GetInteger() == -2 ) {
+			if ( !Sys_GetDesktopResolution( &requestedWidth, &requestedHeight ) ) return false;
+		} else if ( r_mode.GetInteger() == -1 ) {
+			requestedWidth = r_customWidth.GetInteger(); requestedHeight = r_customHeight.GetInteger();
+		} else {
+			const vidmode_t *mode = R_FindVidModeByMode( r_mode.GetInteger() );
+			if ( mode == NULL ) return false;
+			requestedWidth = mode->width; requestedHeight = mode->height;
+		}
+		if ( requestedWidth < 320 || requestedWidth > 16384 || requestedHeight < 240 || requestedHeight > 16384 ) return false;
+		if ( width != NULL ) *width = requestedWidth;
+		if ( height != NULL ) *height = requestedHeight;
+		return true;
+	}
 	if ( fullScreen ) {
 		return R_GetModeInfo( width, height, r_mode.GetInteger() );
 	}
@@ -1805,8 +1969,7 @@ all renderSystem functions will still operate properly, notably the material
 and model information functions.
 ==================
 */
-void R_InitOpenGL( void ) {
-	GLint			temp;
+static bool R_CreateOpenGLContext( bool legacyPolicy, bool forceWindow, char *error, int errorSize ) {
 	glimpParms_t	parms;
 	int				i;
 
@@ -1816,7 +1979,7 @@ void R_InitOpenGL( void ) {
 	RB_ResetAppleGL21RouteCounters();
 
 	if ( glConfig.isInitialized ) {
-		common->FatalError( "R_InitOpenGL called while active" );
+		return R_RendererRestartError( error, errorSize, "R_InitOpenGL called while active" );
 	}
 
 	// every context creation starts a new handle generation; GL object handles
@@ -1828,24 +1991,21 @@ void R_InitOpenGL( void ) {
 	tr.viewportOffset[0] = 0;
 	tr.viewportOffset[1] = 0;
 
-	R_NormalizeDisplayCvars();
+	if ( legacyPolicy ) R_NormalizeDisplayCvars();
 
 	// select the rendering API path (r_renderApi) before any window or
 	// context work; a failed non-GL selection falls back closed onto GL here
-	R_RendererModule_Boot();
+	if ( legacyPolicy ) R_RendererModule_Boot();
 
 	//
 	// initialize OS specific portions of the renderSystem
 	//
-	for ( i = 0 ; i < 2 ; i++ ) {
+	for ( i = 0 ; i < ( legacyPolicy ? 2 : 1 ) ; i++ ) {
 		// set the parameters we are trying
 		parms.hiddenWindow = r_hiddenWindow.GetBool();
-		parms.fullScreen = !parms.hiddenWindow && r_fullscreen.GetBool();
-		if ( parms.fullScreen ) {
-			R_GetModeInfo( &parms.width, &parms.height, r_mode.GetInteger() );
-		} else {
-			R_GetWindowedModeInfo( &parms.width, &parms.height );
-		}
+		parms.fullScreen = !forceWindow && !parms.hiddenWindow && r_fullscreen.GetBool();
+		if ( !R_GetInitialWindowSize( parms.fullScreen, &parms.width, &parms.height ) )
+			return R_RendererRestartError( error, errorSize, "Requested display dimensions are unavailable" );
 		engineWindowState.vidWidth = parms.width;
 		engineWindowState.vidHeight = parms.height;
 		glConfig.vidWidth = parms.width;
@@ -1854,14 +2014,21 @@ void R_InitOpenGL( void ) {
 		parms.displayHz = r_displayRefresh.GetInteger();
 		parms.multiSamples = r_multiSamples.GetInteger();
 		parms.stereo = false;
+		if ( !legacyPolicy && r_recoverableWindowRequest != NULL ) {
+			const renderWindowParms_t &requested = r_recoverableWindowRequest->parms;
+			parms.width = requested.width; parms.height = requested.height;
+			parms.fullScreen = requested.fullScreen; parms.borderless = requested.borderless;
+			parms.hiddenWindow = requested.hiddenWindow; parms.displayHz = requested.displayHz;
+			parms.multiSamples = requested.multiSamples; parms.stereo = requested.stereo;
+		}
 
 		if ( GLimp_Init( parms ) ) {
 			// it worked
 			break;
 		}
 
-		if ( i == 1 ) {
-			common->FatalError( "Unable to initialize OpenGL" );
+		if ( !legacyPolicy || i == 1 ) {
+			return R_RendererRestartError( error, errorSize, "Unable to initialize OpenGL" );
 		}
 
 		// if we failed, set everything back to "safe mode"
@@ -1878,7 +2045,7 @@ void R_InitOpenGL( void ) {
 	//soundSystem->Init();
 
 	if ( !GLimp_EnsureActiveContext( "OpenGL startup string query" ) ) {
-		common->FatalError( "Unable to make OpenGL context current after window creation\n" );
+		return R_RendererRestartError( error, errorSize, "Unable to make OpenGL context current after window creation" );
 	}
 
 	// get our config strings
@@ -1887,7 +2054,7 @@ void R_InitOpenGL( void ) {
 	glConfig.version_string = (const char *)glGetString(GL_VERSION);
 	glConfig.extensions_string = (const char *)glGetString(GL_EXTENSIONS);
 	if ( glConfig.version_string == NULL ) {
-		common->FatalError( "OpenGL context did not report GL_VERSION after window creation; context may not be current\n" );
+		return R_RendererRestartError( error, errorSize, "OpenGL context did not report GL_VERSION after window creation; context may not be current" );
 	}
 	if ( glConfig.vendor_string == NULL ) {
 		glConfig.vendor_string = "unknown";
@@ -1898,6 +2065,12 @@ void R_InitOpenGL( void ) {
 	if ( glConfig.extensions_string == NULL ) {
 		glConfig.extensions_string = "";
 	}
+	return true;
+}
+
+static bool R_InitOpenGLInternal( bool legacyPolicy, bool forceWindow, char *error, int errorSize ) {
+	if ( !R_CreateOpenGLContext( legacyPolicy, forceWindow, error, errorSize ) ) return false;
+	GLint temp;
 
 	// Query the actual framebuffer bit depths from the active context.
 	// Some platform backends don't populate these fields directly.
@@ -1949,27 +2122,60 @@ void R_InitOpenGL( void ) {
 		glConfig.maxTextureSize = 256;
 	}
 
-	glConfig.isInitialized = true;
-
 	// recheck all the extensions (FIXME: this might be dangerous)
-	R_CheckPortableExtensions();
+	if ( legacyPolicy ) glConfig.isInitialized = true;
+	if ( !R_CheckPortableExtensions( legacyPolicy, error, errorSize ) ) return false;
+	glConfig.isInitialized = true;
 	R_GLDebugOutput_Init();
 
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
 	R_ARB2_Init();
-	R_ModernGLExecutor_Init( glConfig.backendCaps, glConfig.renderFeatures );
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	if ( glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES ) {
+		// gles_d3 is the back end on ES, and it does not use the modern
+		// executor. The executor's shader library is desktop GLSL -- every
+		// program in it fails to compile as GLSL ES -- so bringing it up here
+		// only prints forty lines of compile errors for a path that will not
+		// run. Skip it.
+		//
+		// The GL state cache still has to come up: tr_backend drives it every
+		// frame whichever back end drew the view.
+		R_GLStateCache_Init( glConfig.backendCaps );
+	} else
+#endif
+	{
+		R_ModernGLExecutor_Init( glConfig.backendCaps, glConfig.renderFeatures );
+	}
 	RendererBootstrap_SetModernExecutorAvailable( R_ModernGLExecutor_Stats().available );
 	RendererBootstrap_FinalizeLegacyBridge( glConfig.allowARB2Path );
 	glConfig.rendererTier = RendererBootstrap_GetState().selectedTier;
 	glConfig.renderFeatures = RendererBootstrap_GetState().features;
-	// ARB2 is only *required* while it is the renderer that draws. Once the
-	// modern visible path is promoted it can own the frame without the
-	// compatibility bridge, so a context that cannot host ARB2 stops being
-	// fatal. While no parity contract is proven the promotion state is false,
-	// which keeps this exactly as strict as before.
-	if ( !glConfig.allowARB2Path && !RendererBootstrap_ShouldAutoPromoteModernVisible() ) {
-		R_ErrorForMissingRequiredOpenGLFeatures();
+	// The ARB2 bridge is a hard requirement on a compatibility context: the
+	// modern executor only *owns* the passes it has claimed and the legacy path
+	// renders the rest, so losing ARB2 there means losing most of the frame.
+	// Two independent escapes from that requirement:
+	//   - a programmable-only profile (core or ES) has no ARB2 by construction;
+	//     erroring out would make such a context unusable no matter how capable
+	//     it is, and letting it through is what exposes the modern path's
+	//     standalone coverage
+	//   - once the modern visible path is promoted it can own the frame without
+	//     the compatibility bridge (upstream); while no parity contract is
+	//     proven the promotion state is false, keeping this exactly as strict
+	//     as before
+	const bool programmableOnlyProfile =
+		glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES
+		|| glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_CORE;
+	if ( !glConfig.allowARB2Path && !programmableOnlyProfile
+			&& !RendererBootstrap_ShouldAutoPromoteModernVisible() ) {
+		if ( legacyPolicy ) R_ErrorForMissingRequiredOpenGLFeatures();
+		return R_RendererRestartError( error, errorSize, "Required OpenGL rendering backend is unavailable" );
+	}
+	if ( !glConfig.allowARB2Path && programmableOnlyProfile ) {
+		common->Printf(
+			"Renderer: no ARB2 bridge on a %s profile; the modern executor renders standalone "
+			"and any pass it does not own will be missing\n",
+			RendererContextProfile_Name( glConfig.backendCaps.profile ) );
 	}
 	R_RenderGraphResources_Init( glConfig.backendCaps, glConfig.renderFeatures );
 	R_MaterialResourceTable_Init( glConfig.backendCaps, glConfig.renderFeatures );
@@ -1998,7 +2204,7 @@ void R_InitOpenGL( void ) {
 
 #ifdef _WIN32
 	static bool glCheck = false;
-	if ( !glCheck ) {
+	if ( legacyPolicy && !glCheck ) {
 		glCheck = true;
 		if ( !idStr::Icmp( glConfig.vendor_string, "Microsoft" ) && idStr::FindText( glConfig.renderer_string, "OpenGL-D3D" ) != -1 ) {
 			if ( cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
@@ -2017,6 +2223,12 @@ void R_InitOpenGL( void ) {
 		}
 	}
 #endif
+	return true;
+}
+
+void R_InitOpenGL( void ) {
+	char error[1024];
+	if ( !R_InitOpenGLInternal( true, false, error, sizeof( error ) ) ) common->FatalError( "%s", error );
 }
 
 /*
@@ -2037,6 +2249,7 @@ void GL_CheckErrors( void ) {
 		if ( err == GL_NO_ERROR ) {
 			return;
 		}
+		R_ImagePolicyObserveError( "OpenGL resource error", err );
 		switch( err ) {
 			case GL_INVALID_ENUM:
 				strcpy( s, "GL_INVALID_ENUM" );
@@ -2459,9 +2672,46 @@ tiling it into window-sized chunks and rendering each chunk separately
 If ref isn't specified, the full session UpdateScreen will be done.
 ====================
 */
+/*
+====================
+r_screenshotKeepScissor
+
+A screenshot is a RE-RENDER, not a copy of the frame on screen, and the
+capture below turns the scissor off before producing it. Any defect that
+depends on scissor state is therefore structurally invisible in a screenshot:
+the image comes back correct while the display is wrong.
+
+A capture therefore cannot be trusted to reproduce a scissor-dependent fault.
+
+Note this was NOT the cause of the black surfaces reported during the gles_d3
+bring-up, though it was suspected at the time. Those captures came back
+correct for a different reason in the same family: the readback below reads
+GL_RGBA and packs down to RGB, discarding alpha, and the fault was in the
+alpha channel (see RB_ForceOpaquePresentAlpha, tr_backend.cpp). Two
+independent ways for a screenshot to disagree with the display, which is why
+this one is worth having even though it did not find that bug.
+
+Set this to keep the scissor exactly as the frame loop had it. Default 0, the
+historical behaviour, because leaving it on makes tiled (larger-than-screen)
+captures responsible for their own scissor rects, which they are not.
+====================
+*/
+idCVar r_screenshotKeepScissor( "r_screenshotKeepScissor", "0", CVAR_RENDERER | CVAR_BOOL,
+		"screenshots re-render with the scissor left as the frame loop set it, so scissor-dependent faults are visible in a capture" );
+
 void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref = NULL ) {
 	// include extra space for OpenGL padding to word boundaries
 	byte	*temp = (byte *)R_StaticAlloc( (glConfig.vidWidth+3) * glConfig.vidHeight * 3 );
+
+	// OpenGL ES guarantees exactly one glReadPixels format for the default
+	// framebuffer -- GL_RGBA/GL_UNSIGNED_BYTE -- plus an implementation-defined
+	// pair reported by GL_IMPLEMENTATION_COLOR_READ_FORMAT. ANGLE reports RGBA
+	// and rejects the GL_RGB read this function used to issue, which failed with
+	// GL_INVALID_OPERATION and left the destination untouched: every ES
+	// screenshot came out uniformly black while the frame on screen was fine.
+	// RGBA is equally valid on desktop GL, so read RGBA everywhere and pack down
+	// rather than branching per backend.
+	byte	*rgbaTemp = (byte *)R_StaticAlloc( (glConfig.vidWidth+3) * glConfig.vidHeight * 4 );
 
 	int	oldWidth = glConfig.vidWidth;
 	int oldHeight = glConfig.vidHeight;
@@ -2474,7 +2724,8 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 	// window-sized screenshot must preserve the frame's rendering semantics;
 	// disabling scissors can extend clamped projectors beyond their viewport
 	// bounds and make the capture disagree with the displayed/linear frame.
-	if ( width > oldWidth || height > oldHeight ) {
+	const bool overrideScissor = !r_screenshotKeepScissor.GetBool() && ( width > oldWidth || height > oldHeight );
+	if ( overrideScissor ) {
 		r_useScissor.SetBool( false );
 	}
 
@@ -2525,7 +2776,24 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 				h = height - yo;
 			}
 
-			glReadPixels( 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp ); 
+			// The frame was produced by commands that may still be queued. A
+			// desktop driver generally resolves that implicitly, but ANGLE's
+			// Metal backend hands back an empty default framebuffer unless the
+			// work is forced to complete first -- which is why ES screenshots
+			// came out uniformly black while the frame on screen was correct.
+			glReadPixels( 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgbaTemp );
+
+			const int rgbaRow = ( w * 4 + 3 ) & ~3;
+			const int rgbRow = ( w * 3 + 3 ) & ~3;
+			for ( int y = 0; y < h; y++ ) {
+				const byte *src = rgbaTemp + y * rgbaRow;
+				byte *dst = temp + y * rgbRow;
+				for ( int x = 0; x < w; x++ ) {
+					dst[x * 3 + 0] = src[x * 4 + 0];
+					dst[x * 3 + 1] = src[x * 4 + 1];
+					dst[x * 3 + 2] = src[x * 4 + 2];
+				}
+			}
 
 			int	row = ( w * 3 + 3 ) & ~3;		// OpenGL pads to dword boundaries
 
@@ -2536,7 +2804,10 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 		}
 	}
 
-	r_useScissor.SetBool( oldUseScissor );
+	// restore only what we overrode, and to what the player actually had
+	if ( overrideScissor ) {
+		r_useScissor.SetBool( oldUseScissor );
+	}
 
 	tr.viewportOffset[0] = 0;
 	tr.viewportOffset[1] = 0;
@@ -2544,6 +2815,7 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 	tr.tiledViewport[1] = 0;
 
 	R_StaticFree( temp );
+	R_StaticFree( rgbaTemp );
 
 	glConfig.vidWidth = oldWidth;
 	glConfig.vidHeight = oldHeight;
@@ -4161,6 +4433,11 @@ GfxInfo_f
 ================
 */
 void GfxInfo_f( const idCmdArgs &args ) {
+	// Driver-owned strings may have died with a failed recoverable context.
+	if ( !glConfig.isInitialized ) {
+		common->Printf( "gfxInfo: graphics device is unavailable\n" );
+		return;
+	}
 	const char *fsstrings[] =
 	{
 		"windowed",
@@ -4971,7 +5248,7 @@ static void R_ShutdownRenderTargetsBeforeImagePurge( void ) {
 	R_ClearActiveRenderTextures();
 }
 
-static void R_PerformFullVidRestart( bool forceWindow ) {
+static void R_ShutdownDeviceForRestart( void ) {
 	R_ShutdownRenderTargetsBeforeImagePurge();
 
 	// Input is tied to the native window/context lifecycle.
@@ -5003,28 +5280,157 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 	R_GLDebugOutput_Shutdown();
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
+	R_ClearActiveRenderTextures();
+}
+
+static void R_PerformFullVidRestart( bool forceWindow ) {
+	R_ShutdownDeviceForRestart();
 
 	const bool latchedFullscreen = cvarSystem->GetCVarBool( "r_fullscreen" );
 	if ( forceWindow ) {
 		cvarSystem->SetCVarBool( "r_fullscreen", false );
 	}
 
-#ifdef OPENQ4_RENDERER_VK_MODULE
-	// Use the same backend initialization seam as the initial launch. Calling
-	// R_InitOpenGL directly enters the GL context ladder under a Vulkan module.
-	// The seam also rebuilds frame data, shared contracts and image residency.
+	// Use the same backend-aware device startup as initial initialization.
+	// The low-level GL initializer cannot recreate a Vulkan device.
 	tr.InitOpenGL();
-#else
-	R_InitOpenGL();
-#endif
 	cvarSystem->SetCVarBool( "r_fullscreen", latchedFullscreen );
 	R_ClearActiveRenderTextures();
-#ifndef OPENQ4_RENDERER_VK_MODULE
-	globalImages->ReloadImages( true );
-#endif
 
 	R_InitFreeType();
 	R_RefreshConsoleFontAtlas();
+}
+
+static bool R_TryFullVidRestartInternal( const renderWindowRequest_t *request, bool forceWindow, char *error, int errorSize ) {
+	if ( error != NULL && errorSize > 0 ) error[0] = '\0';
+	if ( r_recoverableRendererRestart ) return R_RendererRestartError( error, errorSize, "A renderer restart is already in progress" );
+	if ( globalImages == NULL || renderModelManager == NULL || ( !glConfig.isInitialized && !r_recoverableRendererRestore ) )
+		return R_RendererRestartError( error, errorSize, "A recoverable restart requires a running renderer or a failed restart to restore" );
+	if ( glConfig.isInitialized && ( frameData == NULL || frameData->cmdHead == NULL ||
+		frameData->cmdHead->commandId != RC_NOP || frameData->cmdHead->next != NULL ) )
+		return R_RendererRestartError( error, errorSize, "Renderer commands must be submitted before restarting" );
+	struct Scope {
+		Scope( const renderWindowRequest_t *request, bool forceWindow ) {
+			r_recoverableRendererRestart = true; r_forceWindowRendererRestart = forceWindow; r_recoverableWindowRequest = request;
+		}
+		~Scope() { r_recoverableRendererRestart = false; r_forceWindowRendererRestart = false; r_recoverableWindowRequest = NULL; }
+	} scope( request, forceWindow );
+	int width = 0, height = 0;
+	if ( !R_GetInitialWindowSize( r_fullscreen.GetBool(), &width, &height ) )
+		return R_RendererRestartError( error, errorSize, "Requested display dimensions are invalid or unavailable" );
+	const int samples = request != NULL ? request->parms.multiSamples : r_multiSamples.GetInteger();
+	const int refresh = request != NULL ? request->parms.displayHz : r_displayRefresh.GetInteger();
+	if ( samples != R_NormalizeMultiSamplesValue( samples ) || refresh < 0 || refresh > 1000 )
+		return R_RendererRestartError( error, errorSize, "Requested display samples or refresh rate are invalid" );
+	if ( request != NULL && ( request->displayIndex < -1 || request->swapInterval < -1 || request->swapInterval > 1 ||
+		request->parms.stereo || ( request->parms.hiddenWindow && ( request->parms.fullScreen || request->parms.borderless ) ) ||
+		( request->parms.fullScreen && request->parms.borderless ) ) )
+		return R_RendererRestartError( error, errorSize, "Requested display policy is invalid" );
+
+	// Once teardown starts, failure deliberately leaves no renderable context.
+	// The caller owns the saved display/CVar state and chooses the restore; this
+	// route never substitutes a mode or invokes startup's fatal-error policy.
+	renderDisplayPresentation_t before = {};
+	R_GetDisplayPresentation( &before );
+	r_recoverableRendererRestore = true;
+	try {
+		R_RendererMetrics_ResetGpuFrameTiming( "recoverable vid_restart" );
+		Sys_GrabMouseCursor( false );
+		renderModelManager->FreeModelVertexCaches();
+		R_FreeDerivedData();
+		if ( frameData != NULL ) { R_ToggleSmpFrame(); R_ToggleSmpFrame(); }
+		vertexCache.PurgeAll();
+		if ( !R_ImagePolicyBeforeTeardown( error, errorSize ) ) R_RejectRecoverableRendererRestart( error );
+		R_ShutdownDeviceForRestart();
+		tr.viewDef = NULL; tr.primaryView = NULL; backEnd.viewDef = NULL;
+		R_ImagePolicyBeginDeviceReload();
+		if ( R_InitRendererDevice( false, forceWindow, error, errorSize ) ) {
+			if ( !R_ImagePolicyAfterDeviceReload( error, errorSize ) ) R_RejectRecoverableRendererRestart( error );
+			R_ClearActiveRenderTextures();
+			R_InitFreeType();
+			R_RefreshConsoleFontAtlas();
+#ifndef OPENQ4_RENDERER_VK_MODULE
+			if ( !GLimp_EnsureActiveContext( "recoverable renderer resource reload" ) || glGetError() != GL_NO_ERROR )
+				R_RejectRecoverableRendererRestart( "OpenGL context or font resource reload failed" );
+#endif
+			tr.viewCount++;
+			R_RegenerateWorld_f( idCmdArgs() );
+			if ( R_ImagePolicyActive() && session != NULL ) session->SetPlayingSoundWorld();
+			if ( !R_ImagePolicyFinish( error, errorSize ) ) R_RejectRecoverableRendererRestart( error );
+			// Publish only after every renderer/font/world dependency is ready.
+			tr.videoRestartCount = tr.videoRestartCount < 0x7fffffff ? tr.videoRestartCount + 1 : 1;
+			if ( !R_ImagePolicyActive() && session != NULL ) session->SetPlayingSoundWorld();
+			r_recoverableRendererRestore = false;
+			return true;
+		}
+	} catch ( const rendererRestartFailure_t &failure ) {
+		R_RendererRestartError( error, errorSize, failure.reason.c_str() );
+	}
+	// Expected device/program refusal reaches here without Common::Error or
+	// Session shutdown. Global allocation exhaustion/corruption is not caught.
+	R_ShutdownDeviceForRestart();
+	tr.viewDef = NULL; tr.primaryView = NULL; backEnd.viewDef = NULL;
+	renderDisplayPresentation_t failed = {};
+	R_GetDisplayPresentation( &failed );
+	if ( failed.failureSequence == before.failureSequence ) R_DisplayPresentationFailed( RDP_INIT_FAILED );
+	return false;
+}
+
+bool R_TryFullVidRestart( const renderWindowRequest_t *request, char *error, int errorSize ) {
+	if ( R_ImagePolicyActive() ) { R_ImagePolicyObserveError( "Reentrant display restart during image policy work" ); return R_RendererRestartError( error, errorSize, "Image policy restart is active" ); }
+	if ( request == NULL ) return R_RendererRestartError( error, errorSize, "A display request is required" );
+	const renderWindowRequest_t immutable = *request;
+	return R_TryFullVidRestartInternal( &immutable, false, error, errorSize );
+}
+
+bool R_TryFullVidRestartForImagePolicy( const renderWindowRequest_t *request, char *error, int errorSize ) {
+	if ( !R_ImagePolicyActive() || !R_ImagePolicyOperationAllowed() || !request ) return R_RendererRestartError( error, errorSize, "No active image policy request" );
+	return R_TryFullVidRestartInternal( request, false, error, errorSize );
+}
+
+bool R_TryInitializeDisplay( const renderWindowRequest_t *request, char *error, int errorSize ) {
+	if ( R_ImagePolicyActive() ) { R_ImagePolicyObserveError( "Reentrant initial display during image policy work" ); return R_RendererRestartError( error, errorSize, "Image policy restart is active" ); }
+	if ( error != NULL && errorSize > 0 ) error[0] = '\0';
+	if ( request == NULL ) return R_RendererRestartError( error, errorSize, "A display request is required" );
+	if ( r_recoverableRendererRestart ) return R_RendererRestartError( error, errorSize, "A renderer device operation is already in progress" );
+	if ( !r_initialRendererDevicePending || globalImages == NULL || renderModelManager == NULL ||
+		glConfig.isInitialized || r_recoverableRendererRestore || frameData != NULL ||
+		tr.worlds.Num() != 0 || tr.primaryWorld != NULL || tr.viewDef != NULL || tr.primaryView != NULL || backEnd.viewDef != NULL )
+		return R_RendererRestartError( error, errorSize, "Strict initial display requires an initialized renderer before its first device or world" );
+	const renderWindowRequest_t immutable = *request;
+	struct Scope {
+		explicit Scope( const renderWindowRequest_t *request ) {
+			r_recoverableRendererRestart = true; r_forceWindowRendererRestart = false; r_recoverableWindowRequest = request;
+		}
+		~Scope() { r_recoverableRendererRestart = false; r_forceWindowRendererRestart = false; r_recoverableWindowRequest = NULL; }
+	} scope( &immutable );
+	int width = 0, height = 0;
+	if ( !R_GetInitialWindowSize( immutable.parms.fullScreen, &width, &height ) )
+		return R_RendererRestartError( error, errorSize, "Requested display dimensions are invalid or unavailable" );
+	if ( immutable.parms.multiSamples != R_NormalizeMultiSamplesValue( immutable.parms.multiSamples ) ||
+		immutable.parms.displayHz < 0 || immutable.parms.displayHz > 1000 )
+		return R_RendererRestartError( error, errorSize, "Requested display samples or refresh rate are invalid" );
+	if ( immutable.displayIndex < -1 || immutable.swapInterval < -1 || immutable.swapInterval > 1 ||
+		immutable.parms.stereo || ( immutable.parms.hiddenWindow && ( immutable.parms.fullScreen || immutable.parms.borderless ) ) ||
+		( immutable.parms.fullScreen && immutable.parms.borderless ) )
+		return R_RendererRestartError( error, errorSize, "Requested display policy is invalid" );
+
+	renderDisplayPresentation_t before = {};
+	R_GetDisplayPresentation( &before );
+	try {
+		// This is initial resource creation, not a restart. Init already built the
+		// CPU-side images/models; no world, session sound or UI font atlas exists.
+		// The shared device helper publishes no successful presentation here.
+		if ( R_InitRendererDevice( false, false, error, errorSize ) ) return true;
+	} catch ( const rendererRestartFailure_t &failure ) {
+		R_RendererRestartError( error, errorSize, failure.reason.c_str() );
+	}
+	R_ShutdownDeviceForRestart();
+	tr.viewDef = NULL; tr.primaryView = NULL; backEnd.viewDef = NULL;
+	renderDisplayPresentation_t failed = {};
+	R_GetDisplayPresentation( &failed );
+	if ( failed.failureSequence == before.failureSequence ) R_DisplayPresentationFailed( RDP_INIT_FAILED );
+	return false;
 }
 
 static GLenum R_ClearPendingGLErrors( void ) {
@@ -5415,6 +5821,10 @@ void idRenderSystemLocal::Clear( void ) {
 	stencilDecr = 0;
 	memset( renderCrops, 0, sizeof( renderCrops ) );
 	currentRenderCrop = 0;
+	resolutionScaleCropActive = false;
+	resolutionScaleWidth = 0;
+	resolutionScaleHeight = 0;
+	resolutionScaleSuppressed = false;
 	guiRecursionLevel = 0;
 	guiModel = NULL;
 	demoGuiModel = NULL;
@@ -5434,6 +5844,8 @@ idRenderSystemLocal::Init
 ===============
 */
 void idRenderSystemLocal::Init( void ) {
+	if ( !R_ImagePolicyBindRendererThread() ) return;
+	r_initialRendererDevicePending = false;
 
 	common->Printf( "------- Initializing renderSystem --------\n" );
 	R_RendererMetrics_ResetGpuFrameTiming( "renderer init" );
@@ -5494,6 +5906,7 @@ void idRenderSystemLocal::Init( void ) {
 
 	common->Printf( "renderSystem initialized.\n" );
 	common->Printf( "--------------------------------------\n" );
+	r_initialRendererDevicePending = true;
 }
 
 /*
@@ -5501,7 +5914,10 @@ void idRenderSystemLocal::Init( void ) {
 idRenderSystemLocal::Shutdown
 ===============
 */
-void idRenderSystemLocal::Shutdown( void ) {	
+void idRenderSystemLocal::Shutdown( void ) {
+	renderImageOwnerShutdown_t imageOwnerShutdown;
+	if ( !imageOwnerShutdown.Allowed() ) return;
+	r_initialRendererDevicePending = false;
 	common->Printf( "idRenderSystem::Shutdown()\n" );
 	R_RendererMetrics_ResetGpuFrameTiming( "renderer shutdown" );
 
@@ -5549,6 +5965,7 @@ void idRenderSystemLocal::Shutdown( void ) {
 	Clear();
 
 	ShutdownOpenGL();
+	(void)imageOwnerShutdown.Complete();
 }
 
 /*
@@ -5606,9 +6023,10 @@ void idRenderSystemLocal::EndLevelLoad( void ) {
 idRenderSystemLocal::InitOpenGL
 ========================
 */
-void idRenderSystemLocal::InitOpenGL( void ) {
-	R_MigrateLegacyShadowMapContactQuality();
-
+static bool R_InitRendererDevice( bool legacyPolicy, bool forceWindow, char *error, int errorSize ) {
+	if ( !R_ImagePolicyBindRendererThread() ) {
+		return R_RendererRestartError( error, errorSize, "Renderer initialization requires its available owner thread" );
+	}
 	// if the device isn't started, start it now
 	if ( !glConfig.isInitialized ) {
 #ifdef OPENQ4_RENDERER_VK_MODULE
@@ -5616,14 +6034,17 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 		// the window services; no GL ladder, caps probe, or program loads
 		extern bool VK_InitRenderDevice( void );
 		if ( !VK_InitRenderDevice() ) {
-			// Initial startup uses the recoverable PrepareStartupDevice export
-			// before reaching this call. A failure here belongs to a later
-			// renderer restart, whose module is still on the call stack; preserve
-			// the next-launch recovery path for that runtime failure.
-			const bool nextLaunchUsesGL = R_RendererModule_ResetApiAfterDeviceFailure();
-			common->FatalError( "Vulkan renderer device initialization failed; %s",
-					nextLaunchUsesGL ? "r_renderApi has been reset to gl, so the next launch uses OpenGL"
-							: "launch with +set r_renderApi gl to use OpenGL" );
+			if ( legacyPolicy ) {
+				// Initial startup uses the recoverable PrepareStartupDevice export
+				// before reaching this call. A failure here belongs to a later
+				// renderer restart, whose module is still on the call stack; preserve
+				// the next-launch recovery path for that runtime failure.
+				const bool nextLaunchUsesGL = R_RendererModule_ResetApiAfterDeviceFailure();
+				common->FatalError( "Vulkan renderer device initialization failed; %s",
+						nextLaunchUsesGL ? "r_renderApi has been reset to gl, so the next launch uses OpenGL"
+								: "launch with +set r_renderApi gl to use OpenGL" );
+			}
+			return R_RendererRestartError( error, errorSize, "Vulkan renderer device initialization failed" );
 		}
 		// The Vulkan module does not run the OpenGL tier/bootstrap tail that
 		// normally initializes shared scene resources.  The classic-GUI domain
@@ -5648,16 +6069,27 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 #else
 		int	err;
 
-		R_InitOpenGL();
+		if ( legacyPolicy ) R_InitOpenGL();
+		else if ( !R_InitOpenGLInternal( false, forceWindow, error, errorSize ) ) return false;
 
 		globalImages->ReloadImages(true);
 
 		err = glGetError();
 		if ( err != GL_NO_ERROR ) {
+			if ( !legacyPolicy ) return R_RendererRestartError( error, errorSize, "OpenGL image resource reload failed" );
 			common->Printf( "glGetError() = 0x%x\n", err );
 		}
 #endif
 	}
+	r_initialRendererDevicePending = false;
+	return true;
+}
+
+void idRenderSystemLocal::InitOpenGL( void ) {
+	R_MigrateLegacyShadowMapContactQuality();
+	char error[1024];
+	if ( !R_InitRendererDevice( true, false, error, sizeof( error ) ) ) common->FatalError( "%s", error );
+	r_recoverableRendererRestore = false;
 }
 
 /*
@@ -5666,6 +6098,7 @@ idRenderSystemLocal::ShutdownOpenGL
 ========================
 */
 void idRenderSystemLocal::ShutdownOpenGL( void ) {
+	r_recoverableRendererRestore = false;
 	if ( !glConfig.isInitialized ) {
 		R_ClearActiveRenderTextures();
 		useUIViewportFor2D = true;

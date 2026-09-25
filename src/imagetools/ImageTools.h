@@ -32,6 +32,8 @@
 // NULL when the image could not be loaded
 void	R_LoadImage( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp, bool makePowerOf2 );
 
+// Returns exactly outwidth*outheight RGBA pixels, or NULL without touching in.
+// Each axis is bounded to 32768; each input/output byte extent to 256 MiB.
 byte *	R_ResampleTexture( const byte *in, int inwidth, int inheight, int outwidth, int outheight );
 
 // default arguments stay on the renderer-internal declaration in Image.h
@@ -48,6 +50,7 @@ void	R_StaticFree( void *data );
 typedef struct imageToolsCompressionCaps_s {
 	bool	textureCompressionAvailable;		// S3TC/DXT sampling support
 	bool	bptcTextureCompressionAvailable;	// BC7 sampling support
+	bool	etc2TextureCompressionAvailable;	// ETC2/EAC sampling support
 } imageToolsCompressionCaps_t;
 
 void	ImageTools_SetCompressionCaps( const imageToolsCompressionCaps_t &caps );

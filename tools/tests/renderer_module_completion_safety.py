@@ -186,7 +186,7 @@ def validate_every_unload_restores() -> None:
     # an activated module keeps its snapshot until RM_UnloadModule
     reject(try_load, "rm_state.moduleCompletions.Clear()", context)
 
-    unload_active = braced_block(loader, "static void RM_UnloadModule( void ) {")
+    unload_active = braced_block(loader, "static bool RM_UnloadModule( void ) {")
     require(
         unload_active,
         "RM_UnloadModuleBinary( rm_state.moduleHandle, rm_state.moduleCompletions );",

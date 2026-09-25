@@ -132,7 +132,7 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 - See [docs/user/shadow-mapping.md](docs/user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
 
 ### Renderer Backend
-- `r_renderApi best|gl|vulkan|gl-module` — Rendering API; default `gl`. `vulkan` selects the experimental native Vulkan module and applies on engine restart. A module that cannot load, or finds no usable Vulkan device before it activates, falls back to OpenGL; a window, surface, or swapchain failure after activation stops with an error and resets `r_renderApi` to `gl` for the next launch
+- `r_renderApi best|gl|vulkan|gl-module|gles` — Rendering API; default `gl` on desktop and `gles` on Android. `best` selects that platform default. `vulkan` selects the experimental Vulkan module; `gles` selects Emile Belanger's experimental OpenGL ES 3.0 module. Changes apply on engine restart. See the [Android/GLES guide](docs/dev/android-build.md) for dependencies, limitations and SigmaTouch integration. Vulkan module loading, device admission and startup preparation failures fall back to OpenGL in the same launch; a later legacy `vid_restart` device failure selects OpenGL for the next launch.
 - See [docs/user/display-settings.md](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental)
 
 ### Presentation Clock
@@ -213,6 +213,7 @@ On Linux, Steam auto-discovery checks `~/.steam/steam`, `~/.local/share/Steam`, 
 - `fs_basepath` — Game installation directory (auto-detected)
 - `fs_homepath` — Writable user directory
 - `fs_savepath` — Save games and configs (defaults to `fs_homepath`)
+- `fs_cachepath` — Regenerable image/audio cache root (defaults to `fs_savepath`). Android hosts can use the application's cache directory without putting saves or configuration there.
 - `fs_cdpath` — Locked runtime overlay path (use `.install/` as launch dir for testing)
 
 ### Manual Path Configuration

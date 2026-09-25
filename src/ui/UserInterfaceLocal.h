@@ -26,14 +26,17 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
+#include <thread>
+#include "UserInterfaceManaged.h"
+
 class idWindow;
 class idWinVec4;
 class idChatWindow;
 
-class idUserInterfaceLocal : public idUserInterface {
+class idUserInterfaceLocal : public idUserInterfaceManaged {
 	friend class idUserInterfaceManagerLocal;
 public:
-								idUserInterfaceLocal();
+								idUserInterfaceLocal( bool managed = true );
 	virtual						~idUserInterfaceLocal();
 
 	virtual const char *		Name() const;
@@ -57,6 +60,9 @@ public:
 	virtual bool				GetStateBool( const char *varName, const char* defaultString = "0" ) const;
 	virtual int					GetStateInt( const char *varName, const char* defaultString = "0" ) const;
 	virtual float				GetStateFloat( const char *varName, const char* defaultString = "0" ) const;
+	virtual bool                GetPresentationValue( const char *name, idStr &value ) const override;
+	virtual bool                SetPresentationValue( const char *name, const char *value, bool overrideExpression = true ) override;
+	virtual bool                GetTextInputState( idRectangle &area, float &cursorOffset ) const override;
 
 	virtual void				StateChanged( int time, bool redraw );
 	virtual const char *		Activate( bool activate, int time );
@@ -75,24 +81,25 @@ public:
 	virtual idVec4				GetLightColor(void) override;
 	virtual bool				GetMaxTextIndex( const char *windowName, const char *text, wrapInfo_t& wrapInfo ) const override;
 
-	size_t						Size();
+	virtual size_t				Size() override;
+	virtual bool				IsMenuGui() const override;
+	virtual bool				AlwaysThink() const override;
+	virtual void				RunTimeEvents( int time ) override;
+	virtual int					NumTransitions() override;
 
 	idDict *					GetStateDict() { return &state; }
 
-	const char *				GetSourceFile( void ) const { return source; }
-	ID_TIME_T						GetTimeStamp( void ) const { return timeStamp; }
+	virtual const char *		GetSourceFile( void ) const override { return source; }
+	virtual ID_TIME_T			GetTimeStamp( void ) const override { return timeStamp; }
 
-	virtual idWindow *			GetDesktop() const { return desktop; }
+	// Legacy implementation/editor access only; not part of the game interface.
+	idWindow *					GetDesktop() const { return desktop; }
 	void						SetBindHandler( idWindow *win ) { bindHandler = win; }
-	bool						Active() const { return active; }
+	bool						Active() const override { return active; }
 	bool						ControllerNavigation() const { return controllerNavigation; }
 	void						SetControllerNavigation( bool enabled ) { controllerNavigation = enabled; }
 	int							GetTime() const { return time; }
 	void						SetTime( int _time ) { time = _time; }
-
-	void						ClearRefs() { refs = 0; }
-	void						AddRef() { refs++; }
-	int							GetRefs() { return refs; }
 
 	void						RecurseSetKeyBindingNames( idWindow *window );
 	idStr						&GetPendingCmd() { return pendingCmd; };
@@ -124,13 +131,12 @@ private:
 
 	int							time;
 
-	int							refs;
-
 	idWinVec4 *					lightColorVar;
 };
 
 class idUserInterfaceManagerLocal : public idUserInterfaceManager {
 	friend class idUserInterfaceLocal;
+	friend class idUserInterfaceManaged;
 
 public:
 	virtual void				Init();
@@ -152,16 +158,62 @@ public:
 	virtual void				FreeListGUI( idListGUI *listgui );
 	virtual void				RunAlwaysThinkGUIs( int time );
 	virtual void				RegisterIcon( const char *code, const char *shader, int x = -1, int y = -1, int w = -1, int h = -1 );
+	bool DispatchApplicationActions( idUserInterface *gui, const char *command, bool &closeRequested );
+	void PumpApplicationActions( UI_ApplicationCommandCallback callback, void *context, idUserInterface *only );
+	openq4::ui::TextBrokerContext QueryTextContext(idUserInterface* current,
+		std::uint64_t nativeWindow, std::uint64_t nativeSession);
+	uiTextDeliveryResult_t DeliverTextInput(idUserInterface* current,
+		std::uint64_t nativeWindow, std::uint64_t nativeSession,
+		const openq4::ui::TextBrokerContext& authorizedContext,
+		const openq4::ui::TextBrokerDelivery& delivery);
+
+bool NativeTextAttach(uiNativeTextRouteProbe_t,void*,const openq4::ui::TextEditorIdentity&,
+	openq4::ui::NativeTextIdentity,openq4::ui::NativeTextEditorBarrier&,std::string&);
+bool NativeTextRefresh(uiNativeTextRouteProbe_t,void*,const openq4::ui::NativeTextEditorBarrier&,
+	openq4::ui::NativeTextEditorView&,std::string&);
+bool NativeTextCurrent(uiNativeTextRouteProbe_t,void*,const openq4::ui::NativeTextEditorBarrier&) noexcept;
+bool NativeTextBegin(uiNativeTextRouteProbe_t,void*,const openq4::ui::NativeTextEditorBarrier&,
+	const openq4::ui::NativeTextCollection&,openq4::ui::NativeTextEditorBarrier&,std::string&);
+bool NativeTextApply(uiNativeTextRouteProbe_t,void*,const openq4::ui::NativeTextEditorBarrier&,
+	const openq4::ui::NativeTextOffer&,openq4::ui::NativeTextEditorReceipt&,std::string&);
+bool NativeTextComplete(uiNativeTextRouteProbe_t,void*,const openq4::ui::NativeTextEditorBarrier&,
+	const openq4::ui::NativeTextCollection&,openq4::ui::NativeTextEditorBarrier&,std::string&);
+std::unique_ptr<openq4::ui::Interaction::NativeSettlement> NativeTextPrepareSettlement(
+	uiNativeTextRouteProbe_t,void*,const openq4::ui::NativeTextEditorBarrier&,std::string&);
+bool NativeTextPublishSettlement(uiNativeTextRouteProbe_t,void*,
+	openq4::ui::Interaction::NativeSettlement&,openq4::ui::NativeTextEditorReceipt&) noexcept;
+bool NativeTextRetireExact(openq4::ui::NativeTextIdentity,const openq4::ui::TextEditorIdentity&) noexcept;
+openq4::ui::NativeTextPresence NativeTextPresence(openq4::ui::NativeTextIdentity,const openq4::ui::TextEditorIdentity&) const noexcept;
 
 private:
-	void						UpdateAlwaysThinkGui( idUserInterfaceLocal *gui );
-	void						RemoveAlwaysThinkGui( idUserInterfaceLocal *gui );
+	bool NativeTextEnter() noexcept;
+public:
+	bool QueryNativeInputAllocation(std::uintptr_t,std::uint64_t&) const noexcept;
+private:
+	idUserInterfaceManaged* NativeTextResolve(uiNativeTextRouteProbe_t,void*,const openq4::ui::TextEditorIdentity&) const noexcept;
+	bool NativeTextCheck(uiNativeTextRouteProbe_t,void*,const openq4::ui::NativeTextEditorBarrier&) const noexcept;
+	void						RegisterAllocation( idUserInterfaceManaged *gui );
+	void						RegisterGui( idUserInterfaceManaged *gui );
+	void						RegisterDemoGui( idUserInterfaceManaged *gui );
+	void						UnregisterGui( idUserInterfaceManaged *gui );
+	void						UpdateAlwaysThinkGui( idUserInterfaceManaged *gui );
+	void						RemoveAlwaysThinkGui( idUserInterfaceManaged *gui );
 
 	idRectangle					screenRect;
 	idDeviceContext				dc;
 
-	idList<idUserInterfaceLocal*> guis;
-	idList<idUserInterfaceLocal*> alwaysThinkGUIs;
-	idList<idUserInterfaceLocal*> demoGuis;
+	// Only allocations owns objects. Every other registry is a non-owning
+	// subset, removed by the managed destructor even on direct editor deletes.
+	idList<idUserInterfaceManaged*> allocations;
+	unsigned long long nextAllocationId = 0;
+	bool textBoundaryActive = false, textBoundaryFailed = false;
+	const std::thread::id nativePresenceThread = std::this_thread::get_id();
+	bool nativeBoundaryActive = false, nativeBoundaryFailed = false;
+	bool clipboardBoundaryActive = false, clipboardBoundaryFailed = false;
+	int applicationPumpDepth = 0;
+	int applicationPumpBudget = 0;
+	idList<idUserInterfaceManaged*> guis;
+	idList<idUserInterfaceManaged*> alwaysThinkGUIs;
+	idList<idUserInterfaceManaged*> demoGuis;
 
 };

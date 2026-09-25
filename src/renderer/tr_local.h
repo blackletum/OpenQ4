@@ -737,6 +737,8 @@ typedef struct {
 	idRenderTexture		*renderTexture;
 	idRenderTexture		*feedbackRenderTexture;	// active scene target allowed to feed _currentRender
 	idVec4				postProcessTexelSize;	// x/y = inverse source size, z/w = source size
+	int					resolutionScaleWidth;	// crop this frame rendered into, 0 when unscaled
+	int					resolutionScaleHeight;
 	idVec4				postProcessSourceColorSpace;	// x = contract enum, y = display gamma, z/w reserved
 	idVec4				postProcessSMAAQuality;	// x = edge mode, y = threshold, z = search steps, w = local contrast
 
@@ -771,6 +773,19 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 
 typedef enum {
 	BE_ARB2,
+	// The programmable path standing on its own, with no ARB2 bridge beneath
+	// it. Selected only on a profile that cannot have ARB2 (desktop core,
+	// OpenGL ES); every compatibility context keeps BE_ARB2 with the modern
+	// executor layered over it as before. Passes the modern executor does not
+	// own simply do not render under this backend -- there is nothing to hand
+	// them back to.
+	BE_MODERN,
+	// Doom 3-shaped GLES 3.0 backend: its own depth / interaction / ambient /
+	// fog passes written directly against ES 3.0, rather than the modern
+	// executor's cluster-forward architecture. Opt-in with `r_renderer glesd3`
+	// on the renderer-gles module only; never selected automatically, so
+	// BE_MODERN remains the default ES path.
+	BE_GLES_D3,
 	BE_BAD
 } backEndName_t;
 
@@ -810,6 +825,9 @@ public:
 #endif
 #endif
 	virtual bool			RegisterFont( const char *fontName, fontInfoEx_t &font );
+	bool GetRetainedFontMetrics(const char* face, int pixels, renderFontMetrics_t& out) override;
+	bool GetRetainedFontGlyph(const char* face, int pixels, unsigned int scalar, renderFontGlyph_t& out) override;
+	void ResetRetainedFontCache() override;
 	virtual void			SetColor( const idVec4 &rgba );
 	virtual void			SetColor4( float r, float g, float b, float a );
 	virtual void			DrawStretchPic ( const idDrawVert *verts, const glIndex_t *indexes, int vertCount, int indexCount, const idMaterial *material,
@@ -975,6 +993,20 @@ public:
 
 	renderCrop_t			renderCrops[MAX_RENDER_CROPS];
 	int						currentRenderCrop;
+
+	// r_screenFraction below native, on a back end that can upscale the finished
+	// frame. BeginFrame pushes a crop the whole frame renders into, and the back
+	// end blits that corner out to the full back buffer before the swap.
+	// Zero means no scaling crop is live this frame.
+	bool					resolutionScaleCropActive;
+	int						resolutionScaleWidth;
+	int						resolutionScaleHeight;
+	// latched once the game routes a frame through an offscreen scene target,
+	// where a whole-frame crop cannot be resolved back to full screen
+	bool					resolutionScaleSuppressed;
+
+	bool					PushSceneResolutionScale( void );
+	void					PopSceneResolutionScale( void );
 
 	// GUI drawing variables for surface creation
 	int						guiRecursionLevel;		// to prevent infinite overruns
@@ -1161,6 +1193,8 @@ extern idCVar r_brightness;				// changes gamma tables
 extern idCVar r_renderer;				// arb, nv10, nv20, r200, gl2, etc
 extern idCVar r_actualRenderer;			// actual active renderer backend after fallback
 extern idCVar r_glTier;					// auto, legacy, gl33, gl41, gl43, gl45, gl46
+extern idCVar r_glesContext;			// request an OpenGL ES 3.0 context (Android GLES backend bring-up)
+extern idCVar r_glCoreProfileFirst;		// try core-profile contexts before the compatibility fallback
 extern idCVar r_glDebugContext;			// request a debug GL context when the platform backend supports it
 extern idCVar r_glDebugOutput;			// report driver debug messages when a debug context is active
 extern idCVar r_glDebugSynchronous;		// synchronously deliver GL debug callbacks for diagnostics
@@ -1404,6 +1438,7 @@ extern idCVar r_skipROQ;
 
 extern idCVar r_ignoreGLErrors;
 extern idCVar image_ignoreHighQuality;
+extern idCVar image_useETC2;			// compress to ETC2 where the driver exposes no S3TC
 
 extern idCVar r_forceLoadImages;		// draw all images to screen after registration
 extern idCVar r_demonstrateBug;			// used during development to show IHV's their problems
@@ -1562,6 +1597,10 @@ const int GLS_DSTBLEND_DST_ALPHA				= 0x00000070;
 const int GLS_DSTBLEND_ONE_MINUS_DST_ALPHA		= 0x00000080;
 const int GLS_DSTBLEND_BITS						= 0x000000f0;
 
+// Straight-alpha retained images write source-over coverage to an isolated
+// target's alpha channel, while RGB keeps the ordinary SRC_ALPHA factor.
+const int GLS_ALPHA_COVERAGE = 0x00040000;
+
 
 // these masks are the inverse, meaning when set the glColorMask value will be 0,
 // preventing that channel from being written
@@ -1587,6 +1626,20 @@ const int GLS_DEFAULT							= GLS_DEPTHFUNC_ALWAYS;
 
 void R_Init( void );
 void R_InitOpenGL( void );
+// Renderer-private recoverable device route. The caller must invoke between
+// submitted frames. A refused attempt remains uninitialized and can be retried
+// with an explicit restore request; process-wide allocation failure is excluded.
+struct renderWindowRequest_s;
+// Called only by the active checked image-policy coordinator.
+bool R_TryFullVidRestartForImagePolicy(const renderWindowRequest_s* request, char* error, int errorSize);
+bool R_TryFullVidRestart( const renderWindowRequest_s *request, char *error, int errorSize );
+bool R_TryInitializeDisplay( const renderWindowRequest_s *request, char *error, int errorSize );
+bool R_IsRecoverableRendererRestart( void );
+bool R_ForceWindowForRendererRestart( void );
+const renderWindowRequest_s *R_GetRecoverableWindowRequest( void );
+// Does nothing during legacy startup; rejects a recoverable attempt without
+// entering Common::Error/FatalError and their Session/process teardown paths.
+void R_RejectRecoverableRendererRestart( const char *reason );
 
 // publish glConfig's compression capabilities into this binary's imagetools
 // copy; every backend that fills glConfig must call it

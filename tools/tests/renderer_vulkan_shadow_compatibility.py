@@ -2676,7 +2676,7 @@ def validate_shadow_contact_and_gl_robustness_contract() -> None:
         renderer_device_init,
         (
             "R_MigrateLegacyShadowMapContactQuality();",
-            "if ( !glConfig.isInitialized )",
+            "R_InitRendererDevice( true, false, error, sizeof( error ) )",
         ),
         "migration before either renderer device starts",
     )

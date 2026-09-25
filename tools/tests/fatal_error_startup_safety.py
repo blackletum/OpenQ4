@@ -253,11 +253,12 @@ def validate_renderer_failure_entry_points() -> None:
     """
     renderer = read("src/renderer/RenderSystem_init.cpp")
 
-    init_opengl = function_body(renderer, "void idRenderSystemLocal::InitOpenGL( void ) {")
+    init_opengl = function_body(renderer, "static bool R_InitRendererDevice( bool legacyPolicy, bool forceWindow, char *error, int errorSize ) {")
     require_ordered(
         init_opengl,
         (
             "if ( !VK_InitRenderDevice() ) {",
+            "if ( legacyPolicy ) {",
             "const bool nextLaunchUsesGL = R_RendererModule_ResetApiAfterDeviceFailure();",
             'common->FatalError( "Vulkan renderer device initialization failed; %s",',
             '"r_renderApi has been reset to gl, so the next launch uses OpenGL"',
@@ -267,7 +268,7 @@ def validate_renderer_failure_entry_points() -> None:
     )
     require(
         renderer,
-        'common->FatalError( "Unable to initialize OpenGL" );',
+        'return R_RendererRestartError( error, errorSize, "Unable to initialize OpenGL" );',
         "OpenGL bring-up failure path",
     )
 

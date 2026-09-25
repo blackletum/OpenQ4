@@ -4,6 +4,10 @@
 #ifndef __RENDERERMODULE_H__
 #define __RENDERERMODULE_H__
 
+#include "RenderModuleAPI.h"
+#include "DisplayPresentation.h"
+#include "RendererResourceSettings.h"
+
 /*
 ===============================================================================
 
@@ -24,6 +28,7 @@ typedef enum {
 	RENDER_MODULE_API_GL,		// OpenGL renderer, statically linked (default)
 	RENDER_MODULE_API_VULKAN,	// native Vulkan renderer module
 	RENDER_MODULE_API_GL_MODULE,// OpenGL renderer as a dynamic module (opt-in Phase B8 soak path)
+	RENDER_MODULE_API_GLES,		// OpenGL ES renderer module (Android backend bring-up; macOS needs ANGLE)
 	RENDER_MODULE_API_COUNT
 } rendererModuleApi_t;
 
@@ -84,6 +89,48 @@ bool	R_RendererModule_RetryFailedStartup( void );
 void	R_RendererModule_Shutdown( void );
 
 const rendererModuleStatus_t &R_RendererModule_GetStatus( void );
+
+// Engine-owned identity survives module unload/reload. A renderer-local counter
+// alone cannot identify a device across module lifetimes. These operations run
+// on the main/video thread, serialized with module loading and frame submission.
+struct rendererDisplayState_t {
+	uint64_t moduleEpoch;
+	renderDisplayPresentation_t presentation;
+	renderWindowState_t window;
+	bool windowValid;
+	bool rendererReady;
+	int videoRestartCount;
+};
+
+// Query failure leaves output unchanged. A supported but failed/uninitialized
+// device is a successful observation with rendererReady/windowValid false.
+bool R_RendererModule_QueryDisplay( rendererDisplayState_t *outState );
+// Does not switch renderer modules, execute console commands or select fallback
+// modes. Caller must drain frame work, retain recovery state and perform rollback.
+bool R_RendererModule_TryDeviceRestart( const renderWindowRequest_t *request, char *error, int errorSize );
+struct rendererImagePolicyResult_t {
+    uint64_t moduleEpoch;
+    renderImagePolicyResult_t resources;
+};
+// Copies request; false leaves output unchanged. Holds the same video identity
+// lease as display restart until success/live context or explicit restoration.
+bool R_RendererModule_TryImagePolicyRestart(const renderImagePolicyRequest_t* request,
+    rendererImagePolicyResult_t* output, char* error, int errorSize);
+struct rendererImageRecoveryLease_t {uint64_t moduleEpoch=0;renderImageRecoveryLease_t resources{};};
+bool R_RendererModule_PrepareImageRecovery(uint64_t owner,uint64_t request,const char* attempt,const renderImagePolicy_t* target,
+    rendererImageRecoveryLease_t* output,char* error,int size);
+bool R_RendererModule_PrepareColdImageRecovery(uint64_t owner,uint64_t request,const char* attempt,uint32_t direction,
+    const char* raw,uint32_t bytes,rendererImageRecoveryLease_t* output,char* error,int size);
+bool R_RendererModule_CaptureImageRecovery(const rendererImageRecoveryLease_t*,uint32_t direction,char* output,uint32_t capacity,
+    uint32_t* bytes,char* error,int size);
+bool R_RendererModule_CancelImageRecovery(const rendererImageRecoveryLease_t*,char* error,int size);
+bool R_RendererModule_ReleaseImageRecovery(const rendererImageRecoveryLease_t*,uint32_t direction,
+    const rendererImagePolicyResult_t*,char* error,int size);
+// Strict first device only, after Init and before any world/UI frame. The caller
+// prepares SDL video, resolves portable monitor identity and journals before
+// calling. Failure keeps the video identity pin until explicit retry or unload;
+// success means device resources ready, never proof of a submitted/presented frame.
+bool R_RendererModule_TryInitializeDisplay( const renderWindowRequest_t *request, char *error, int errorSize );
 
 void	RendererModule_PrintGfxInfo( void );
 

@@ -151,6 +151,16 @@
 	"#str_229979"	"Znacznik trafienia"
 	"#str_229982"	"Odrzut broni"
 	"#str_229983"	"RESTART POZIOMU"
+
+	// Settings transaction status.
+	"#str_230007"	"Gotowe"
+	"#str_230008"	"Te opcje są edytowane w innym oknie ustawień."
+	"#str_230009"	"Otwórz ustawienia przed ich edycją."
+	"#str_230010"	"Nie udało się zastosować tych zmian."
+	"#str_230011"	"Ustawienia zostały zmienione w innym miejscu. Sprawdź je i spróbuj ponownie."
+	"#str_230012"	"Nie udało się przywrócić poprzednich ustawień."
+	"#str_230013"	"Zmiany oczekują na potwierdzenie."
+	"#str_230014"	"Niezapisane zmiany."
 	"#str_41200"	"Wył."
 	"#str_41201"	"Siebie"
 	"#str_41202"	"Wroga"
@@ -1012,4 +1022,51 @@
 	"#str_42944"	"-"
 	"#str_42945"	"Klik: wybierz   Przeciągnij prawym: obrót   Shift + prawy: przesuwanie   Kółko: zoom   F: wybrane"
 	"#str_42946"	"Eksperymentalny"
+	// SigmaTouch editor labels (emileb Android support).
+	"#str_43000"	"Pokaż menu"
+	"#str_43001"	"Szybki zapis"
+	"#str_43002"	"Szybkie wczytanie"
+	"#str_43003"	"Pokaż klawiaturę"
+	"#str_43004"	"Użyj myszy"
+	"#str_43005"	"Konsola"
+	"#str_43006"	"Pokaż własne sterowanie"
+	"#str_43007"	"Pokaż numery broni"
+	"#str_43008"	"Następna broń"
+	"#str_43009"	"Poprzednia broń"
+	"#str_43010"	"Przyciski ruchu (WASD)"
+	"#str_43011"	"Lewy przycisk myszy"
+
+	// Display application, confirmation and durable recovery.
+	"#str_229990"	"Stosowanie ustawień wyświetlania…"
+	"#str_229991"	"Przywracanie poprzednich ustawień wyświetlania…"
+	"#str_229992"	"Zapisywanie ustawień wyświetlania…"
+	"#str_229993"	"Zachować te ustawienia wyświetlania?"
+	"#str_229994"	"Zachowaj"
+	"#str_229995"	"Przywróć"
+	"#str_229996"	"Ponów"
+	"#str_229997"	"Ustawienia zostały zaakceptowane, ale zapis nie został ukończony. Ponów próbę, aby dokończyć zapis."
+	"#str_229998"	"10%;25%;50%;75%;85%;100%;125%;150%;200%"
+	"#str_229999"	"Kontynuuj edycję"
+
+	// Transient numeric editor clipboard feedback.
+	"#str_230001"	"Nie można odczytać schowka. Spróbuj ponownie."
+	"#str_230002"	"Nie można skopiować do schowka. Twój tekst pozostał bez zmian."
+	"#str_230003"	"Tekst ze schowka nie pasuje do tego jednowierszowego pola."
+
+	// Precise SYSTEM numeric field validation (decimal point input).
+	"#str_230004"	"Wpisz liczbę od 0.5 do 2."
+	"#str_230005"	"Wpisz liczbę od 0 do 1."
+	"#str_230006"	"Zatwierdź każde pole lub odrzuć niedokończone zmiany."
+
+	// Retained SYSTEM interface-size preferences.
+	"#str_230015"	"Skala interfejsu"
+	"#str_230016"	"Rozmiar tekstu"
+	"#str_230017"	"Przywróć rozmiary"
+	"#str_230018"	"Interfejs"
+	"#str_230019"	"Duże rozmiary mogą zostać zmniejszone, aby zmieścić się w oknie."
+	"#str_230020"	"Wył.;2x;4x;8x;16x"
+	"#str_230021"	"Wpisz liczbę całkowitą od 320 do 16384."
+	"#str_230022"	"Wpisz liczbę całkowitą od 240 do 16384."
+	"#str_230023"	"Przed zastosowaniem wybierz obsługiwany ekran, rozmiar i częstotliwość odświeżania."
+	"#str_230024"	"Własny rozmiar dotyczy wyłącznego pełnego ekranu. Jego edycja wybiera własną rozdzielczość."
 }

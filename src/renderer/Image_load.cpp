@@ -29,6 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "RendererResourceSettings.h"
+#include "OpenGL/FramebufferSamples.h"
 
 /*
 ========================
@@ -145,9 +147,9 @@ static void R_AddMissingQ4StockImageCacheIdentity( idStr &generatedName, bool st
 	}
 }
 
-static unsigned int R_GetImageDownsizeSignature( const char *name, textureUsage_t usage, bool allowDownSize );
-static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height );
-static void R_DownsizeLoadedCubeImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size );
+static unsigned int R_GetImageDownsizeSignature( const char *name, textureUsage_t usage, bool allowDownSize, const imageDownsizePolicy_t* consumed );
+static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height, const imageDownsizePolicy_t* consumed );
+static bool R_DownsizeLoadedCubeImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size, const imageDownsizePolicy_t* consumed );
 
 imageLoadPhaseTimings_t imageLoadPhaseTimings;
 
@@ -184,13 +186,92 @@ static void R_LoadImageProgramForDeclaredUsage( const char *name, byte **pic, in
 
 /*
 ========================
+R_ETC2FormatForUsage
+
+The uncompressed default, unless this renderer has no S3TC at all and
+image_useETC2 has opted this usage in.
+
+The S3TC condition is the whole point of the gate. Where DXT is available the
+engine uploads Quake 4's shipped DXT blocks untouched, which is both smaller
+and better than anything re-encoded from them could be; ETC2 there would be a
+pure loss. It is the drivers with no DXT -- the Adreno 650 class -- that were
+carrying every texture at 32 bpp with nowhere to go.
+
+Bump maps are last, at level 3, because they are the only usage whose format
+change reaches the shaders: EAC_RG11 stores no Z, so the interaction shaders
+rebuild it. ETC2's RGB modes were never an option for them -- those fit a single
+colour line through all three channels, which models a photograph well and a
+normal badly.
+========================
+*/
+static ID_INLINE textureFormat_t R_ETC2FormatForUsage( textureUsage_t usage, bool isCubeMap ) {
+	if ( !glConfig.etc2TextureCompressionAvailable || glConfig.textureCompressionAvailable ) {
+		return FMT_RGBA8;
+	}
+
+	// Cube maps are built by idBinaryImage::LoadCubeFromMemory, which has no
+	// ETC2 branch: the format would fall through to its uncompressed default and
+	// be stored as RGBA8. That is worse than merely not compressing, because
+	// DeriveOpts would ask for ETC2 again on the next load, mismatch the RGBA8
+	// header, and re-derive and rewrite the image on every single load forever.
+	// Measured as 12 such images looping on game/airdefense1 before this check.
+	if ( isCubeMap ) {
+		return FMT_RGBA8;
+	}
+
+	const int level = image_useETC2.GetInteger();
+	if ( level <= 0 ) {
+		return FMT_RGBA8;
+	}
+
+	switch ( usage ) {
+		case TD_SPECULAR:
+			// Greyscale-ish and low frequency: the least that block artefacts
+			// can cost, which is why this is the first usage switched over.
+			return FMT_ETC2_RGB8;
+		case TD_DIFFUSE:
+		case TD_DEFAULT:
+			if ( level >= 2 ) {
+				// RGBA8 rather than RGB8 because a diffuse map may carry alpha
+				// and nothing here knows yet whether this one does. Costs 8 bpp
+				// instead of 4 -- still a quarter of uncompressed -- and the
+				// per-image alpha split is a later refinement.
+				return FMT_ETC2_RGBA8;
+			}
+			return FMT_RGBA8;
+		case TD_BUMP:
+			if ( level >= 3 ) {
+				// 8 bpp, same as ETC2_RGBA8, but spent on two channels with
+				// independent endpoints each rather than on three sharing one
+				// colour line plus an alpha. That is why normals survive it:
+				// measured 0.63 degrees RMS angular error on synthetic bump
+				// art, against 4.09 degrees at the worst block.
+				return FMT_EAC_RG11;
+			}
+			return FMT_RGBA8;
+		default:
+			return FMT_RGBA8;
+	}
+}
+
+/*
+========================
 idImage::DeriveOpts
 ========================
 */
 ID_INLINE void idImage::DeriveOpts() {
 
 	if ( usage == TD_FONT ) {
-		opts.format = FMT_DXT1;
+		// Unguarded, this asked for DXT1 on renderers with no S3TC, which
+		// R_BinaryImageHeaderSupportedByRenderer then rejected -- so the font
+		// was re-derived and rewritten on every single map load and its cache
+		// entry could never be used. TD_LIGHTGRID below has always guarded the
+		// same way; this is only catching up with it.
+		//
+		// CFM_GREEN_ALPHA survives the change: Load2DFromMemory applies that
+		// swizzle before it looks at the format, so the font shader still finds
+		// the coverage value in green either way.
+		opts.format = glConfig.textureCompressionAvailable ? FMT_DXT1 : FMT_RGBA8;
 		opts.colorFormat = CFM_GREEN_ALPHA;
 		opts.numLevels = 4; // Retail Quake 4's generated font-atlas path keeps four mip levels.
 		opts.gammaMips = true;
@@ -252,12 +333,16 @@ ID_INLINE void idImage::DeriveOpts() {
 			opts.format = FMT_RGBA8;
 			break;
 		default:
+				// TD_SPECULAR, TD_BUMP, TD_DIFFUSE and TD_DEFAULT all land here.
+				// R_ETC2FormatForUsage returns FMT_RGBA8 unless the renderer has
+				// no S3TC and image_useETC2 opts this usage in, so gammaMips and
+				// colorFormat stay exactly as they were.
 				opts.gammaMips = false;
-				opts.format = FMT_RGBA8;
+				opts.format = R_ETC2FormatForUsage( usage, cubeFiles != CF_2D );
 				opts.colorFormat = CFM_DEFAULT;
 				break;
 		}
-		
+
 /*
 		switch ( usage ) {
 			case TD_COVERAGE:
@@ -360,6 +445,10 @@ static ID_INLINE bool R_BinaryImageHeaderSupportedByRenderer( const bimageFile_t
 	if ( format == FMT_BC7 && !glConfig.bptcTextureCompressionAvailable ) {
 		return false;
 	}
+	if ( ( format == FMT_ETC2_RGB8 || format == FMT_ETC2_RGBA8 || format == FMT_EAC_RG11 ) &&
+			!glConfig.etc2TextureCompressionAvailable ) {
+		return false;
+	}
 	return true;
 }
 
@@ -369,6 +458,8 @@ idImage::AllocImage
 ========================
 */
 void idImage::AllocImage( const idImageOpts &imgOpts, textureFilter_t tf, textureRepeat_t tr ) {
+	if ( !R_ImagePolicyOperationAllowed() ) return;
+	if ( ( filter != tf || repeat != tr || !( opts == imgOpts ) || defaulted || !imgOpts.isPersistant ) && !R_ImagePolicyContentMutation() ) return;
 	filter = tf;
 	repeat = tr;
 	opts = imgOpts;
@@ -383,6 +474,8 @@ GenerateImage
 ================
 */
 void idImage::GenerateImage( const byte *pic, int width, int height, textureFilter_t filterParm, textureRepeat_t repeatParm, textureUsage_t usageParm ) {
+	if ( !R_ImagePolicyOperationAllowed() ) return;
+	if ( IsFileBacked() && !R_ImagePolicyContentMutation() ) return;
 	PurgeImage();
 
 	filter = filterParm;
@@ -406,7 +499,7 @@ void idImage::GenerateImage( const byte *pic, int width, int height, textureFilt
 	}
 
 	idBinaryImage im( GetName() );
-	im.Load2DFromMemory( width, height, pic, opts.numLevels, opts.format, opts.colorFormat, opts.gammaMips, ( flags & IMAGEFLAG_FILTER_NEUTRAL_ALPHA ) != 0 );
+	if (!im.Load2DFromMemory( width, height, pic, opts.numLevels, opts.format, opts.colorFormat, opts.gammaMips, ( flags & IMAGEFLAG_FILTER_NEUTRAL_ALPHA ) != 0 )) return;
 
 	AllocImage();
 
@@ -426,6 +519,8 @@ Non-square cube sides are not allowed
 ====================
 */
 void idImage::GenerateCubeImage( const byte *pic[6], int size, textureFilter_t filterParm, textureUsage_t usageParm ) {
+	if ( !R_ImagePolicyOperationAllowed() ) return;
+	if ( IsFileBacked() && !R_ImagePolicyContentMutation() ) return;
 	PurgeImage();
 
 	filter = filterParm;
@@ -449,7 +544,7 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size, textureFilter_t f
 	}
 
 	idBinaryImage im( GetName() );
-	im.LoadCubeFromMemory( size, pic, opts.numLevels, opts.format, opts.gammaMips );
+	if (!im.LoadCubeFromMemory( size, pic, opts.numLevels, opts.format, opts.gammaMips )) return;
 
 	AllocImage();
 
@@ -468,7 +563,7 @@ GetGeneratedName
 name contains GetName() upon entry
 ===============
 */
- void idImage::GetGeneratedName( idStr &_name, const char *_policyName, const textureUsage_t &_usage, const cubeFiles_t &_cube, bool allowDownSize, unsigned int flags ) {
+ void idImage::GetGeneratedName( idStr &_name, const char *_policyName, const textureUsage_t &_usage, const cubeFiles_t &_cube, bool allowDownSize, unsigned int flags, const imageDownsizePolicy_t* consumed ) {
 	idStr extension;
 
 	_name.ExtractFileExtension( extension );
@@ -487,9 +582,9 @@ name contains GetName() upon entry
 		// any such change: builds up to 0.9.x cached faces that had the retail
 		// progimg/ camera->native conversion applied twice, which left skyboxes
 		// mis-oriented until the cache was deleted by hand.
-		_name += "r1";
+		_name += "r2";
 	}
-	const unsigned int downsizeSignature = R_GetImageDownsizeSignature( _policyName, _usage, allowDownSize );
+	const unsigned int downsizeSignature = R_GetImageDownsizeSignature( _policyName, _usage, allowDownSize, consumed );
 	if ( downsizeSignature != 0 ) {
 		_name += va( "d%08x", downsizeSignature );
 	}
@@ -522,6 +617,9 @@ On exit, the idImage will have a valid OpenGL texture number that can be bound
 ===============
 */
 void idImage::ActuallyLoadImage( bool fromBackEnd ) {
+	if ( !R_ImagePolicyOperationAllowed() ) return;
+	if ( !R_ImagePolicyContentMutation() ) return;
+
 
 	// if we don't have a rendering context yet, just return
 	if ( !tr.IsOpenGLRunning() ) {
@@ -542,6 +640,34 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		return;
 	}
 
+	imageConsumedLoad_t consumedLoad(*this);
+    // A held recovery preparation owns complete CPU candidates read and hashed
+    // before teardown. Never fall back to a different VFS source after taking
+    // such a candidate, including on an allocation/upload refusal.
+    if (R_ImagePolicyUsesPreparedContent()) try {
+        const idBinaryImage* prepared=nullptr; imagePortableContent_t descriptor{};
+        const int selected=R_ImagePolicyBorrowPreparedContent(this,prepared,descriptor);
+        if (selected<0) return;
+        if (selected>0) {
+            if (!consumedLoad.Prepared(descriptor)) { R_ImagePolicyObserveError("Prepared image observation was refused"); return; }
+            const bimageFile_t& h=prepared->GetFileHeader();
+            opts.textureType=static_cast<textureType_t>(h.textureType);opts.format=static_cast<textureFormat_t>(h.format);
+            opts.colorFormat=static_cast<textureColor_t>(h.colorFormat);opts.width=h.width;opts.height=h.height;opts.numLevels=h.numLevels;
+            defaulted=false;
+            const auto source=descriptor.scope==IPC_DIRECT_SOURCE?ICS_DIRECT_DDS:ICS_GENERATED;
+            consumedLoad.Content(*prepared,source);
+            AllocImage();
+            for(int i=0;i<prepared->NumImages();++i){const bimageImage_t& part=prepared->GetImageHeader(i);
+                SubImageUpload(part.level,0,0,part.destZ,part.width,part.height,prepared->GetImageData(i));}
+            loadedSourceName=descriptor.file.qpath;
+            consumedLoad.Loaded(source);
+            return;
+        }
+    } catch (...) { R_ImagePolicyObserveError("Prepared CPU image publication failed"); return; }
+	const imageDownsizePolicy_t& consumedDownsize = consumedLoad.Policy();
+	imageConsumedSource_t consumedSource = ICS_UNKNOWN;
+    imageReductionResult_t consumedReduction{};
+    bool exactDecodedReduction = false;
 	defaulted = false;
 	// File-backed options may have been replaced by a directly uploaded DDS on
 	// the previous load. Re-derive them from the image's declared usage so a
@@ -576,7 +702,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	DeriveOpts();
 
 	idStr generatedName = GetName();
-	GetGeneratedName( generatedName, GetName(), usage, cubeFiles, allowDownSize, flags );
+	GetGeneratedName( generatedName, GetName(), usage, cubeFiles, allowDownSize, flags, &consumedDownsize );
 	if ( filter == TF_LINEAR || filter == TF_NEAREST ) {
 		// the unmipped sampler policy changes the generated mip count ( DeriveOpts ), so
 		// keep its cache file distinct from the mipped variant of the same source
@@ -628,7 +754,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	}
 	if ( preferredDDSImage && !preferredDDSPrecompressed ) {
 		generatedName = preferredDDSName;
-		GetGeneratedName( generatedName, GetName(), usage, cubeFiles, allowDownSize, flags );
+		GetGeneratedName( generatedName, GetName(), usage, cubeFiles, allowDownSize, flags, &consumedDownsize );
 		if ( filter == TF_LINEAR || filter == TF_NEAREST ) {
 			idStr mipExt;
 			generatedName.ExtractFileExtension( mipExt );
@@ -701,6 +827,13 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		if ( candidateFileTime == FILE_NOT_FOUND_TIMESTAMP ) {
 			return false;
 		}
+		// A rejection here throws the cache entry away and re-derives the image
+		// from source, which on a device with no DDS fast path means decoding
+		// and recompressing it -- the single most expensive thing a map load
+		// does. Each gate reports both sides, because a systematically wrong
+		// timestamp or a stale opts field makes the cache silently useless
+		// while still looking populated on disk.
+		const bool reportGeneratedCache = cvarSystem->GetCVarBool( "image_showGeneratedImageWrites" );
 		if ( !productionMode ) {
 			if ( !sourceFileTimeKnown ) {
 				idScopedImageLoadPhase probePhase( imageLoadPhaseTimings.probeMsec, imageLoadPhaseTimings.probeCount );
@@ -714,17 +847,47 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				sourceFileTimeKnown = true;
 			}
 			if ( im.GetFileHeader().sourceFileTime != sourceFileTime ) {
+				if ( reportGeneratedCache ) {
+					common->Printf( "generated cache MISS %s: header=%lld computed=%lld (source '%s'%s)\n",
+						generatedName.c_str(),
+						( long long )im.GetFileHeader().sourceFileTime,
+						( long long )sourceFileTime,
+						selectedSourceName.c_str(),
+						preferredDDSImage ? ", dds replacement" : "" );
+				}
 				im.Clear();
 				return false;
 			}
 		}
 		if ( !R_BinaryImageHeaderSupportedByRenderer( im.GetFileHeader() ) ) {
+			if ( reportGeneratedCache ) {
+				common->Printf( "generated cache UNSUPPORTED %s: format=%d\n",
+					generatedName.c_str(), im.GetFileHeader().format );
+			}
 			im.Clear();
 			return false;
 		}
-		if ( !productionMode && !R_GeneratedImageHeaderMatchesDerivedOpts( im.GetFileHeader(), opts, usage ) ) {
+		// The opts check stays on in production mode. It costs nothing -- the header
+		// is already in memory -- and the generated file name does not encode the
+		// texture format, so it is the only thing that notices when a cvar such as
+		// image_useETC2 changes what DeriveOpts just asked for. Skipping it made a
+		// format change silently reuse cache entries written in the old format.
+		// Production mode is meant to skip source timestamp validation, nothing else.
+		if ( !R_GeneratedImageHeaderMatchesDerivedOpts( im.GetFileHeader(), opts, usage ) ) {
+			if ( reportGeneratedCache ) {
+				const bimageFile_t &h = im.GetFileHeader();
+				common->Printf( "generated cache OPTSMISS %s: fmt hdr=%d drv=%d, color hdr=%d drv=%d, type hdr=%d drv=%d, usage=%d\n",
+					generatedName.c_str(),
+					h.format, opts.format,
+					h.colorFormat, opts.colorFormat,
+					h.textureType, opts.textureType,
+					(int)usage );
+			}
 			im.Clear();
 			return false;
+		}
+		if ( reportGeneratedCache ) {
+			common->Printf( "generated cache hit %s\n", generatedName.c_str() );
 		}
 		return true;
 	};
@@ -738,6 +901,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		generatedImageAccepted = acceptGeneratedImage( binaryFileTime );
 	}
 	if ( generatedImageAccepted ) {
+		consumedSource = ICS_GENERATED;
 		const bimageFile_t & header = im.GetFileHeader();
 		opts.width = header.width;
 		opts.height = header.height;
@@ -755,7 +919,8 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		bool loadedPrecompressedDDS = false;
 		if ( cubeFiles != CF_2D ) {
 			int size;
-			byte * pics[6];
+            byte *pics[6]{};
+            struct ReleaseFaces { byte** pics; ~ReleaseFaces() { for (int i = 0; i < 6; ++i) if (pics[i]) Mem_Free(pics[i]); } } releaseFaces{pics};
 
 			if ( !R_LoadCubeImages( GetName(), cubeFiles, pics, &size, &sourceFileTime ) || size == 0 ) {
 				idLib::Warning( "Couldn't load cube image: %s", GetName() );
@@ -779,33 +944,33 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				return;
 			}
 
-			R_DownsizeLoadedCubeImageData( GetName(), usage, allowDownSize, pics, size );
+            R_ResolveImageReduction(consumedDownsize, size, size, 0, consumedReduction);
+            exactDecodedReduction = R_DownsizeLoadedCubeImageData( GetName(), usage, allowDownSize, pics, size, &consumedDownsize );
+            consumedReduction.selectedWidth = consumedReduction.selectedHeight = size;
+            if (!exactDecodedReduction) consumedReduction.status = IR_FAILED;
+			consumedSource = ICS_DECODED_CUBE;
 			opts.textureType = TT_CUBIC;
 			repeat = TR_CLAMP;
 			opts.width = size;
 			opts.height = size;
 			opts.numLevels = 0;
 			DeriveOpts();
-			im.LoadCubeFromMemory( size, (const byte **)pics, opts.numLevels, opts.format, opts.gammaMips );
+			if (!im.LoadCubeFromMemory( size, (const byte **)pics, opts.numLevels, opts.format, opts.gammaMips )) return;
 			repeat = TR_CLAMP;
 
-			for ( int i = 0; i < 6; i++ ) {
-				if ( pics[i] ) {
-					Mem_Free( pics[i] );
-				}
-			}
 		} else {
 			int width, height;
 			byte *pic = NULL;
+            struct ReleasePixels { byte*& pic; ~ReleasePixels() { if (pic) Mem_Free(pic); } } releasePixels{pic};
 			imageDownsizePolicy_t precompressedDownsizePolicy;
-			R_GetImageDownsizePolicy( GetName(), usage, allowDownSize, precompressedDownsizePolicy );
+			precompressedDownsizePolicy = consumedDownsize;
 			const bool usePrecompressedMipmaps = ( flags & IMAGEFLAG_NOMIPS ) == 0 && filter != TF_LINEAR && filter != TF_NEAREST;
 			// PBR colour requires sRGB filtering. Decode DDS colour through the
 			// ordinary image path so its format and mip/alpha semantics agree with
 			// TGA/PNG sources; classic precompressed textures keep their path.
 			const bool tryDirectDDSLoad = usage != TD_PBR_COLOR && selectedDDSImage && ( explicitDDSImage || preferredDDSPrecompressed );
 
-			if ( tryDirectDDSLoad && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime, usage, precompressedDownsizePolicy, usePrecompressedMipmaps ) ) {
+			if ( tryDirectDDSLoad && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime, usage, precompressedDownsizePolicy, usePrecompressedMipmaps, &consumedReduction ) ) {
 				const bimageFile_t &header = im.GetFileHeader();
 				opts.width = header.width;
 				opts.height = header.height;
@@ -815,21 +980,16 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				opts.textureType = (textureType_t)header.textureType;
 				sourceFileTimeKnown = true;
 				loadedPrecompressedDDS = true;
+				consumedSource = ICS_DIRECT_DDS;
 
-				// Compressed data can only be reduced by dropping authored mip
-				// levels, so a replacement exported without a full chain cannot
-				// always reach the requested size. If the policy would still
-				// shrink what we ended up with, the chain ran out.
-				if ( precompressedDownsizePolicy.IsActive() ) {
-					int reachedWidth = header.width;
-					int reachedHeight = header.height;
-					R_ApplyImageDownsizePolicy( precompressedDownsizePolicy, reachedWidth, reachedHeight );
-					if ( ( reachedWidth != header.width || reachedHeight != header.height ) &&
-						cvarSystem->GetCVarBool( "image_showPrecompressedTextures" ) ) {
-						common->Printf( "%s: %s has no mip level small enough for the active texture reduction (kept %dx%d, wanted %dx%d)\n",
-							GetName(), loadSourceName, header.width, header.height, reachedWidth, reachedHeight );
-					}
-				}
+                // Compare with the target resolved once from the original DDS
+                // header. Applying picmip again to the selected mip is incorrect.
+                if (consumedReduction.status == IR_INSUFFICIENT_MIPS &&
+                    cvarSystem->GetCVarBool("image_showPrecompressedTextures")) {
+                    common->Printf("%s: %s has no mip level small enough for the active texture reduction (kept %dx%d, wanted %dx%d)\n",
+                        GetName(), loadSourceName, header.width, header.height,
+                        consumedReduction.requestedWidth, consumedReduction.requestedHeight);
+                }
 			} else {
 				const char *fallbackLoadSourceName = loadSourceName;
 				if ( preferredDDSPrecompressed && usage != TD_PBR_COLOR ) {
@@ -881,21 +1041,28 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 					return;
 				}
 
-				R_DownsizeLoadedImageData( GetName(), usage, allowDownSize, pic, width, height );
+                R_ResolveImageReduction(consumedDownsize, width, height, 0, consumedReduction);
+                int expectedWidth = width, expectedHeight = height;
+                R_ApplyImageDownsizePolicy(consumedDownsize, expectedWidth, expectedHeight);
+				R_DownsizeLoadedImageData( GetName(), usage, allowDownSize, pic, width, height, &consumedDownsize );
+				consumedSource = ICS_DECODED_2D;
+                exactDecodedReduction = width == expectedWidth && height == expectedHeight;
+                consumedReduction.selectedWidth = width; consumedReduction.selectedHeight = height;
+                if (!exactDecodedReduction) consumedReduction.status = IR_FAILED;
 				opts.width = width;
 				opts.height = height;
 				opts.numLevels = 0;
 				DeriveOpts();
-				im.Load2DFromMemory( opts.width, opts.height, pic, opts.numLevels, opts.format, opts.colorFormat, opts.gammaMips, ( flags & IMAGEFLAG_FILTER_NEUTRAL_ALPHA ) != 0 );
+				if (!im.Load2DFromMemory( opts.width, opts.height, pic, opts.numLevels, opts.format, opts.colorFormat, opts.gammaMips, ( flags & IMAGEFLAG_FILTER_NEUTRAL_ALPHA ) != 0 )) return;
 
-				Mem_Free( pic );
 			}
 		}
-		if ( !loadedPrecompressedDDS ) {
+		if ( !loadedPrecompressedDDS && exactDecodedReduction ) {
 			binaryFileTime = im.WriteGeneratedFile( sourceFileTime );
 		}
 	}
 
+	consumedLoad.Content(im,consumedSource);
 	{
 		idScopedImageLoadPhase uploadPhase( imageLoadPhaseTimings.uploadMsec, imageLoadPhaseTimings.uploadCount );
 		AllocImage();
@@ -908,6 +1075,8 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		}
 	}
 	loadedSourceName = selectedSourceName;
+    consumedLoad.Reduction(consumedReduction);
+	consumedLoad.Loaded(consumedSource);
 }
 
 /*
@@ -977,19 +1146,35 @@ void idImage::Bind() {
 	tmu_t* tmu = &backEnd.glState.tmu[texUnit];
 
 	// enable or disable apropriate texture modes
+	//
+	// GL_TEXTURE_2D and GL_TEXTURE_CUBE_MAP are fixed-function texture-target
+	// enables: they select which target the fixed-function fragment stage
+	// samples, and they do not exist as enables in an ES or core profile,
+	// where the shader names its own sampler. glEnable/glDisable with them
+	// raises GL_INVALID_ENUM on every texture-type transition -- measured on
+	// ES as a persistent error that outlived the frame raising it and
+	// corrupted per-draw glGetError checks in the back end.
+	//
+	// The bookkeeping still runs on every profile; only the two calls that
+	// reach the driver are gated.
 	if (tmu->textureType != opts.textureType && (backEnd.glState.currenttmu < glConfig.maxTextureUnits)) {
-		if (tmu->textureType == TT_CUBIC) {
-			glDisable(GL_TEXTURE_CUBE_MAP_EXT);
-		}
-		else if (tmu->textureType == TT_2D) {
-			glDisable(GL_TEXTURE_2D);
-		}
+		const bool hasFixedFunctionTextureEnables =
+			glConfig.backendCaps.profile != RENDERER_CONTEXT_PROFILE_ES
+			&& glConfig.backendCaps.profile != RENDERER_CONTEXT_PROFILE_CORE;
+		if (hasFixedFunctionTextureEnables) {
+			if (tmu->textureType == TT_CUBIC) {
+				glDisable(GL_TEXTURE_CUBE_MAP_EXT);
+			}
+			else if (tmu->textureType == TT_2D) {
+				glDisable(GL_TEXTURE_2D);
+			}
 
-		if (opts.textureType == TT_CUBIC) {
-			glEnable(GL_TEXTURE_CUBE_MAP_EXT);
-		}
-		else if (opts.textureType == TT_2D) {
-			glEnable(GL_TEXTURE_2D);
+			if (opts.textureType == TT_CUBIC) {
+				glEnable(GL_TEXTURE_CUBE_MAP_EXT);
+			}
+			else if (opts.textureType == TT_2D) {
+				glEnable(GL_TEXTURE_2D);
+			}
 		}
 		tmu->textureType = opts.textureType;
 	}
@@ -1024,9 +1209,10 @@ int MakePowerOfTwo( int num ) {
 	return pot;
 }
 
-static unsigned int R_GetImageDownsizeSignature( const char *name, textureUsage_t usage, bool allowDownSize ) {
+static unsigned int R_GetImageDownsizeSignature( const char *name, textureUsage_t usage, bool allowDownSize, const imageDownsizePolicy_t* consumed ) {
 	imageDownsizePolicy_t policy;
-	R_GetImageDownsizePolicy( name, usage, allowDownSize, policy );
+	if ( consumed ) policy = *consumed;
+	else R_GetImageDownsizePolicy( name, usage, allowDownSize, policy );
 	if ( !policy.IsActive() ) {
 		return 0;
 	}
@@ -1036,7 +1222,7 @@ static unsigned int R_GetImageDownsizeSignature( const char *name, textureUsage_
 	// moved reduction from a single bilinear resample onto the same box-filter
 	// mip chain the rest of the pipeline uses, so every cached downsized image
 	// written before that is stale even though its policy is unchanged.
-	unsigned int signature = ( static_cast<unsigned int>( policy.maxDimension ) << 8 ) ^ static_cast<unsigned int>( usage ) ^ 0x6F713401u;
+	unsigned int signature = ( static_cast<unsigned int>( policy.maxDimension ) << 8 ) ^ static_cast<unsigned int>( usage ) ^ 0x6F713402u;
 	if ( policy.mipShift > 0 ) {
 		signature ^= ( static_cast<unsigned int>( policy.mipShift ) * 0x9E3779B9u );
 		signature ^= ( static_cast<unsigned int>( policy.minDimension ) * 0x85EBCA6Bu );
@@ -1077,47 +1263,37 @@ static int R_CountExactHalvings( int width, int height, int scaledWidth, int sca
 }
 
 static byte *R_ShrinkLoadedImageData( const byte *pic, int width, int height, int scaledWidth, int scaledHeight, bool gammaMips, bool srgbMips ) {
+    if (!pic || width < 1 || height < 1 || scaledWidth < 1 || scaledHeight < 1 || scaledWidth > width || scaledHeight > height) return NULL;
 	const int halvings = R_CountExactHalvings( width, height, scaledWidth, scaledHeight );
 	if ( halvings <= 0 ) {
 		return R_ResampleTexture( pic, width, height, scaledWidth, scaledHeight );
 	}
 
-	byte *shrunk = NULL;
-	int level = width;
-	int levelHeight = height;
-	for ( int i = 0; i < halvings; i++ ) {
-		const byte *source = ( shrunk != NULL ) ? shrunk : pic;
-		byte *next = srgbMips ? R_MipMapWithSRGB( source, level, levelHeight )
-			: ( gammaMips ? R_MipMapWithGamma( source, level, levelHeight ) : R_MipMap( source, level, levelHeight ) );
-		if ( next == NULL ) {
-			break;
-		}
-		if ( shrunk != NULL ) {
-			Mem_Free( shrunk );
-		}
-		shrunk = next;
-		level = Max( 1, level >> 1 );
-		levelHeight = Max( 1, levelHeight >> 1 );
-	}
-
-	if ( shrunk == NULL ) {
-		return R_ResampleTexture( pic, width, height, scaledWidth, scaledHeight );
-	}
-	if ( level != scaledWidth || levelHeight != scaledHeight ) {
-		Mem_Free( shrunk );
-		return R_ResampleTexture( pic, width, height, scaledWidth, scaledHeight );
-	}
-
-	return shrunk;
+    byte *shrunk = NULL;
+    struct Cleanup { byte*& value; ~Cleanup() { if (value) Mem_Free(value); } } cleanup{shrunk};
+    int level = width, levelHeight = height;
+    for (int i = 0; i < halvings; ++i) {
+        const byte *source = shrunk ? shrunk : pic;
+        byte *next = srgbMips ? R_MipMapWithSRGB( source, level, levelHeight )
+            : ( gammaMips ? R_MipMapWithGamma( source, level, levelHeight ) : R_MipMap( source, level, levelHeight ) );
+        if (!next) return NULL;
+        if (shrunk) Mem_Free(shrunk);
+        shrunk = next;
+        level = Max(1, level >> 1); levelHeight = Max(1, levelHeight >> 1);
+    }
+    byte *result = shrunk;
+    shrunk = NULL;
+    return result;
 }
 
-static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height ) {
+static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height, const imageDownsizePolicy_t* consumed ) {
 	if ( pic == NULL || width <= 0 || height <= 0 ) {
 		return;
 	}
 
 	imageDownsizePolicy_t policy;
-	R_GetImageDownsizePolicy( name, usage, allowDownSize, policy );
+	if ( consumed ) policy = *consumed;
+	else R_GetImageDownsizePolicy( name, usage, allowDownSize, policy );
 
 	int scaledWidth = width;
 	int scaledHeight = height;
@@ -1137,36 +1313,31 @@ static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, b
 	height = scaledHeight;
 }
 
-static void R_DownsizeLoadedCubeImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size ) {
-	if ( pics == NULL || size <= 0 ) {
-		return;
-	}
-
-	imageDownsizePolicy_t policy;
-	R_GetImageDownsizePolicy( name, usage, allowDownSize, policy );
-
-	int scaledSize = size;
-	int scaledHeight = size;
-	R_ApplyImageDownsizePolicy( policy, scaledSize, scaledHeight );
-	if ( scaledSize == size && scaledHeight == size ) {
-		return;
-	}
-
-	for ( int i = 0; i < 6; i++ ) {
-		if ( pics[i] == NULL ) {
-			continue;
-		}
-
-		byte *resampled = R_ShrinkLoadedImageData( pics[i], size, size, scaledSize, scaledSize, R_ImageUsageUsesGammaMips( usage ), usage == TD_PBR_COLOR );
-		if ( resampled == NULL ) {
-			continue;
-		}
-
-		Mem_Free( pics[i] );
-		pics[i] = resampled;
-	}
-
-	size = scaledSize;
+static bool R_DownsizeLoadedCubeImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size, const imageDownsizePolicy_t* consumed ) {
+    if (!pics || size <= 0) return false;
+    // The complete cube is one publication. No face or size changes if any
+    // candidate fails, including exceptions during an intermediate mip/face.
+    for (int i = 0; i < 6; ++i) {
+        if (!pics[i]) return false;
+        for (int j = 0; j < i; ++j) if (pics[i] == pics[j]) return false;
+    }
+    imageDownsizePolicy_t policy;
+    if (consumed) policy = *consumed;
+    else R_GetImageDownsizePolicy(name, usage, allowDownSize, policy);
+    int scaledSize = size, scaledHeight = size;
+    R_ApplyImageDownsizePolicy(policy, scaledSize, scaledHeight);
+    if (scaledSize == size && scaledHeight == size) return true;
+    byte *candidates[6]{};
+    struct Cleanup { byte** values; ~Cleanup() { for (int i = 0; i < 6; ++i) if (values[i]) Mem_Free(values[i]); } } cleanup{candidates};
+    for (int i = 0; i < 6; ++i) {
+        candidates[i] = R_ShrinkLoadedImageData(pics[i], size, size, scaledSize, scaledSize, R_ImageUsageUsesGammaMips(usage), usage == TD_PBR_COLOR);
+        if (!candidates[i]) return false;
+    }
+    for (int i = 0; i < 6; ++i) {
+        Mem_Free(pics[i]); pics[i] = candidates[i]; candidates[i] = NULL;
+    }
+    size = scaledSize;
+    return true;
 }
 
 /*
@@ -1256,12 +1427,39 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 	const GLenum textureTarget = isCube ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D;
 	const GLenum copyTarget = isCube
 		? GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT + cubeFace : GL_TEXTURE_2D;
-	R_BindTextureForDirectAccess( textureTarget, texnum );
 
 	const bool readingFromRenderTexture = ( backEnd.renderTexture != NULL ) && ( backEnd.renderTexture->GetNumColorImages() > 0 );
 	const GLenum readAttachment = GL_COLOR_ATTACHMENT0;
-	const bool needsStorageResize = ( opts.width != imageWidth ) || ( opts.height != imageHeight );
+	bool needsStorageResize = ( opts.width != imageWidth ) || ( opts.height != imageHeight );
 
+	// ES 3.0 will not copy the fixed-point default framebuffer into a
+	// floating-point texture. _currentRender is FMT_RGBA16F (Image_intrinsic.cpp),
+	// so on ES the whole non-blit capture path failed silently: glCopyTexImage2D
+	// raised GL_INVALID_OPERATION, the destination kept its 16x16 intrinsic
+	// storage, and because opts.width/height were updated anyway every later
+	// call took the glCopyTexSubImage2D branch and raised GL_INVALID_VALUE for a
+	// region larger than the level. Respecify as RGBA8 instead: the source is an
+	// 8-bit back buffer, so the float storage was buying nothing here. Desktop GL
+	// accepts the mismatched copy and keeps its 16F target.
+	if ( !readingFromRenderTexture && glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES ) {
+		const bool destIsFixedPoint =
+			internalFormat == GL_RGBA8 || internalFormat == GL_RGB8
+			|| internalFormat == GL_RGBA || internalFormat == GL_RGB
+			|| internalFormat == GL_SRGB8_ALPHA8 || internalFormat == GL_SRGB8
+			|| internalFormat == GL_RGB565 || internalFormat == GL_RGB5_A1
+			|| internalFormat == GL_RGBA4;
+		if ( !destIsFixedPoint ) {
+			if ( !R_ImagePolicyContentMutation() ) return false;
+			opts.format = FMT_RGBA8;
+			internalFormat = GL_RGBA8;
+			dataFormat = GL_RGBA;
+			dataType = GL_UNSIGNED_BYTE;
+			needsStorageResize = true;
+		}
+	}
+
+	if ( ( opts.width != imageWidth || opts.height != imageHeight || IsFileBacked() ) && !R_ImagePolicyContentMutation() ) return false;
+	R_BindTextureForDirectAccess( textureTarget, texnum );
 	opts.width = imageWidth;
 	opts.height = imageHeight;
 
@@ -1340,11 +1538,17 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 			glDisable( GL_SCISSOR_TEST );
 		}
 
-		if ( needsStorageResize && !isCube ) {
+		// ES 3.0 constrains glCopyTexImage2D's internalformat more tightly than
+		// desktop does. Allocating the level with glTexImage2D and then copying
+		// into it needs only that the level exist and be format-compatible with
+		// the read buffer, which is always true here.
+		const bool useCopyTexImage = needsStorageResize && !isCube
+			&& glConfig.backendCaps.profile != RENDERER_CONTEXT_PROFILE_ES;
+		if ( useCopyTexImage ) {
 			glCopyTexImage2D( copyTarget, 0, internalFormat != 0 ? internalFormat : GL_RGBA8, x, y, imageWidth, imageHeight, 0 );
 		} else {
 			if ( needsStorageResize ) {
-				R_AllocateCopyTextureStorage( true, copyTarget,
+				R_AllocateCopyTextureStorage( isCube, copyTarget,
 					internalFormat != 0 ? internalFormat : GL_RGBA8, imageWidth,
 					imageHeight, dataFormat != 0 ? dataFormat : GL_RGBA,
 					dataType != 0 ? dataType : GL_UNSIGNED_BYTE );
@@ -1388,7 +1592,6 @@ bool idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight,
 	const GLenum textureTarget = isCube ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D;
 	const GLenum copyTarget = isCube
 		? GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT + cubeFace : GL_TEXTURE_2D;
-	R_BindTextureForDirectAccess( textureTarget, texnum );
 
 	// The destination must hold depth-renderable storage: it gets attached to
 	// GL_DEPTH_ATTACHMENT for the blit path and receives GL_DEPTH_COMPONENT
@@ -1403,6 +1606,8 @@ bool idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight,
 		|| internalFormat == GL_DEPTH_COMPONENT32F
 		|| internalFormat == GL_DEPTH24_STENCIL8
 		|| internalFormat == GL_DEPTH32F_STENCIL8;
+	if ( ( !hasDepthStorage || opts.width != imageWidth || opts.height != imageHeight || IsFileBacked() ) && !R_ImagePolicyContentMutation() ) return false;
+	R_BindTextureForDirectAccess( textureTarget, texnum );
 	if ( !hasDepthStorage ) {
 		internalFormat = GL_DEPTH_COMPONENT24;
 		dataFormat = GL_DEPTH_COMPONENT;
@@ -1415,10 +1620,14 @@ bool idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight,
 	opts.height = imageHeight;
 
 	const bool readingFromRenderTexture = ( backEnd.renderTexture != NULL ) && ( backEnd.renderTexture->GetDepthImage() != NULL );
+	// A strict context may intentionally differ from archived r_multiSamples.
+	// Unknown actual samples cannot safely select a default-depth copy path.
+	const int defaultSamples = readingFromRenderTexture ? 0 : R_DefaultFramebufferSamples();
+	if ( defaultSamples < 0 ) return false;
 	const bool sourceDepthIsMSAA =
 		readingFromRenderTexture
 		? ( backEnd.renderTexture->GetDepthImage()->GetOpts().numMSAASamples > 1 )
-		: ( r_multiSamples.GetInteger() > 1 );
+		: ( defaultSamples > 1 );
 	const bool canBlitDepth = ( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 );
 
 	// Prefer depth blits when sampling depth for SSAO, especially for MSAA sources.
@@ -1622,6 +1831,7 @@ void idImage::UploadScratch( const byte * data, int cols, int rows ) {
 			return;
 		}
 		if ( opts.width != cols || opts.height != rows ) {
+			if ( !R_ImagePolicyContentMutation() ) return;
 			opts.width = cols;
 			opts.height = rows;
 			AllocImage();
@@ -1637,6 +1847,7 @@ void idImage::UploadScratch( const byte * data, int cols, int rows ) {
 			return;
 		}
 		if ( opts.width != cols || opts.height != rows ) {
+			if ( !R_ImagePolicyContentMutation() ) return;
 			opts.width = cols;
 			opts.height = rows;
 			AllocImage();
@@ -1663,6 +1874,17 @@ int idImage::StorageSize() const {
 	}
 	baseSize *= BitsForFormat( opts.format );
 	baseSize /= 8;
+	// A cube map allocates all six faces under one idImage. Counting one face
+	// made listImages report a sixth of what reflection probes and the lightgrid
+	// actually cost, which is the difference between the total agreeing with the
+	// driver's own accounting and being quietly low.
+	if ( opts.textureType == TT_CUBIC ) {
+		baseSize *= 6;
+	}
+	// A multisampled target stores every sample and has no mip chain.
+	if ( opts.numMSAASamples > 1 ) {
+		baseSize *= opts.numMSAASamples;
+	}
 	return baseSize;
 }
 
@@ -1705,6 +1927,9 @@ void idImage::Print() const {
 		NAME_FORMAT( DXT1 );
 		NAME_FORMAT( DXT5 );
 		NAME_FORMAT( BC7 );
+		NAME_FORMAT( ETC2_RGB8 );
+		NAME_FORMAT( ETC2_RGBA8 );
+		NAME_FORMAT( EAC_RG11 );
 		NAME_FORMAT( DEPTH );
 		NAME_FORMAT( X16 );
 		NAME_FORMAT( Y16_X16 );
@@ -1760,6 +1985,8 @@ idImage::Reload
 ===============
 */
 void idImage::Reload( bool force ) {
+	if ( !R_ImagePolicyOperationAllowed() ) return;
+	if ( !R_ImagePolicyContentMutation() ) return;
 	if ( scratchImage ) {
 		common->DPrintf( "reallocating scratch %s.\n", GetName() );
 		DeriveOpts();
@@ -1838,6 +2065,7 @@ void idImage::SetSamplerState( textureFilter_t tf, textureRepeat_t tr ) {
 	if ( tf == filter && tr == repeat ) {
 		return;
 	}
+	if ( !R_ImagePolicyContentMutation() ) return;
 	filter = tf;
 	repeat = tr;
 	R_BindTextureForDirectAccess( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );

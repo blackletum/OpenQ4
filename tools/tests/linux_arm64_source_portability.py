@@ -1012,7 +1012,7 @@ def main() -> None:
     require(win_main, "!Sys_IsAbsoluteWindowsPath( savePath )", "absolute Windows save-root fallback guard")
     require(meson, "windows_shell_dep = cc.find_library('shell32', required: true)", "Windows Shell link dependency")
     require(meson, "windows_ole_dep = cc.find_library('ole32', required: true)", "Windows COM allocator link dependency")
-    if meson.count("windows_shell_dep,") != 3 or meson.count("windows_ole_dep,") != 3:
+    if meson.count("\n      windows_shell_dep,") + meson.count("\n    windows_shell_dep,") != 3 or meson.count("\n      windows_ole_dep,") + meson.count("\n    windows_ole_dep,") != 3:
         raise AssertionError("All Windows client and dedicated dependency sets must retain Known Folder libraries")
     require(sys_public, "uint32_t\t\tthreadId;", "fixed-width cross-platform thread id")
     require(win_main, "DWORD threadId = 0;", "Win32-native CreateThread id output")

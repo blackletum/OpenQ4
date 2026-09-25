@@ -42,6 +42,7 @@ along with openQ4 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 #include "TrueType.h"
+#include "RetainedFontCache.h"
 
 namespace {
 
@@ -1426,6 +1427,7 @@ R_ShutdownTrueTypeFonts
 ============
 */
 void R_ShutdownTrueTypeFonts( bool preserveAtlasImages ) {
+	tr.ResetRetainedFontCache();
 	if ( ttfConsoleMaterial != NULL && ttfConsoleOriginalImage != NULL ) {
 		if ( !ttfConsoleMaterial->OverrideStageImageForRuntime( 0, ttfConsoleOriginalImage ) ) {
 			common->Warning( "TTF font: could not restore the authored console material image" );
@@ -1445,4 +1447,84 @@ void R_ShutdownTrueTypeFonts( bool preserveAtlasImages ) {
 	// fonts from scratch after a restart.
 	ttfPageSets.DeleteContents( true );
 	ttfFonts.Shutdown();
+}
+
+namespace {
+class RetainedFontSource final : public openq4::fonts::Source {
+public:
+	bool Metrics(const std::string& name, int pixels, renderFontMetrics_t& out) override {
+		idTrueTypeFont* face = ttfFonts.FindFace(name.c_str());
+		if (!face) return false;
+		const float scale = face->ScaleForPixelHeight(static_cast<float>(pixels));
+		ttGlyphMetrics_t x = {};
+		face->GetGlyphMetrics(face->GlyphForCodepoint('x'),x);
+		out = {face->Ascender()*scale, -face->Descender()*scale,
+			(face->Ascender()-face->Descender())*scale, (x.yMax-x.yMin)*scale};
+		if (r_ttfFontDebug.GetBool()) common->Printf("Retained font: %s at %i output pixels\n",name.c_str(),pixels);
+		return true;
+	}
+	bool Resolve(const std::string& name, std::uint32_t scalar, int& glyph) override {
+		idTrueTypeFont* face = ttfFonts.FindFace(name.c_str());
+		if (!face) return false;
+		glyph = face->GlyphForCodepoint(static_cast<int>(scalar));
+		if (!glyph) glyph = face->GlyphForCodepoint('?');
+		return true; // .notdef is valid when even '?' is absent.
+	}
+	bool Rasterize(const std::string& name, int pixels, int glyph, openq4::fonts::Raster& out) override {
+		idTrueTypeFont* face = ttfFonts.FindFace(name.c_str());
+		ttGlyphMetrics_t metrics;
+		if (!face || !face->GetGlyphMetrics(glyph,metrics)) return false;
+		struct Bitmap {
+			ttGlyphBitmap_t value = {};
+			~Bitmap() { idTrueTypeFont::FreeGlyphBitmap(value); }
+		} bitmap;
+		const float scale = face->ScaleForPixelHeight(static_cast<float>(pixels));
+		if (!face->RasterizeGlyph(glyph,scale,bitmap.value)) return false;
+		out.advance = metrics.advance*scale;
+		out.left = bitmap.value.left; out.top = bitmap.value.top;
+		out.width = bitmap.value.width; out.height = bitmap.value.height;
+		if (bitmap.value.pixels) out.coverage.assign(bitmap.value.pixels,
+			bitmap.value.pixels+static_cast<size_t>(out.width)*out.height);
+		return true;
+	}
+};
+class RetainedFontDevice final : public openq4::fonts::Device {
+public:
+	bool CreatePage(unsigned page, int dimension, const char* name) override {
+		idImageOpts opts;
+		opts.textureType = TT_2D; opts.format = FMT_RGBA8; opts.colorFormat = CFM_DEFAULT;
+		opts.width = opts.height = dimension; opts.numLevels = 1; opts.isPersistant = true;
+		idImage* image = globalImages->ScratchImage(name,&opts,TF_LINEAR,TR_CLAMP,TD_LOOKUP_TABLE_RGBA);
+		if (!image || !image->IsLoaded()) return false;
+		images[page] = image;
+		std::vector<byte> clear(static_cast<size_t>(dimension)*dimension*4,255);
+		for (size_t i = 3; i < clear.size(); i += 4) clear[i] = 0;
+		image->SubImageUpload(0,0,0,0,dimension,dimension,clear.data());
+		return true;
+	}
+	bool Upload(unsigned page, int x, int y, int width, int height, const unsigned char* rgba) override {
+		if (!images[page] || !images[page]->IsLoaded()) return false;
+		images[page]->SubImageUpload(0,x,y,0,width,height,rgba);
+		return true;
+	}
+	void Reset() override {
+		for (auto& image : images) { if (image) image->PurgeImage(); image = NULL; }
+	}
+private:
+	idImage* images[openq4::fonts::Cache::MaxPages] = {};
+};
+RetainedFontSource retainedFontSource;
+RetainedFontDevice retainedFontDevice;
+openq4::fonts::Cache retainedFontCache(retainedFontSource,retainedFontDevice);
+}
+bool idRenderSystemLocal::GetRetainedFontMetrics(const char* face, int pixels, renderFontMetrics_t& out) {
+	return face && retainedFontCache.Metrics(face,pixels,out);
+}
+bool idRenderSystemLocal::GetRetainedFontGlyph(const char* face, int pixels, unsigned int scalar, renderFontGlyph_t& out) {
+	return face && retainedFontCache.Glyph(face,pixels,scalar,out);
+}
+void idRenderSystemLocal::ResetRetainedFontCache() {
+	if (r_ttfFontDebug.GetBool() && retainedFontCache.GlyphCount()) common->Printf(
+		"Retained font cache reset: %u glyphs, %u pages\n",retainedFontCache.GlyphCount(),retainedFontCache.PageCount());
+	retainedFontCache.Reset();
 }

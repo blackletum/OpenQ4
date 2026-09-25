@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #ifndef __SESSIONLOCAL_H__
 #define __SESSIONLOCAL_H__
+#include "NativeInputPublications.h"
 
 /*
 
@@ -196,9 +197,10 @@ public:
 
 	virtual bool		IsMultiplayer();
 	virtual bool		IsLoadingSaveGame() const { return loadingSaveGame; }
-	virtual bool		IsGUIActive() const { return ( guiActive != NULL ) || ( guiTest != NULL ); }
+	virtual bool		IsGUIActive() const;
 	bool				IsMapSpawned() const { return mapSpawned; }
 	virtual idUserInterface *GetActiveGUI() const { return ( guiTest != NULL ) ? guiTest : guiActive; }
+	bool QueryNativeInputPublication(openq4::NativeSessionPublication&) const noexcept;
 	virtual bool		IsMainMenuIntroPlaying() const;
 
 	virtual bool		ProcessEvent( const sysEvent_t *event );
@@ -207,6 +209,10 @@ public:
 	virtual void		ExitMenu();
 	virtual void		GuiFrameEvents();
 	virtual void		SetGUI( idUserInterface *gui, HandleGuiCommand_t handle );
+	bool				OpenSystemSettings();
+	bool				ReturnSystemSettings();
+	void				ReportSystemSettings();
+	void				CloseSystemSettings();
 
 	virtual const char *MessageBox( msgBoxType_t type, const char *message, const char *title = NULL, bool wait = false, const char *fire_yes = NULL, const char *fire_no = NULL, bool network = false  );
 	virtual void		StopBox( void );
@@ -372,6 +378,12 @@ public:
 
 	idUserInterface *	guiInGame;
 	idUserInterface *	guiMainMenu;
+	// Explicit opt-in child; the legacy parent remains allocated and inactive.
+	idUserInterface *	guiSystem;
+	idUserInterface *	guiSystemParent;
+	HandleGuiCommand_t	guiSystemParentHandle;
+	bool				systemGuiTransition;
+	bool				systemGuiBackEvent;
 	idListGUI *			guiMainMenu_MapList;		// easy map list handling
 	idUserInterface *	guiDemoMenu;
 	idListGUI *			guiDemoList;
@@ -507,6 +519,7 @@ public:
 	idUserInterface *	GetActiveMenu();
 
 	void				DispatchCommand( idUserInterface *gui, const char *menuCommand, bool doIngame = true );
+	void				PumpApplicationActions( idUserInterface *only = NULL );
 	void				MenuEvent( const sysEvent_t *event );
 	bool				HandleSaveGameMenuCommand( idCmdArgs &args, int &icmd );
 	void				HandleInGameCommands( const char *menuCommand );

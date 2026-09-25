@@ -2,6 +2,23 @@
 
 ## 0.13.2 release candidate
 
+- [x] Validate the local Windows `idtech5-ui` integration with the current renderer
+  and game code. Preserve Vulkan startup recovery, PBR image handling, generated
+  font atlases, language reloads and single-player cvar ownership. The modern
+  SYSTEM page remains opt-in. Paired renderer/game interfaces reject stale
+  modules; CI pins the matching companion revision. German covers the new UI
+  labels, and Android touch labels have their own IDs alongside the level editor.
+  The 285 portable Python check entries, an additional Vulkan policy variant,
+  109 Meson tests and 17 companion checks pass; six expensive layout tests use
+  an optimized build with assertions enabled. Eight stock-gameplay/SYSTEM-page
+  cases cover SP/MP on OpenGL/Vulkan, and both startup-recovery gameplay cases
+  and the Windows dedicated smoke pass. Existing version-10 baked lighting
+  remains readable while obsolete generated image caches are regenerated.
+  Full debug SYSTEM scripts reached edit/apply/resource reload but exceeded
+  their six-minute limits. Complete UI workflow/performance, interactive input
+  and other-platform qualification remain open; this is integration evidence,
+  not full UI product signoff. Stock MP AAS/precache diagnostics remain.
+
 - [x] Harden the preliminary Vulkan device probe: complete device and device
   extension inventories replace fixed caps, empty queues are rejected, forced
   choices cannot substitute another GPU, and verbose ranking considers only
@@ -328,6 +345,383 @@
 - [x] Multiplayer bots retain valid routes when a replacement is blocked, release stalled and no-longer-useful goals, and stop using unseen enemy positions for combat movement/weapon range. Explosion-aware threat filtering catches nearby resting explosives. Visibility and pickup shortlists avoid redundant collision queries; the native fixture reduces 80-item snap queries from 81 to 11 and checks 240 perception cases. Windows x64 build/staging, eight existing bot contracts, native regressions and live stock DM/CTF gameplay passed. CTF exercised fetch, defend, escort and capture goals. Details and reproduction: [Multiplayer bots](mp-bots.md).
 - [x] German is selectable as **Deutsch** in Game Options, with complete bundled menu, objective, terminal and gameplay-message translations. Retail German campaign dialogue remains supported; English-only installations retain English dialogue. Coverage, format arguments, choice ordering and German glyphs are checked alongside the existing localization contracts. Language changes force a deferred GUI reload so cached labels use the selected language. Player notes: [0.13.2](releases/v0.13.2.md).
 - [x] Windows x64 build/staging and German SP/OpenGL and MP/Vulkan gameplay checks passed. The runtime regression checks live language switching, visible menus and the translated Match Control view using engine screenshots. German retail voice playback still requires qualification with the complete retail pack; the available English dialogue fallback was exercised.
+## Unreleased — `idtech5-ui` development
+
+- The experimental SYSTEM page adds window and custom fullscreen width/height
+  fields with localized whole-pixel validation. Custom dimensions select Custom
+  resolution automatically. Unsupported display combinations remain editable
+  drafts and cannot Apply; window resizing uses Keep/Revert confirmation.
+  Oversized numeric fields keep their editable value visible when translated
+  labels or validation text exceed the available scroll area.
+  Display, resolution and refresh-rate choice catalogs remain in development.
+
+- The opt-in modern SYSTEM page adds fullscreen, borderless, fullscreen policy
+  and MSAA controls to its Apply/Keep/Revert flow. MSAA is unavailable through
+  this page on Vulkan because its strict display-change path does not yet
+  support those requests. Vulkan's scene-rendering MSAA remains separate.
+  Blocking video reload time no longer consumes the subsequent 20-second
+  presentation wait. The separate 15-second Keep/Revert countdown is unchanged.
+
+- SYSTEM brightness and ambient-light sliders now grow with enlarged text.
+  Their numeric values stay fully visible when focusing either control, and
+  the paired field frames remain aligned.
+
+- Experimental modern UI text now rasterizes at its displayed size, improving
+  enlarged text and fractional UI scaling. Shared glyph atlases stay stable
+  through view changes and rebuild after language or video changes. Replace
+  the client and renderer modules together; older modules are rejected.
+  Full font, language and interface qualification remains in development.
+
+- The experimental modern UI supports independently enlarged text using
+  `ui_retainedTextScale` (`1`–`2`, default `1`). SYSTEM fields and dialogs grow
+  with the text, long messages scroll while actions stay visible, and translated
+  dropdowns remeasure their rows after widening. Changing status messages keep
+  the active control visible while preserving deliberate scrolling.
+  SYSTEM now offers UI scale and text size controls plus Reset UI sizes through
+  its normal Apply/Discard flow. Saved sizes survive restart; very large sizes
+  fit the window so reset and essential actions remain reachable. Complete
+  interface qualification remains in development.
+
+- Modern SYSTEM settings again show the correct localized Ready, unsaved-change,
+  confirmation and error messages after the language-table merge. Page generation
+  and validation use the same current string IDs.
+
+- The experimental modern UI respects vector-mask holes when targeting controls
+  and scrolling. Empty or fully transparent masked panels no longer retain
+  keyboard focus. Partly transparent controls and active drags remain usable.
+  Full UI replacement and editor qualification remain in development.
+
+- SYSTEM dropdowns now fit inside the settings panel with cut-corner vector
+  framing. Lists open above a control when needed, preserve readable row sizes,
+  and scroll within the available space without covering the action footer.
+  The replacement UI remains in development.
+
+- UI authoring can prepare a document and its layout before publishing the live
+  canvas and undo history together. Failed preparation preserves the current
+  document. Native editor panels and complete save/recovery workflows remain
+  in development.
+
+- Editor save development now has a checked way to create complete new files
+  without replacing an existing document, including when another process creates
+  that name at the same time. The editor Save As and recovery workflows remain
+  in development.
+
+- Full renderer shutdown now releases retained texture recovery data, including
+  after an invalidated quality-change attempt. Interrupted cleanup preserves the
+  recovery data until a later complete shutdown. Complete preset Apply remains
+  in development.
+
+- UI recovery development now preserves both original and requested supported
+  texture data across failed quality changes. Native input retirement also checks
+  actual menu and gameplay event disposal before releasing ownership. Complete
+  preset Apply and native text entry remain in development and are not enabled.
+
+- UI authoring gains validated source edits and undo/redo that preserve existing
+  formatting, comments and extension data. The visual editor and file-save
+  workflow remain in development; this is their document-editing foundation.
+
+- Native text integration now invalidates stale menu and window ownership before
+  replacement or teardown. Live native text entry remains in development and is
+  not enabled by this checkpoint.
+
+- SYSTEM dropdowns gain editable vector scrollbars for overflowing option lists.
+  Scrolling preserves the current selection and does not change a setting;
+  fitting lists hide the inert scrollbar. This remains development work on the
+  opt-in replacement UI, with complete screen and platform acceptance pending.
+- SYSTEM gains an editable vector scrollbar with a generous target, a narrow
+  trough and a cut-corner thumb. Its range follows the actual settings content;
+  deliberate scroll position survives UI-scale changes and window resizing.
+
+- Texture loading now handles incomplete mip chains and failed image allocations
+  without publishing partially assembled images. Large decoded textures retain
+  their requested dimensions, and cube faces stay consistent when a reduction
+  fails. Generated caches rebuild as needed for the corrected image processing.
+
+- Renderer upload buffers now verify their actual allocated size and clean up
+  partial failures. If the dynamic stream cannot be created or reused, rendering
+  falls back to legacy uploads instead of using unverified storage.
+
+- Image-quality settings gain checked renderer recovery foundations that reject
+  stale texture and material state after a failed restart. Complete preset Apply
+  remains in development; this does not enable unfinished mixed settings changes.
+  Recovery development now retains the quality policy actually used by supported
+  resources and distinguishes requested audio output from observed output.
+
+- SYSTEM uses a compact preset selector and a wrapping status/action footer to
+  keep more settings visible at large UI scales. Essential controls retain
+  their full-size targets and text can grow with translated labels.
+
+- Closing SYSTEM during preparation of a settings commit now cancels the
+  operation before persistence begins. The shared settings controller also gains
+  automatic completion for future resource-only changes, retaining recovery on
+  uncertain saves. Complete preset Apply remains in development.
+
+- The opt-in SYSTEM page adds the six performance presets and Auto-Detect to
+  its settings draft. Custom brightness edits are preserved, and canceling a
+  preset list keeps the previous selection. Labels wrap across the existing
+  translations and larger UI scales. Applying complete presets remains in
+  development while their renderer, image and audio effects gain checked
+  execution and recovery.
+
+- Refresh rate, sky rendering, emitter limits and generated-image cache
+  preferences now participate in normal saved settings. Lower performance
+  presets can edit their sound budget from a fresh start without requiring
+  a prior console preset command.
+
+- Retained menu focus keeps the complete control border inset from scroll-area
+  edges at high UI scales. Authored scrollbars preserve deliberate scrolling
+  through resizing and UI-scale changes; fresh navigation reveals its target.
+  Full-page qualification
+  remains in development.
+
+- SYSTEM precision work removes stray decimal digits from generated slider
+  values and preserves small numeric settings through Apply. Custom values keep
+  their precision, including through rollback and recovery records. Native text
+  composition and complete platform qualification remain in development.
+
+- The opt-in SYSTEM page pairs Brightness and Ambient Brightness sliders with
+  precise numeric fields. Unfinished edits are preserved when leaving a field;
+  Apply and exit require an explicit commit or discard. Native character entry
+  and complete field qualification remain in development.
+
+- Numeric fields add Copy, Cut and Paste shortcuts with localized failure
+  messages. A failed Cut preserves the selection, and rejected clipboard text
+  cannot replace a draft. Complete native input and platform validation remain
+  required before the retained UI is ready for general use.
+
+- Text-entry development now checks field ownership across backend replacement
+  and input-queue resets. A Windows text-store foundation keeps application
+  edits and native text-service revisions synchronized; live native text and
+  complete IME behavior remain in development.
+
+- Active numeric fields support caret movement, selection, deletion, undo/redo
+  and explicit Enter confirmation. Held editing keys cannot switch to another
+  field, and SDL shortcuts preserve the modifiers captured with each key event.
+  [Native text delivery](ui/text-input-routing.md) and production settings-field
+  completion remain in development.
+
+- Numeric-field development preserves unfinished edits and undo/redo through
+  focus changes and resource restoration, with explicit recovery when a setting
+  changes elsewhere. The [integration scope](ui/numeric-fields.md) separates
+  the rendered editor and semantic diagnostics from the ordinary input and
+  native IME work still needed before players can use the field.
+
+- Event journals reject malformed input records before allocating or dispatching
+  their payloads and release owned data on failures. Recording still uses its
+  existing platform-dependent format.
+
+- Repeated map loads release discarded input data, avoiding an event-queue
+  memory leak. Windows clipboard handling also checks transfer failures and
+  converts legacy text through the operating system's Unicode path. The
+  [text-entry foundation](ui/text-entry-foundation.md) records the scope;
+  editable retained fields and native IME integration are still in development.
+
+- OpenGL menus retain sharper text and vector edges at reduced resolution scale:
+  UI-only frames no longer receive the extra filter that softened the completed
+  image. World scaling and supersampling remain in place; the explicit legacy
+  crop mode is unchanged. See the [bounded qualification](ui/native-output.md).
+
+- The opt-in SYSTEM page adds bloom, ambient occlusion, tone mapping, CRT,
+  irradiance, UI aspect, resolution scale and VSync controls. Back now lets you
+  keep editing, discard and return, or apply and return after successful display
+  confirmation. Failed changes remain available for recovery. The
+  [implementation scope](ui/system-exit.md) records the remaining work before
+  enabling the replacement by default.
+
+- Menu development: retained settings now support toggles, stepped sliders and
+  selectable lists with editable vector parts. Changes stay in the settings
+  draft until accepted, and choice lists follow animated controls and page
+  fades. An opt-in SYSTEM page uses normal menu ownership and protects
+  unresolved changes on Back. The [implementation scope](ui/value-controls.md)
+  records remaining controls, artwork and editor work; the replacement remains
+  disabled by default.
+
+- Settings files now use checked serialization and durable replacement. A failed
+  save retains pending changes instead of clearing their dirty flag, and shared
+  recovery locks keep a second engine process from overwriting an active display
+  transaction. Retained confirmation views add Apply, Keep, Revert and a distinct
+  Retry action, with crash recovery and a countdown armed by the owning view's
+  presentation. The [integration scope](ui/display-confirmation.md) keeps full
+  production GUI/editor/platform acceptance separate from these implemented paths.
+
+- Display-settings development: the renderer can attempt an exact display
+  configuration, report failure and restore a captured window/device state.
+  Presentation results distinguish a newly rendered frame from accepted
+  settings values. The [confirmation integration](ui/display-confirmation.md)
+  now connects Keep/Revert and crash recovery; complete production settings
+  coverage remains in development.
+- Vulkan stops further presentation after unsafe submission or synchronization
+  failures until the device is restarted, avoiding reuse of synchronization
+  objects whose state is uncertain. Engine and renderer modules must be updated
+  together for the new private interface.
+
+- Settings development: retained menus can keep edits in a private draft,
+  discard changes, restore SYSTEM defaults into the draft, and apply immediate
+  settings with conflict checks. Drafts survive renderer/language recreation;
+  closing an editor releases its ownership. The
+  [SYSTEM contract](ui/system-settings-contract.md) records the supported scope.
+  Audio/resource application and the complete production screen remain in
+  development; display confirmation is implemented for eligible retained views.
+
+- Vulkan display initialization and partial display changes now report failed
+  window or swapchain setup instead of publishing a successful configuration.
+  Failed initialization cleans up its attempted device before releasing its window.
+
+- Behavior development: retained menus can initialize data, branch, run ordered
+  transitions and submit typed settings actions through named events. Pending
+  game data reaches handlers immediately, completed actions survive input
+  suspension, and outgoing menus finish their lifecycle safely. The
+  [event-program scope](ui/event-programs.md) records the current subset;
+  production GUI translation, full controls and visual editing remain open.
+
+- Presentation development: retained menus now support named values shared by
+  game callers, typed layout/text/color updates, and expression overrides that
+  survive GUI saves and renderer/language reloads. Hidden or input-blocked
+  panels cancel pending button activations. The
+  [alias checkpoint](ui/presentation-aliases.md) records the supported contract;
+  full GUI translation, controls and visual editing remain in development.
+
+- Vulkan now applies brightness and gamma to the completed image, including
+  menus and engine screenshots. Neutral settings bypass the correction pass.
+
+- Legacy list selection rejects invalid negative/out-of-range rows and displays
+  percent characters in row labels literally.
+
+- Application integration development: retained menu documents can use normal
+  GUI loading and submit brightness/shadow changes through typed settings operations.
+  Multiple views share resource recovery, and restored GUI state discards old
+  clicks. [Integration scope](ui/managed-application.md) records the current
+  limits; the full settings screen, GUI translation and visual editor remain
+  in development.
+
+- Instance persistence development: retained previews preserve focus, dialogs,
+  control availability and transition progress through renderer/language
+  reloads. Restoring an instance discards pending clicks and actions. GUI
+  ownership also handles direct editor deletion and allocations made before a
+  resource is loaded. The [checkpoint](ui/instance-persistence.md) records the
+  supported subset; complete game integration, translation and visual editing
+  remain in development.
+
+- Renderer recovery: full video restarts now recreate the selected renderer,
+  allowing Vulkan menus to survive display reinitialization. The restart path
+  reloads images once before rebuilding fonts.
+
+- Settings recovery development now checks the exact bytes of supported DDS
+  and previously loaded image-cache files before CPU reconstruction. Native
+  input development also accounts for queued event ownership through terminal
+  disposal. These are foundations for reliable settings and text entry;
+  additional settings effects, native activation and complete recovery remain
+  in development. See [image recovery](ui/image-content-recovery.md) and
+  [input ownership](ui/native-input-publication.md).
+
+- Instance development: retained documents can now keep separate data, focus,
+  display scale and transitions while sharing engine services. Closing one view
+  preserves its peers, and render targets cannot be resized underneath another
+  view's queued drawing. The [instance checkpoint](ui/instances.md) records
+  validation scope. GUI-manager/world integration, full translation and the
+  visual editor remain in development.
+
+- Integration development: menu and game callers now query GUI values without
+  stopping their expressions. Explicit overrides and focused
+  text-field queries prepare the replacement interface boundary. Development
+  packages must replace engine and both game modules together (game API 48;
+  renderer API 14). See the [presentation boundary](ui/presentation-bridge.md).
+  Complete GUI migration and the visual editor remain in development.
+
+- Live data development: retained interfaces now update text, gauges, layout
+  and control availability from typed state and read-only CVars without
+  rebuilding the screen. Invalid updates preserve the last valid snapshot;
+  renderer restarts retain application values. Native and SP/OpenGL/MP/Vulkan
+  checks pass; [binding evidence](ui/bindings.md) records current limits. Full
+  game integration, GUI migration and the visual editor remain in development.
+
+- Translation development: the current GUI set can now be imported through the
+  engine preprocessor into ordered windows, events, expressions and dependency
+  records. All 271 source hashes match in SP/OpenGL and MP/Vulkan; two unusual
+  monitor expressions remain flagged for review. The
+  [import checkpoint](ui/legacy-import.md) records the evidence. GUI replacements,
+  vector reconstruction, game bindings and the visual editor remain in progress.
+
+- Input development: the retained menu host now routes keyboard, mouse and
+  controller navigation, preserves console access and requires held controls
+  to be released before returning them to gameplay. Disconnecting a controller
+  cancels a pending button press. Navigation repeats without
+  depending on OS key repeat, and pointer positions retain their display-density
+  precision. [Input ownership](ui/input-routing.md) records implementation and
+  qualification: native checks pass and reviewed OpenGL/Vulkan gameplay captures
+  confirm SP pause/resume and continued MP simulation. The game action bridge,
+  full GUI migration and editor remain incomplete; existing MP warnings are
+  unchanged.
+
+- Button development: the retained runtime now owns focus, disabled navigation,
+  paired activation and modal input scopes. Editable timelines supply hover,
+  focus, pressed and disabled feedback. Native tests and reviewed SP/OpenGL
+  125% and MP/Vulkan 200% gameplay captures pass, including an OpenGL video
+  restart. The [interaction checkpoint](ui/interaction.md) records the evidence;
+  live platform input, game action dispatch, full GUI translation and the visual
+  editor remain open. The existing 93 MP content warnings are unchanged.
+
+- Mask development: editable paths now clip complete panels and their contents,
+  with smooth chamfers, curved holes and soft gradient reveals. Nested masks
+  and fades share the runtime's vector renderer. The [mask checkpoint](ui/masks.md)
+  records coverage checks and current limits; full GUI migration and the visual
+  editor remain in development.
+
+- Composition development: panels and their overlapping contents now fade as
+  one group, including nested controls and text edges. The
+  [composition checkpoint](ui/composition.md) records native overlap tests and
+  engine pixel comparisons. Development packages must replace engine, renderer
+  modules and both game modules together (renderer API 13, game API 47).
+  Broader effects and complete UI/editor qualification remain open.
+
+- Transition development: fades and whole-pixel movement now reuse compiled
+  vector paths, with measured reductions in CPU work. A precision fix keeps thin
+  rails stable during fractional movement. The new
+  [runtime profiler and benchmarks](ui/runtime-performance.md) expose remaining
+  cold/fractional-motion costs; optimized-build and GPU qualification remain open.
+
+- Vector development: editable native paths now support responsive chamfers,
+  curves, holes, strokes and fading rails through the retained engine renderer.
+  [Geometry checks](ui/vector-paths.md) and SP/OpenGL and MP/Vulkan gameplay
+  captures pass, including fractional scaling and video restart. Coverage
+  antialiasing now has an [analytic implementation](ui/coverage-antialiasing.md)
+  with independent pixel-area tests and reviewed SP/OpenGL 125% and MP/Vulkan
+  200% captures. Dense vector batches now split before exceeding the renderer's
+  surface capacity. Broader renderer qualification, the full
+  component/artwork corpus and editor interactions remain incomplete; existing
+  MP content warnings remain open.
+
+- Document/editor foundation: typed canonical sources retain comments and
+  extension data through validated value edits. Presentation tracks now support
+  continuous timing, interruption, pause, cancellation and reduced motion. The
+  [document checkpoint](ui/document-format.md) records the implemented subset;
+  native checks and SP gameplay captures pass in OpenGL and Vulkan, including
+  video restart and 100%/200% density. The visual editor and complete GUI
+  translation remain in progress; existing non-UI Vulkan warnings remain open.
+
+- Retained runtime development: RmlUi is pinned and integrated with the engine's
+  renderer, density model and current scalable fonts. Native layout, clipping
+  and motion-sampling checks are in place. The [integration checkpoint](ui/runtime-spike.md)
+  records remaining renderer, text, timing, input, editor and migration work;
+  this preview is not a completed player-facing replacement.
+
+- [x] Disabled mouse input and hidden rendering windows no longer route menu
+  cursor synchronization; unfocused windows cannot warp the pointer on menu
+  changes. Production-function tests cover Windows and POSIX paths; the staged
+  Windows client completed hidden-window SP/OpenGL and MP/Vulkan gameplay
+  captures. Broader platform and interactive qualification remains pending.
+
+- [ ] Replace every current GUI with a high-definition vector interface that
+  preserves Quake 4's identity, expands across aspect ratios and responds to
+  display density and player scale settings.
+- [ ] Deliver continuous transitions and the complete visual editor, including
+  editable vector paths, layout, states, bindings, timelines and reliable saving.
+- [ ] Qualify the complete SP/MP corpus, saves, world terminals, scopes, vehicles,
+  languages, supported platforms and release-style packages before promotion.
+- Specification and staged evidence: [UI replacement plan](plans/idtech5-ui.md).
+  This is development work; no completed player feature or upgrade requirement
+  is claimed yet. Curated release notes will use the actual selected release
+  version once the replacement is qualified.
 
 ## 0.13.1 — published 8 September 2026
 
@@ -426,6 +820,9 @@ is `docs/dev/macos-moltenvk-decision.md`.
 - [x] The view weapon kicks back when it fires in multiplayer, as it always has in single player, and a new **Settings > Game Options > View Weapon > Weapon Kick** option (`g_weaponMuzzleKick`, on by default) turns it off in both. The engine code was never the difference: `idGameLocal::FindEntityDef` redirects every multiplayer lookup from `X` to `X_mp`, and every stock `weapon_*_mp` def zeroes the four `muzzle_kick_*` keys, so `rvWeapon::MuzzleRise` returned at its `muzzle_kick_maxtime <= 0` guard. Each multiplayer weapon now recovers its own single-player kick from the def that redirect replaced. This is presentation only: the kick feeds the view model transform, and no stock weapon sets `launchFromBarrel`, so aim and shot origin cannot follow it. The separate `recoilAngles` view punch those defs also zero is deliberately left off.
 - [x] #158 navigation: openQ4 now compiles Quake 4 AAS in the engine. `dmap` rebuilds every AAS type declared by `aas_types` after writing `.proc`/`.cm`, `runAAS`, `runAASDir` and `runReach` register alongside `dmap` instead of inside `ID_ALLOW_TOOLS`, and unused AAS types get the placeholder file the runtime recognises as a dummy. Compiled `game/core2` reproduces the retail file's geometry CRC (3455855974) and navigation bounds exactly, with 1168 areas against retail's 1091 and 8435 valid reachabilities against 7566; forcing `-playerFlood` reproduces the shipped `aas48` bounds as well. The map loads all five compiled files with no AAS warnings, and a full `dmap mp/liquid_lab` produces `.proc`, `.cm` and five AAS files. Two defects found on the way: `idAASFileLocal::Optimize()` wrote uninitialised allocator memory as the dummy edge/face of every optimized AAS file, and `idVectorSet::FindVector()` never compiled because its base-class `Append` was unqualified. Raven's tactical feature lump is still not generated, so recompiled maps keep full pathing but lose navigation-mesh cover and lean positions. See [AAS compiler](aas-compiler.md).
 - [x] Compiled map output now reports the absolute path of each file it writes. `dmap` writes `.proc`/`.aas*` under `fs_cdpath` and `.cm` under `fs_devpath` (unset by default, so it falls back to `fs_savepath`), which are different directories from each other and from the `.map` that was read; the reporter on #158 concluded no `.proc` had been produced when it had.
+
+- [x] Experimental Android, GLES 3.0 and optional SigmaTouch integration based on **[Emile Belanger (emileb)](https://github.com/emileb)'s original contribution**, adapted to current official engine/game interfaces. Includes shader variants, ETC2/EAC textures, separate regenerable caches and a standalone SDLActivity APK host. Windows OpenGL/Vulkan and Linux GLES gameplay checks, native tests and Android cross-build/APK checks are recorded in [android-gles-integration.md](android-gles-integration.md); physical Android/SigmaTouch device qualification remains open. Candidate player notes: [Android/GLES](releases/android-gles.md).
+- [x] Android/GLES pre-publication review repairs alpha-test boundaries, required vertex-buffer setup, compressed mip uploads and small texture/cube cache generation; keeps uploaded intro/loop audio playable without reloading its source; fixes overlapping SigmaTouch controls and deferred localization; and checks native APK metadata, dependency notices and safe cleanup of obsolete extracted packages. Existing image caches regenerate once. The integration record tracks focused behavior, shader, native-build and packaging validation.
 - [x] Managed remote clients now retain their accepted initial join choice. Startup waits for the client's userinfo, and accepted game-initiated changes are published back to the owner. Two real clients pass automatic admission, roster configuration, captain assignment, force-ready, technical pause, remote captain timeout, resume and abort. Final Match Control layouts are verified at 960x540 and 800x600. The broader observer-role and camera matrix remains in progress.
 - [x] Managed Duel retains accepted contestants while its legacy contender list initializes. Each contestant can request and resume their own timeout without gaining captain privileges. The two-client gameplay test verifies admission, independent A/B budget presentation, operator pause, remote timeout and abort. All 48 competitive contracts pass; membership, operation, menu-model and camera regressions also pass Linux ASan/UBSan. Third-player Duel queue turnover still needs runtime qualification.
 - [x] Remote referee sign-in now completes its challenge response because the network engine services both client frame hooks, including frames without prediction. The production frame loop passes 200 cases on Windows and Linux. Three-client gameplay runs at 960x540 and 800x600 verify coach/broadcaster/referee disclosure, server camera permissions, role revocation, referee and operator technical pauses, a captain timeout and abort. Long readiness reasons still have a 4:3 clipping edge, and the wider competition matrix remains in progress.
