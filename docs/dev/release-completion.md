@@ -2,13 +2,22 @@
 
 ## 0.13.2 release candidate
 
+- [x] Harden the preliminary Vulkan device probe: complete device and device
+  extension inventories replace fixed caps, empty queues are rejected, forced
+  choices cannot substitute another GPU, and verbose ranking considers only
+  suitable candidates. All 74 native renderer/probe cases, four source
+  contracts, eight startup/GPU/recovery cases and six local probe controls
+  pass. Two stock SP/MP 0x MSAA lifecycle runs retain 16 engine captures with
+  unchanged runtime hashes and no tracked renderer warnings. Earlier
+  instance queries, later creation-failure retries and broader
+  qualification remain open; see [device admission](vulkan-device-selection.md).
 - [x] Check required Vulkan device and surface capabilities before selecting
   an adapter, allowing automatic selection to continue past an incompatible
   GPU. Explicit selections fail without substitution. The shared production
   selector passes 43 native cases, and all eight staged startup/GPU/recovery
   cases pass. Four SP/MP 0x/4x lifecycle runs and two gameplay recovery runs
-  retain 34 engine captures without tracked renderer warnings. Probe
-  enumeration and broader hardware qualification remain
+  retain 34 engine captures without tracked renderer warnings. Earlier
+  instance queries and broader hardware qualification remain
   separate audit items; see [device admission](vulkan-device-selection.md).
 - [x] Separate Storage1's scripted first entry from its second-entry gameplay
   benchmark. Both record the actual map filter and endpoint camera poses; the

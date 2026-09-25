@@ -41,27 +41,6 @@ static VkInstance vk_heldInstance = VK_NULL_HANDLE;
 // Share the renderer's limit without depending on its device context.
 #define VK_BRINGUP_REQUIRED_BOUND_DESCRIPTOR_SETS	VK_REQUIRED_BOUND_DESCRIPTOR_SETS
 
-typedef struct vkBringupDeviceInfo_s {
-	VkPhysicalDevice					physicalDevice;
-	VkPhysicalDeviceProperties			props;
-	uint32_t							graphicsQueueFamily;
-	uint32_t							transferQueueFamily;		// dedicated transfer family when present, else graphics
-	bool								hasGraphicsQueue;
-	bool								hasDedicatedTransferQueue;
-	bool								hasSwapchain;
-	VkDeviceSize						deviceLocalBytes;
-	bool								hasDynamicRendering;
-	bool								hasSynchronization2;
-	bool								hasTimelineSemaphore;
-	bool								hasDescriptorIndexing;
-	bool								hasBufferDeviceAddress;
-	bool								hasSamplerAnisotropy;
-	bool								hasTextureCompressionBC;
-	bool								hasDepthBounds;
-	bool								meetsRequirements;
-	int									score;
-} vkBringupDeviceInfo_t;
-
 void VK_Bringup_SetServices( const renderModuleServices_t *services ) {
 	vk_services = services;
 }
@@ -101,6 +80,7 @@ static void VK_Warning( const char *fmt, ... ) {
 static const char *VK_ResultName( VkResult result ) {
 	switch ( result ) {
 		case VK_SUCCESS:							return "VK_SUCCESS";
+		case VK_INCOMPLETE:						return "VK_INCOMPLETE";
 		case VK_ERROR_OUT_OF_HOST_MEMORY:			return "VK_ERROR_OUT_OF_HOST_MEMORY";
 		case VK_ERROR_OUT_OF_DEVICE_MEMORY:			return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
 		case VK_ERROR_INITIALIZATION_FAILED:		return "VK_ERROR_INITIALIZATION_FAILED";
@@ -140,31 +120,6 @@ static int VK_CVarGetInteger( const char *name ) {
 
 /*
 ====================
-VK_Bringup_DeviceExtensionSupported
-====================
-*/
-static bool VK_Bringup_DeviceExtensionSupported( VkPhysicalDevice physicalDevice, const char *name ) {
-	uint32_t count = 0;
-	if ( vkEnumerateDeviceExtensionProperties( physicalDevice, NULL, &count, NULL ) != VK_SUCCESS || count == 0 ) {
-		return false;
-	}
-	if ( count > 512 ) {
-		count = 512;
-	}
-	static VkExtensionProperties properties[ 512 ];
-	if ( vkEnumerateDeviceExtensionProperties( physicalDevice, NULL, &count, properties ) != VK_SUCCESS ) {
-		return false;
-	}
-	for ( uint32_t i = 0; i < count; i++ ) {
-		if ( strcmp( properties[ i ].extensionName, name ) == 0 ) {
-			return true;
-		}
-	}
-	return false;
-}
-
-/*
-====================
 VK_Bringup_ReportPortability
 
 Records the portability facts a Metal-backed implementation decides at runtime.
@@ -173,9 +128,8 @@ the renderer negotiates rather than assumes is printed here so a CI log answers
 them without needing a debugger on an Apple machine.
 ====================
 */
-static void VK_Bringup_ReportPortability( VkPhysicalDevice physicalDevice, const vkBringupDeviceInfo_t &info ) {
-	const bool subset = VK_Bringup_DeviceExtensionSupported(
-			physicalDevice, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME );
+static void VK_Bringup_ReportPortability( VkPhysicalDevice physicalDevice, const vkDeviceProbeInfo_t &info ) {
+	const bool subset = info.hasPortabilitySubset;
 
 	VK_Printf( "  portability: subset=%s maxBoundDescriptorSets=%u (need %d)\n",
 			subset ? "yes" : "no",
@@ -236,7 +190,9 @@ static void VK_Bringup_ReportPortability( VkPhysicalDevice physicalDevice, const
 	memset( &props2, 0, sizeof( props2 ) );
 	props2.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
 	props2.pNext = &props3;
-	vkGetPhysicalDeviceFormatProperties2( physicalDevice, VK_FORMAT_D32_SFLOAT, &props2 );
+	if ( info.props.apiVersion >= VK_API_VERSION_1_3 ) {
+		vkGetPhysicalDeviceFormatProperties2( physicalDevice, VK_FORMAT_D32_SFLOAT, &props2 );
+	}
 	VK_Printf( "  formatProperties3 populated=%d depthComparison(D32_SFLOAT)=%d\n",
 			props3.optimalTilingFeatures != 0 ? 1 : 0,
 			( props3.optimalTilingFeatures & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT ) != 0 ? 1 : 0 );
@@ -248,7 +204,9 @@ static void VK_Bringup_ReportPortability( VkPhysicalDevice physicalDevice, const
 	memset( &properties2, 0, sizeof( properties2 ) );
 	properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 	properties2.pNext = &resolveProperties;
-	vkGetPhysicalDeviceProperties2( physicalDevice, &properties2 );
+	if ( info.props.apiVersion >= VK_API_VERSION_1_2 ) {
+		vkGetPhysicalDeviceProperties2( physicalDevice, &properties2 );
+	}
 	VK_Printf( "  depthResolveModes=0x%x stencilResolveModes=0x%x sampleCounts(color)=0x%x\n",
 			(unsigned)resolveProperties.supportedDepthResolveModes,
 			(unsigned)resolveProperties.supportedStencilResolveModes,
@@ -257,117 +215,9 @@ static void VK_Bringup_ReportPortability( VkPhysicalDevice physicalDevice, const
 
 /*
 ====================
-VK_Bringup_QueryDevice
-====================
-*/
-static void VK_Bringup_QueryDevice( VkPhysicalDevice physicalDevice, vkBringupDeviceInfo_t &info ) {
-	memset( &info, 0, sizeof( info ) );
-	info.physicalDevice = physicalDevice;
-	info.graphicsQueueFamily = VK_QUEUE_FAMILY_IGNORED;
-	info.transferQueueFamily = VK_QUEUE_FAMILY_IGNORED;
-
-	vkGetPhysicalDeviceProperties( physicalDevice, &info.props );
-
-	VkPhysicalDeviceMemoryProperties memoryProps;
-	vkGetPhysicalDeviceMemoryProperties( physicalDevice, &memoryProps );
-	for ( uint32_t i = 0; i < memoryProps.memoryHeapCount; i++ ) {
-		if ( ( memoryProps.memoryHeaps[ i ].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ) != 0 ) {
-			info.deviceLocalBytes += memoryProps.memoryHeaps[ i ].size;
-		}
-	}
-
-	uint32_t queueFamilyCount = 0;
-	vkGetPhysicalDeviceQueueFamilyProperties( physicalDevice, &queueFamilyCount, NULL );
-	VkQueueFamilyProperties queueFamilies[ 32 ];
-	if ( queueFamilyCount > 32 ) {
-		queueFamilyCount = 32;
-	}
-	vkGetPhysicalDeviceQueueFamilyProperties( physicalDevice, &queueFamilyCount, queueFamilies );
-	for ( uint32_t i = 0; i < queueFamilyCount; i++ ) {
-		const VkQueueFlags flags = queueFamilies[ i ].queueFlags;
-		if ( !info.hasGraphicsQueue && ( flags & VK_QUEUE_GRAPHICS_BIT ) != 0 ) {
-			info.hasGraphicsQueue = true;
-			info.graphicsQueueFamily = i;
-		}
-		// a transfer-only family (no graphics/compute) marks a DMA queue we
-		// want for streaming uploads
-		if ( !info.hasDedicatedTransferQueue
-				&& ( flags & VK_QUEUE_TRANSFER_BIT ) != 0
-				&& ( flags & ( VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT ) ) == 0 ) {
-			info.hasDedicatedTransferQueue = true;
-			info.transferQueueFamily = i;
-		}
-	}
-	if ( !info.hasDedicatedTransferQueue ) {
-		info.transferQueueFamily = info.graphicsQueueFamily;
-	}
-
-	VkPhysicalDeviceVulkan13Features features13;
-	memset( &features13, 0, sizeof( features13 ) );
-	features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-
-	VkPhysicalDeviceVulkan12Features features12;
-	memset( &features12, 0, sizeof( features12 ) );
-	features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-	features12.pNext = &features13;
-
-	VkPhysicalDeviceFeatures2 features2;
-	memset( &features2, 0, sizeof( features2 ) );
-	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-	features2.pNext = &features12;
-
-	if ( info.props.apiVersion >= VK_API_VERSION_1_2 ) {
-		vkGetPhysicalDeviceFeatures2( physicalDevice, &features2 );
-	}
-
-	info.hasDynamicRendering = features13.dynamicRendering == VK_TRUE;
-	info.hasSynchronization2 = features13.synchronization2 == VK_TRUE;
-	info.hasTimelineSemaphore = features12.timelineSemaphore == VK_TRUE;
-	info.hasDescriptorIndexing = features12.descriptorIndexing == VK_TRUE
-			&& features12.runtimeDescriptorArray == VK_TRUE
-			&& features12.descriptorBindingPartiallyBound == VK_TRUE
-			&& features12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE;
-	info.hasBufferDeviceAddress = features12.bufferDeviceAddress == VK_TRUE;
-	info.hasSamplerAnisotropy = features2.features.samplerAnisotropy == VK_TRUE;
-	info.hasTextureCompressionBC = features2.features.textureCompressionBC == VK_TRUE;
-	info.hasDepthBounds = features2.features.depthBounds == VK_TRUE;
-	info.hasSwapchain = VK_Bringup_DeviceExtensionSupported( physicalDevice, VK_KHR_SWAPCHAIN_EXTENSION_NAME );
-
-	// What the shipping renderer actually requires of a device: the 1.3 core
-	// floor, a graphics+present queue, the swapchain extension it always enables,
-	// and enough bound descriptor sets for the shadowed-interaction pipeline
-	// layout. Timeline semaphores, descriptor indexing and BC compression are
-	// reported for information only -- the back end uses none of them for device
-	// creation, and gating on them made this probe report FAIL on otherwise
-	// perfectly capable portability devices. Presentation support itself needs a
-	// surface, which this probe never creates.
-	info.meetsRequirements = info.props.apiVersion >= VK_BRINGUP_REQUIRED_API_VERSION
-			&& info.hasGraphicsQueue
-			&& info.hasSwapchain
-			&& info.hasDynamicRendering
-			&& info.hasSynchronization2
-			&& info.props.limits.maxBoundDescriptorSets >= (uint32_t)VK_BRINGUP_REQUIRED_BOUND_DESCRIPTOR_SETS;
-
-	info.score = 0;
-	if ( info.meetsRequirements ) {
-		info.score += 10000;
-	}
-	if ( info.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) {
-		info.score += 1000;
-	} else if ( info.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ) {
-		info.score += 100;
-	}
-	if ( info.hasDedicatedTransferQueue ) {
-		info.score += 10;
-	}
-	info.score += ( int )( info.deviceLocalBytes / ( 1024ull * 1024ull * 1024ull ) );
-}
-
-/*
-====================
 VK_Bringup_DescribeUnmetRequirements
 
-Names every requirement from VK_Bringup_QueryDevice the device misses. The
+Names every requirement from the capability probe that the device misses. The
 loader records this as the reason it fell back to OpenGL, so it has to say
 which requirement failed rather than just that one did.
 ====================
@@ -379,7 +229,7 @@ static void VK_Bringup_AppendListItem( char *out, size_t outSize, const char *it
 	strncat( out, item, outSize - strlen( out ) - 1 );
 }
 
-static void VK_Bringup_DescribeUnmetRequirements( const vkBringupDeviceInfo_t &info, char *out, size_t outSize ) {
+static void VK_Bringup_DescribeUnmetRequirements( const vkDeviceProbeInfo_t &info, char *out, size_t outSize ) {
 	char item[ 64 ];
 
 	out[ 0 ] = '\0';
@@ -451,6 +301,46 @@ static void VK_Bringup_ReportFormatSupport( VkPhysicalDevice physicalDevice, boo
 	}
 	if ( missing[ 0 ] != '\0' ) {
 		VK_Printf( "  formats MISSING: %s\n", missing );
+	}
+}
+
+struct vkBringupProbeReport_t {
+	bool verbose;
+	char *summary;
+	int summaryLength;
+};
+
+static void VK_Bringup_ReportDevice( const vkDeviceProbeInfo_t &info, VkResult queryResult, void *user ) {
+	const vkBringupProbeReport_t &report = *static_cast<vkBringupProbeReport_t *>( user );
+	if ( report.verbose ) {
+		VK_Printf( "Vulkan device %u: %s (%s) api=%u.%u.%u vram=%llu MB queues: gfx=%d xfer=%s\n",
+				info.index, info.props.deviceName, VK_DeviceTypeName( info.props.deviceType ),
+				VK_API_VERSION_MAJOR( info.props.apiVersion ), VK_API_VERSION_MINOR( info.props.apiVersion ), VK_API_VERSION_PATCH( info.props.apiVersion ),
+				( unsigned long long )( info.deviceLocalBytes / ( 1024ull * 1024ull ) ),
+				info.hasGraphicsQueue ? ( int )info.graphicsQueueFamily : -1,
+				info.hasDedicatedTransferQueue ? "dedicated" : "shared" );
+		VK_Printf( "  features: swapchain=%d dynamicRendering=%d sync2=%d timelineSemaphore=%d descriptorIndexing=%d bufferDeviceAddress=%d anisotropy=%d bc=%d depthBounds=%d -> %s\n",
+				info.hasSwapchain ? 1 : 0,
+				info.hasDynamicRendering ? 1 : 0, info.hasSynchronization2 ? 1 : 0, info.hasTimelineSemaphore ? 1 : 0,
+				info.hasDescriptorIndexing ? 1 : 0, info.hasBufferDeviceAddress ? 1 : 0, info.hasSamplerAnisotropy ? 1 : 0,
+				info.hasTextureCompressionBC ? 1 : 0, info.hasDepthBounds ? 1 : 0,
+				info.meetsRequirements ? "SUITABLE" : "unsuitable" );
+		if ( queryResult == VK_SUCCESS ) {
+			VK_Bringup_ReportPortability( info.physicalDevice, info );
+			VK_Bringup_ReportFormatSupport( info.physicalDevice, true );
+		}
+	}
+	if ( queryResult != VK_SUCCESS || !info.meetsRequirements ) {
+		char unmet[ 256 ];
+		if ( queryResult != VK_SUCCESS ) {
+			snprintf( unmet, sizeof( unmet ), "a complete capability query (%s)", VK_ResultName( queryResult ) );
+		} else {
+			VK_Bringup_DescribeUnmetRequirements( info, unmet, sizeof( unmet ) );
+		}
+		VK_Printf( "Vulkan bring-up: skipping device %u '%s'; it lacks %s\n", info.index, info.props.deviceName, unmet );
+		if ( report.summary != NULL && report.summaryLength > 0 ) {
+			snprintf( report.summary, report.summaryLength, "device '%s' lacks %s", info.props.deviceName, unmet );
+		}
 	}
 }
 
@@ -608,89 +498,32 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 
 	// scope with explicit teardown at the bottom; every failure jumps there
 	do {
-		// 4. physical devices
-		uint32_t deviceCount = 0;
-		result = vkEnumeratePhysicalDevices( instance, &deviceCount, NULL );
-		if ( result != VK_SUCCESS || deviceCount == 0 ) {
-			VK_Printf( "Vulkan bring-up: no Vulkan physical devices (%s, count=%u)\n", VK_ResultName( result ), deviceCount );
-			if ( outSummary != NULL ) {
-				snprintf( outSummary, summaryLength, "no physical devices" );
-			}
-			break;
-		}
-		if ( deviceCount > 16 ) {
-			deviceCount = 16;
-		}
-		VkPhysicalDevice physicalDevices[ 16 ];
-		vkEnumeratePhysicalDevices( instance, &deviceCount, physicalDevices );
-
+		// 4. Query complete lists through the same admission library as the
+		// renderer. Quiet activation stops at its first suitable candidate;
+		// verbose diagnostics rank suitable candidates, never an invalid GPU.
+		vkDeviceSelectionApi_t probeApi = {};
+		probeApi.enumeratePhysicalDevices = vkEnumeratePhysicalDevices;
+		probeApi.getProperties = vkGetPhysicalDeviceProperties;
+		probeApi.getFeatures2 = vkGetPhysicalDeviceFeatures2;
+		probeApi.enumerateExtensions = vkEnumerateDeviceExtensionProperties;
+		probeApi.getQueueFamilies = vkGetPhysicalDeviceQueueFamilyProperties;
+		probeApi.getMemoryProperties = vkGetPhysicalDeviceMemoryProperties;
 		const int overrideIndex = VK_CVarGetInteger( "r_vkDevice" );
-		vkBringupDeviceInfo_t deviceInfos[ 16 ];
-		int bestIndex = -1;
-		for ( uint32_t i = 0; i < deviceCount; i++ ) {
-			vkBringupDeviceInfo_t &info = deviceInfos[ i ];
-			VK_Bringup_QueryDevice( physicalDevices[ i ], info );
-			if ( verbose ) {
-				VK_Printf( "Vulkan device %u: %s (%s) api=%u.%u.%u vram=%llu MB queues: gfx=%d xfer=%s\n",
-						i, info.props.deviceName, VK_DeviceTypeName( info.props.deviceType ),
-						VK_API_VERSION_MAJOR( info.props.apiVersion ), VK_API_VERSION_MINOR( info.props.apiVersion ), VK_API_VERSION_PATCH( info.props.apiVersion ),
-						( unsigned long long )( info.deviceLocalBytes / ( 1024ull * 1024ull ) ),
-						info.hasGraphicsQueue ? ( int )info.graphicsQueueFamily : -1,
-						info.hasDedicatedTransferQueue ? "dedicated" : "shared" );
-				VK_Printf( "  features: swapchain=%d dynamicRendering=%d sync2=%d timelineSemaphore=%d descriptorIndexing=%d bufferDeviceAddress=%d anisotropy=%d bc=%d depthBounds=%d -> %s\n",
-						info.hasSwapchain ? 1 : 0,
-						info.hasDynamicRendering ? 1 : 0, info.hasSynchronization2 ? 1 : 0, info.hasTimelineSemaphore ? 1 : 0,
-						info.hasDescriptorIndexing ? 1 : 0, info.hasBufferDeviceAddress ? 1 : 0, info.hasSamplerAnisotropy ? 1 : 0,
-						info.hasTextureCompressionBC ? 1 : 0, info.hasDepthBounds ? 1 : 0,
-						info.meetsRequirements ? "SUITABLE" : "unsuitable" );
-				VK_Bringup_ReportPortability( physicalDevices[ i ], info );
-			VK_Bringup_ReportFormatSupport( physicalDevices[ i ], verbose );
-			}
-			if ( bestIndex < 0 || info.score > deviceInfos[ bestIndex ].score ) {
-				bestIndex = ( int )i;
-			}
-			// The quiet pass is the engine's activation gate, which needs one
-			// device the renderer can run on; the renderer itself takes the first
-			// device that can present, not the best-scored one. Querying the rest
-			// is most of the gate's cost where Microsoft's Dozen translation
-			// driver is installed: it reports a Vulkan 1.2 device per adapter,
-			// never suitable, and every query of one is slow.
-			if ( !verbose && overrideIndex < 0 && info.meetsRequirements ) {
-				bestIndex = ( int )i;
-				break;
-			}
-		}
-
-		int selectedIndex = bestIndex;
-		if ( overrideIndex >= 0 ) {
-			if ( overrideIndex < ( int )deviceCount ) {
-				selectedIndex = overrideIndex;
-				if ( verbose ) {
-					VK_Printf( "Vulkan device selection: r_vkDevice override -> %d\n", selectedIndex );
-				}
-			} else {
-				VK_Warning( "r_vkDevice %d is out of range (%u devices); using automatic selection", overrideIndex, deviceCount );
-			}
-		}
-		if ( selectedIndex < 0 ) {
-			VK_Printf( "Vulkan bring-up: no device could be selected\n" );
-			if ( outSummary != NULL ) {
-				snprintf( outSummary, summaryLength, "no selectable device" );
+		vkDeviceProbeInfo_t selected = {};
+		vkBringupProbeReport_t report = { verbose, outSummary, summaryLength };
+		result = VK_SelectProbeDevice( probeApi, instance, overrideIndex, verbose, selected,
+				VK_Bringup_ReportDevice, &report );
+		if ( result != VK_SUCCESS ) {
+			VK_Printf( "Vulkan bring-up: no suitable device for r_vkDevice %d (%s)\n", overrideIndex, VK_ResultName( result ) );
+			if ( outSummary != NULL && summaryLength > 0 && outSummary[ 0 ] == '\0' ) {
+				snprintf( outSummary, summaryLength, "no suitable device for r_vkDevice %d (%s)", overrideIndex, VK_ResultName( result ) );
 			}
 			break;
 		}
-
-		const vkBringupDeviceInfo_t &selected = deviceInfos[ selectedIndex ];
+		if ( verbose && overrideIndex >= 0 ) {
+			VK_Printf( "Vulkan device selection: r_vkDevice override -> %u\n", selected.index );
+		}
 		VK_Printf( "Vulkan selected device: %s (%s)\n", selected.props.deviceName, VK_DeviceTypeName( selected.props.deviceType ) );
-		if ( !selected.meetsRequirements ) {
-			char unmet[ 256 ];
-			VK_Bringup_DescribeUnmetRequirements( selected, unmet, sizeof( unmet ) );
-			VK_Printf( "Vulkan bring-up: selected device does not meet the renderer's requirements; it lacks %s\n", unmet );
-			if ( outSummary != NULL ) {
-				snprintf( outSummary, summaryLength, "device '%s' lacks %s", selected.props.deviceName, unmet );
-			}
-			break;
-		}
 
 		// 5. logical device with the renderer's required feature set
 		float queuePriority = 1.0f;
@@ -742,8 +575,7 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 		// enabled whenever they advertise it
 		const char *probeDeviceExtensions[ 1 ];
 		uint32_t probeDeviceExtensionCount = 0;
-		if ( VK_Bringup_DeviceExtensionSupported( selected.physicalDevice,
-					VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME ) ) {
+		if ( selected.hasPortabilitySubset ) {
 			probeDeviceExtensions[ probeDeviceExtensionCount++ ] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
 		}
 

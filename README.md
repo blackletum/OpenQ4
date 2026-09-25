@@ -115,7 +115,9 @@ Packaged support currently focuses on Windows x64, Linux x64, and Steam Deck/Ste
 
 Automatic Vulkan GPU selection now skips adapters that lack required rendering
 or presentation capabilities before trying the next one. Explicit GPU choices
-remain explicit. See [device admission and validation](docs/dev/vulkan-device-selection.md).
+are also preserved by the preliminary startup probe, which handles changing
+device lists without accepting incomplete results. See
+[device admission and validation](docs/dev/vulkan-device-selection.md).
 
 Eligible Vulkan HDR scenes now support baked PBR area lighting while retaining reflections, with recovery checks for image reloads and video restarts. [Baked-lighting scope and remaining comparisons](docs/dev/vulkan-pbr-baked.md) describe the current limits; complete PBR visual parity remains in progress.
 

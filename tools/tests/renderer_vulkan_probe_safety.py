@@ -294,7 +294,31 @@ def validate_highlight_capture_gate() -> None:
             raise AssertionError(f"TGA origin {descriptor} changed the selected sky patch")
 
 
+def validate_probe_admission_wiring() -> None:
+    source = read("src/renderer/Vulkan/VulkanBringup.cpp")
+    probe = braced_block(source, "static bool VK_Bringup_RunProbeInternal(")
+    selection = probe.index("result = VK_SelectProbeDevice(")
+    creation = probe.index("result = vkCreateDevice(")
+    failure = braced_block(probe[selection:creation], "if ( result != VK_SUCCESS )")
+    require(failure, "break;", "failed probe must stop before logical device creation")
+    require(probe, "probeApi.getMemoryProperties = vkGetPhysicalDeviceMemoryProperties;", "probe dispatch wiring")
+    require(probe, "if ( selected.hasPortabilitySubset )", "probe uses its complete extension inventory")
+    require(probe, "const int overrideIndex = VK_CVarGetInteger( \"r_vkDevice\" );", "explicit probe selection")
+    for obsolete in ("physicalDevices[ 16 ]", "deviceInfos[ 16 ]", "using automatic selection", "VK_Bringup_DeviceExtensionSupported"):
+        if obsolete in source:
+            raise AssertionError(f"Obsolete probe enumeration/override path remains: {obsolete}")
+    portability = braced_block(source, "static void VK_Bringup_ReportPortability(")
+    guard13 = braced_block(portability, "if ( info.props.apiVersion >= VK_API_VERSION_1_3 )")
+    guard12 = braced_block(portability, "if ( info.props.apiVersion >= VK_API_VERSION_1_2 )")
+    require(guard13, "vkGetPhysicalDeviceFormatProperties2(", "version-aware format diagnostics")
+    require(guard12, "vkGetPhysicalDeviceProperties2(", "version-aware resolve diagnostics")
+    selector = read("src/renderer/Vulkan/VulkanDeviceSelection.cpp")
+    for marker in ("VkResult CheckCandidate(", "VkResult QueryProbeDevice("):
+        require(braced_block(selector, marker), "CheckDeviceLimits(", "shared renderer/probe capability floor")
+
+
 def main() -> None:
+    validate_probe_admission_wiring()
     validate_probe_refuses_active_vulkan()
     validate_runtime_gate()
     validate_recovery_gate()

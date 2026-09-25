@@ -27,6 +27,25 @@ underwater effects, and debug views have already landed.
 
 ## Work record
 
+- v61 hardens the preliminary device inventory through the same compiled
+  selection library. Complete physical-device and extension lists, bounded
+  retries, dynamic queue storage and nonempty-queue checks replace the old
+  fixed caps. Explicit choices query only that device and cannot substitute
+  another adapter; verbose scoring only considers suitable candidates. Core
+  diagnostic queries are scoped to the advertised API version. All 43
+  renderer-selection and 31 probe cases pass, as do four source contracts,
+  eight staged startup/GPU/recovery cases and six real-driver probe controls.
+  Those controls cover the native NVIDIA/Intel adapters, rejection of a 1.2
+  translation adapter, unavailable explicit selection and same-process OpenGL
+  recovery. The Intel probe passes but takes 101 seconds; no startup-speed
+  improvement is claimed. Stock SP/MP 0x MSAA HDR/resize/restart runs pass with
+  16 valid engine captures, unchanged package hashes and no tracked renderer
+  warnings. Representative initial and final captures show complete gameplay
+  views. Instance-layer/extension queries, the optional
+  extension lookup, later creation-failure retry, full visual parity and
+  platform/performance qualification remain open. See
+  [device admission](../vulkan-device-selection.md) and
+  `.tmp/vulkan-gap-closure/probe-admission/`.
 - v60 moves required device and surface checks ahead of renderer selection.
   Automatic selection can continue past incompatible adapters; explicit
   choices cannot silently substitute another GPU. Device/extension/format
@@ -37,7 +56,8 @@ underwater effects, and debug views have already landed.
   unchanged runtime hashes and no tracked renderer warnings. These are local
   functional checks, not parity or timing qualification. A pre-existing shadow source-contract
   expectation is updated to verify the retained world-axis radial helper.
-  The preliminary probe's enumeration audit, later creation-failure retry,
+  The preliminary probe's device inventory is hardened in v61 above; earlier
+  instance queries, later creation-failure retry,
   full rendering parity and hardware/performance qualification remain open.
   See [device admission](../vulkan-device-selection.md) and
   `.tmp/vulkan-gap-closure/device-admission/`.
