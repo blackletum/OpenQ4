@@ -285,6 +285,9 @@ jobs:
             tools/tests/ui_window_state_safety.py \
             tools/tests/validation_hardening.py \
             tools/tests/vk_shader_header_pin.py \
+            tools/build/vulkan_material_sources.py \
+            tools/tests/renderer_vulkan_material_programs.py \
+            tools/tests/renderer_vulkan_material_reload.py \
             tools/tests/vk_temporal_resolve_shader_pin.py \
             tools/tests/vscode_fast_build.py
           bash -n tools/build/meson_setup.sh
@@ -470,6 +473,7 @@ jobs:
           python tools/tests/ui_window_state_safety.py
           python tools/tests/validation_hardening.py
           python tools/tests/vk_shader_header_pin.py
+          python tools/build/vulkan_material_sources.py --check
           python tools/tests/vk_temporal_resolve_shader_pin.py
           python tools/tests/vscode_fast_build.py
 
@@ -638,7 +642,7 @@ jobs:
             runtime_cases="renderer-foundation-selftests,renderer-pbr-visible-selftest,renderer-cluster-grid-selftest,renderer-default-safety-selftest"
             if [[ "${{ matrix.os }}" == ubuntu-* ]]; then
               runtime_cases="${runtime_cases},renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic,sdl3-x11-display-diagnostics"
-              runtime_cases="${runtime_cases},renderer-vk-clear-startup,renderer-vk-hdr-selftest,renderer-vk-fallback-drill,renderer-vk-device-fallback-drill,renderer-vk-window-recovery,renderer-vk-surface-recovery,renderer-vk-swapchain-recovery,renderer-vk-resources-recovery"
+              runtime_cases="${runtime_cases},renderer-vk-clear-startup,renderer-vk-probe-source-lifecycle,renderer-vk-hdr-selftest,renderer-vk-temporal-motion-selftest,renderer-vk-fallback-drill,renderer-vk-device-fallback-drill,renderer-vk-window-recovery,renderer-vk-surface-recovery,renderer-vk-swapchain-recovery,renderer-vk-resources-recovery"
               # Require the software Vulkan driver explicitly on both runner
               # architectures. Missing packages are failures, not skipped tests.
               shopt -s nullglob

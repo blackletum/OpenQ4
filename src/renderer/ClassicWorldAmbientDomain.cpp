@@ -763,7 +763,16 @@ static bool R_ClassicWorldAmbientDomain_PrepareView(
 		}
 
 		const drawPacket_t *packet = NULL;
-		if ( packetExpected ) {
+		// Modern lighting can emit an ambient packet for PBR or eligible fixed
+		// materials with no legacy ambient stage. It is still a classic no-op,
+		// but consume and validate its record so it cannot shift the following
+		// surface's packet or appear as an unexplained trailing draw. A missing
+		// optional packet does not create work for the classic ambient owner.
+		const bool optionalPacket =
+			classification == CLASSIC_WORLD_AMBIENT_SOURCE_SURFACE_NOOP_NO_AMBIENT
+				&& packetCursor < packetEnd
+				&& packetFrame.DrawPacket( packetCursor ).legacyDrawSurf == source;
+		if ( packetExpected || optionalPacket ) {
 			classicWorldAmbientDomainFailure_t packetFailure =
 				CLASSIC_WORLD_AMBIENT_FAILURE_INVALID_DRAW_PACKET;
 			if ( packetCursor >= packetEnd
@@ -772,9 +781,13 @@ static bool R_ClassicWorldAmbientDomain_PrepareView(
 				return FailView( view, packetFailure, packetCursor,
 					sourceIndex, packetCursor, view.ambientPassPacketIndex );
 			}
-			packet = &packetFrame.DrawPacket( packetCursor );
+			packet = &packetFrame.DrawPacket( packetCursor++ );
+		}
+		// Consuming modern-only metadata must preserve the classic no-op
+		// contract: no owned packet, depth prerequisite or evaluated passes.
+		if ( packetExpected ) {
 			draw.packetBacked = true;
-			draw.drawPacketIndex = packetCursor++;
+			draw.drawPacketIndex = packetCursor - 1;
 			draw.materialTableRecordIndex = packet->materialRecordIndex;
 			draw.vertexCount = packet->vertexCount;
 			draw.firstIndex = packet->firstIndex;

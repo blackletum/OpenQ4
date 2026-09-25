@@ -1,6 +1,6 @@
 #version 450
 
-// openQ4 Vulkan GUI/2D pipeline — fragment stage (Phase D,
+// openQ4 Vulkan GUI/2D pipeline â€” fragment stage (Phase D,
 // docs/dev/plans/2026-07-18-vulkan-phase-d.md).
 //
 // One combined image sampler; component swizzles (fonts' green-alpha,
@@ -22,15 +22,38 @@ layout(push_constant) uniform GuiPushConstants {
 
 layout(location = 0) out vec4 outColor;
 
+#ifdef VK_HDR_DOMAIN_MRT
+layout(location = 1) out vec4 outPBRColor;
+#define main HDRMaterialMain
+#endif
+
 void main() {
-    vec4 color = texture(texSampler, fragTexCoord) * fragColor;
+    vec4 texel = texture(texSampler, fragTexCoord);
+    vec4 color = texel * fragColor;
+    if (pc.params.y > 2.5) {
+        // Native PBR coverage uses constant stage alpha. Perspective
+        // interpolation can perturb even a constant varying by one ULP,
+        // introducing false gradients at filtered cutout edges.
+        color.a = texel.a * pc.stageColor.a;
+    }
     if (pc.params.x > 2.5) {
         // Bound the evaluated radiance, never the authored intensity before
         // texture modulation: a faint channel can remain in range at high gain.
         color.rgb = mix(clamp(color.rgb, vec3(0.0), vec3(65504.0)),
                         vec3(0.0), isnan(color.rgb));
     }
-    if (pc.params.y > 0.5) {
+    if (pc.params.y > 3.5) {
+        // Modern PBR hard cutouts include the threshold, like GL's step().
+        // Keep the classic material test's strict greater-than rule below.
+        color.a = step(max(pc.params.z, 0.001), color.a);
+        if (color.a <= 0.0) discard;
+    } else if (pc.params.y > 2.5) {
+        // Admitted PBR cutouts use the same footprint coverage as the GL
+        // modern depth/forward passes. Later EQUAL draws inherit this mask.
+        color.a = clamp((color.a - max(pc.params.z, 0.001))
+            / max(fwidth(color.a), 0.0001) + 0.5, 0.0, 1.0);
+        if (color.a <= 0.0) discard;
+    } else if (pc.params.y > 0.5) {
         if (pc.params.y > 1.5) {
             // Match fixed-function GL_EQUAL exactly. A tolerance admits
             // linearly filtered values that the classic alpha test rejects.
@@ -45,3 +68,15 @@ void main() {
     }
     outColor = color;
 }
+
+#ifdef VK_HDR_DOMAIN_MRT
+#undef main
+void main() {
+    HDRMaterialMain();
+    // Both attachments use the same blend state. Preserve source alpha in
+    // both outputs for coverage/blending; the primary stores scene alpha.
+    bool nativePBR = pc.params.x > 2.5;
+    outPBRColor = vec4(nativePBR ? outColor.rgb : vec3(0.0), outColor.a);
+    if (nativePBR) outColor.rgb = vec3(0.0);
+}
+#endif

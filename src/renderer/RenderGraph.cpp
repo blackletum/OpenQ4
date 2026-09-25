@@ -342,9 +342,11 @@ static int R_RenderGraph_EnsureSceneDepth( idRenderGraph &graph ) {
 
 // Keep sampled post/deferred inputs single-sample. Forward geometry and its
 // depth prepass share a separate multisample pair and explicitly resolve it.
+// That pair uses the scene extent, including supersampling; scaling does not
+// replace the user's requested sample coverage for the modern scene.
 static int R_RenderGraph_EnsureMultisampleScene( idRenderGraph &graph, bool depth ) {
 	if ( !( r_rendererModernVisible.GetBool() || r_rendererForwardPlus.GetBool() )
-			|| r_multiSamples.GetInteger() <= 1 || r_screenFraction.GetInteger() > 100 ) {
+			|| r_multiSamples.GetInteger() <= 1 ) {
 		return -1;
 	}
 	const char *name = depth ? "sceneDepthMSAA" : "sceneColorMSAA";

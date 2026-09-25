@@ -528,7 +528,15 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		return;
 	}
 
-	// this is the ONLY place generatorFunction will ever be called
+	// ScratchImage can adopt an intrinsic placeholder (for example the forward
+	// resolve images). Its current owner supplies the storage configuration;
+	// the original generator must not reset it to the placeholder on reload.
+	if ( scratchImage ) {
+		DeriveOpts();
+		AllocImage();
+		return;
+	}
+
 	if ( generatorFunction ) {
 		generatorFunction( this );
 		return;
@@ -1752,6 +1760,13 @@ idImage::Reload
 ===============
 */
 void idImage::Reload( bool force ) {
+	if ( scratchImage ) {
+		common->DPrintf( "reallocating scratch %s.\n", GetName() );
+		DeriveOpts();
+		AllocImage();
+		return;
+	}
+
 	// always regenerate functional images
 	if ( generatorFunction ) {
 		common->DPrintf( "regenerating %s.\n", GetName() );

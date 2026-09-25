@@ -32,6 +32,7 @@ BASE = {
     'r_mode': '-1', 'r_customWidth': '1280', 'r_customHeight': '800',
     'r_windowWidth': '1280', 'r_windowHeight': '800', 'r_swapInterval': '0',
     'r_multiSamples': '0', 'com_maxfps': '60', 'logFile': '2',
+    'r_screenFraction':'100', 'r_resolutionScaleMode':'1',
     'r_msaaAlphaToCoverage':'1',
     'r_vkPBRSpecularAA':'1',
     'r_gpuSkinning':'0',
@@ -70,6 +71,7 @@ BASE = {
     'r_shadowMapReport':'0', 'r_shadowMapReportInterval':'30',
     'r_rendererBenchmarkPreset':'baseline',
     'si_gameType': 'singleplayer', 'win_allowMultipleInstances': '1',
+    'ui_autoJoin': '1',
     'sys_allowMultipleInstances': '1',
 }
 CASES = {
@@ -90,8 +92,12 @@ CASES = {
        for light in ('points','projector') for suffix in ('','-native')},
     'environment-only': {'r_rendererModernLightingParity':'0'},
     'environment-off': {'r_rendererModernLightingParity':'0','r_pbrIBL':'0'},
-    **{f'{kind}-{mode}': {'r_pbrMaterials':'1' if mode=='fallback' else '0','r_rendererReflectionProbes':'1' if mode=='fallback' else '0'}
-       for kind in ('fog','blend') for mode in ('fallback','native','off')},
+    # Exact authored fog/blend now works in encoded PBR previews. Keep a
+    # separate fallback pair with the required scissor contract disabled.
+    **{f'{kind}-{mode}': {'r_pbrMaterials':'1' if mode in ('preview','fallback') else '0',
+           'r_rendererReflectionProbes':'1' if mode in ('preview','fallback') else '0',
+           **({'r_useScissor':'0'} if mode.startswith('fallback') else {})}
+       for kind in ('fog','blend') for mode in ('preview','fallback','fallback-native','native','off')},
     **{f'{kind}-{mode}': {} for kind in ('fog','blend') for mode in ('clear','restored')},
     **{f'{kind}-pbr{suffix}': {'r_hdrToneMap':'1'}
        for kind in ('fog','blend') for suffix in ('','-clear','-off','-restored')},
@@ -223,7 +229,7 @@ LEGACY_CASES.add('production-fixed-grid-native')
 LEGACY_CASES.update(f'production-fixed-{boundary}-native' for boundary in ('shadow','msaa'))
 LEGACY_CASES.update(f'production-{light}-native' for light in ('points','projector'))
 LEGACY_CASES.update(('production-no-scissor-native','production-fixed-native','production-fixed-bump-native','production-fixed-diffuse-native'))
-LEGACY_CASES.update(f'{kind}-{mode}' for kind in ('fog','blend') for mode in ('native','off'))
+LEGACY_CASES.update(f'{kind}-{mode}' for kind in ('fog','blend') for mode in ('native','off','fallback-native'))
 LEGACY_CASES.update(('lightgrid-native','lightgrid-off'))
 LEGACY_CASES.update(('lightgrid-pbr-master-off','lightgrid-pbr-native'))
 CASE_COMMANDS = {'shader-reload':['rendererShaderLibraryReload'], 'image-reload':['reloadImages all'],
@@ -266,7 +272,7 @@ SHADOW_CASES.update(case for case in CASES if case.startswith('skin-'))
 SHADOW_CASES.add('production-shadows')
 SHADOW_CASES.add('hdr-shadows')
 
-DIAGNOSTIC = re.compile(r'(?i)(WARNING:|ERROR:|VUID-|GL_INVALID|shader compile failed|shader source exceeds|GL debug.*type=(?:error|undefined))')
+DIAGNOSTIC = re.compile(r'(?i)(WARNING:|ERROR:|VUID-|GL_INVALID|Unknown command|shader compile failed|shader source exceeds|GL debug.*type=(?:error|undefined))')
 
 
 def diagnostic_lines(text: str) -> list[str]:
@@ -276,6 +282,9 @@ def diagnostic_lines(text: str) -> list[str]:
             and not re.search(r'GL debug callback \[.*type=(?:performance|notification)\b',line)]
 
 CASE_CAMERAS = {f'normal-{name}': 'station-normal_'+name for name in ('xyz','rg','agb','zero')}
+# Explicit per-case presentation extents for window-resize suites. Scene-target
+# scaling alone leaves the default 1280x800 presentation contract unchanged.
+CASE_CAPTURE_EXTENTS = {}
 CASE_CAMERAS['normal-flat'] = 'station-metal_3'
 CASE_CAMERAS.update({'msaa-cutout':'station-cutout','msaa-cutout-hard':'station-cutout'})
 CASE_CAMERAS.update({case:'sampling' for case in CASES if case.startswith('sampler-')})
@@ -353,9 +362,42 @@ for restart in ('partial','full'):
     CASE_COMMANDS['vk-direct-cutout-'+restart+'-restart']=CASE_COMMANDS[restart+'-restart']
     CASE_COMMANDS['vk-direct-emission-'+restart+'-restart']=CASE_COMMANDS[restart+'-restart']
 
+# Analytic environment controls share the same authored geometry on GL/Vulkan.
+# Every direct light is disabled, so the image cannot pass on direct lighting.
+IBL_MATERIALS = {
+    'scalar':'data_scalar', 'off':'data_scalar', 'restored':'data_scalar',
+    'packed':'data_packed', 'separate':'data_separate', 'ao-zero':'ao_zero',
+    'double':'data_scalar', 'zero':'data_scalar', 'rough-low':'metal_0', 'rough-high':'metal_5',
+    'normal-xyz':'baked_normal_xyz', 'normal-rg':'baked_normal_rg', 'normal-agb':'baked_normal_agb',
+    'cutout':'cutout', 'cutout-off':'cutout', 'cutout-restored':'cutout',
+    'cutout-coverage':'emission_cutout', 'cutout-hard-coverage':'emission_cutout',
+    'alpha':'source_alpha', 'alpha-off':'source_alpha', 'alpha-restored':'source_alpha',
+    'image-reload':'data_scalar', 'partial-restart':'data_scalar', 'full-restart':'data_scalar',
+    'shared':'data_scalar', 'master-off':'data_scalar', 'legacy':'data_scalar',
+}
+for suffix in IBL_MATERIALS:
+    case='ibl-'+suffix
+    CASES[case]={'r_rendererReflectionProbes':'0', 'r_pbrIBL':'0' if suffix.endswith('off') and suffix!='master-off' else '1',
+                 'r_pbrIBLIntensity':'0' if suffix=='zero' else '1' if suffix=='double' else '0.5',
+                 'r_rendererModernQuality':'0' if suffix=='master-off' else '1',
+                 'r_pbrMaterials':'0' if suffix=='legacy' else '1'}
+    CASE_CAMERAS[case]='sampling'
+    if suffix in ('image-reload','partial-restart','full-restart'):
+        CASE_COMMANDS[case]=CASE_COMMANDS[suffix]
+CASES['ibl-shared']['r_rendererSharedWorldAmbient']='1'
+for name in ('cutout-coverage','cutout-hard-coverage'):
+    CASES['ibl-'+name]['r_pbrDebug']='7'
+CASES['ibl-cutout-hard-coverage']['r_msaaAlphaToCoverage']='0'
+LEGACY_CASES.update(('ibl-master-off','ibl-legacy'))
+
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# A native pass can decline HDR while other native owners remain active.
+# These controls still require native PBR, but deliberately refuse linear exports.
+LINEAR_UNAVAILABLE_CASES: set[str] = set()
 
 
 def capture_linear(path: Path) -> array:
@@ -428,6 +470,57 @@ def normal_patch(path: Path) -> bytes | None:
             start = offset+(row*width+x)*stride
             patch.extend(raw[start:start+3])
     return bytes(patch)
+
+
+def compare_ibl_captures(results: list[dict], patches: dict[str,bytes] | None = None) -> None:
+    rows={r['case'].removeprefix('ibl-'):r for r in results if r['case'].startswith('ibl-')}
+    if patches is None:
+        patches={name:normal_patch(Path(row['screenshot'])) for name,row in rows.items()}
+    for name,row in rows.items():
+        patch=patches[name]
+        if not patch:
+            row['failures'].append('environment specimen patch missing')
+            continue
+        row['environmentProof']={'mean':sum(patch)/len(patch), 'maximum':max(patch),
+                                'clippedFraction':sum(v>=254 for v in patch)/len(patch)}
+        if name in ('cutout-coverage','cutout-hard-coverage'):
+            # The green ownership marker measures covered samples directly.
+            # GL can mark classic background magenta, whose green stays zero.
+            green=patch[1::3]
+            if sum(v==0 for v in green)<len(green)*0.15 or sum(v==255 for v in green)<len(green)*0.15:
+                row['failures'].append('cutout coverage must retain both holes and fully covered pixels')
+            if any(min(abs(v-level) for level in (0,64,128,191,255))>1 for v in green):
+                row['failures'].append('cutout ownership does not measure four-sample coverage')
+            if name=='cutout-hard-coverage' and any(v not in (0,255) for v in green):
+                row['failures'].append('hard cutout coverage contains partial interior pixels')
+        elif name in ('off','zero','ao-zero','alpha-off'):
+            if max(patch)>0: row['failures'].append('disabled or fully occluded environment still illuminates opaque material')
+        elif name not in ('legacy','master-off','cutout-off','alpha-off'):
+            if sum(patch)/len(patch)<0.5 or row['environmentProof']['clippedFraction']>0.05:
+                row['failures'].append('environment specimen is dark or clipped')
+    for left,right,tolerance in (
+        ('scalar','restored',0), ('scalar','packed',1), ('scalar','separate',1),
+        ('scalar','image-reload',0), ('scalar','partial-restart',0), ('scalar','full-restart',0),
+        ('scalar','shared',0), ('master-off','legacy',0), ('cutout','cutout-restored',0),
+        ('alpha','alpha-restored',0), ('normal-xyz','normal-rg',2), ('normal-xyz','normal-agb',2),
+    ):
+        if left in patches and right in patches and patches[left] and len(patches[left])==len(patches[right]):
+            error=max(abs(a-b) for a,b in zip(patches[left],patches[right]))
+            rows[left].setdefault('environmentComparisons',{})[right]={'maximumError':error}
+            if error>tolerance: rows[left]['failures'].append(f'environment {left}/{right} mismatch: {error}>{tolerance}')
+    for left,right in (('scalar','double'),('rough-low','rough-high'),('scalar','normal-xyz'),('alpha','alpha-off'),('cutout','cutout-off')):
+        if left in patches and right in patches and patches[left] and len(patches[left])==len(patches[right]):
+            error=sum(abs(a-b) for a,b in zip(patches[left],patches[right]))/len(patches[left])
+            rows[left].setdefault('environmentComparisons',{})[right]={'meanError':error}
+            if error<0.2: rows[left]['failures'].append(f'environment control {left}/{right} had no visible effect')
+    if 'cutout-coverage' in rows and 'cutout-hard-coverage' in rows:
+        smooth=patches['cutout-coverage'][1::3]; hard=patches['cutout-hard-coverage'][1::3]
+        log=Path(rows['cutout-coverage'].get('log',''))
+        multisampled=log.is_file() and 'Renderer AA: MSAA requested=4 effective=4' in log.read_text(errors='replace')
+        if multisampled and sum(0<v<255 for v in smooth)<20:
+            rows['cutout-coverage']['failures'].append('MSAA cutout coverage has no partial samples')
+        if not multisampled and smooth!=hard:
+            rows['cutout-coverage']['failures'].append('single-sample coverage differs from the hard cutout')
 
 
 def compare_vulkan_direct_captures(results: list[dict]) -> None:
@@ -703,7 +796,9 @@ def compare_transparency_captures(results: list[dict]) -> None:
 
 def compare_material_captures(results: list[dict]) -> None:
     """Use changed controls as an oracle, including controls that must do nothing."""
-    by_case = {r['case']: r for r in results if r['backend'] == 'gl' and r['tier'] != 'legacy'}
+    by_case = {r['case']: r for r in results if
+               (r['backend'] == 'gl' and r['tier'] != 'legacy') or
+               (r['backend'] == 'vk' and r['case'].startswith('lightgrid-pbr'))}
     for kind in ('fog','blend'):
         for suffix in ('-clear','','-off','-restored','-hidden-clear','-hidden','-shared'):
             baked=by_case.get('lightgrid-pbr-'+kind+suffix)
@@ -728,7 +823,7 @@ def compare_material_captures(results: list[dict]) -> None:
                  ('production','lit'),('forced-parity','lit'),('production-shadows','shadows'),
                  ('production-no-scissor','production-no-scissor-native'),
                  ('production-rejected','production-rejected-native'),
-                 ('fog-fallback','fog-native'),('blend-fallback','blend-native'),
+                 ('fog-fallback','fog-fallback-native'),('blend-fallback','blend-fallback-native'),
                  ('lightgrid-fallback','lightgrid-native'),
                  ('multi-budget','multi-legacy'),('shadow-capacity','shadow-capacity-legacy'),('local-global','local-global-legacy')]
     exact_pairs += [(case,'lit') for case in ('shader-reload','image-reload','partial-restart','full-restart','map-reload')]
@@ -972,7 +1067,12 @@ def capture_rgb(path: Path) -> bytes | None:
     for y in range(height):
         row=y if raw[17]&32 else height-1-y
         start=row*width*stride
-        rows.append(bytes(pixels[start+x*stride+c] for x in range(width) for c in (2,1,0)))
+        source=pixels[start:start+width*stride]
+        rgb=bytearray(width*3)
+        rgb[0::3]=source[2::stride]
+        rgb[1::3]=source[1::stride]
+        rgb[2::3]=source[0::stride]
+        rows.append(rgb)
     return b''.join(rows)
 
 
@@ -1311,8 +1411,8 @@ def inspect_capture(args: argparse.Namespace, case: str, text: str, shot: Path) 
     if not shot.is_file(): failures.append('engine screenshot missing')
     diagnostics = diagnostic_lines(text)
     if diagnostics: failures.append('engine diagnostics require review')
-    telemetry = [line for line in text.splitlines() if line.startswith(('PBR material resources:', 'Modern GL executor:', 'Modern visible frame:', 'Modern classic lighting:', 'Modern forward+:', 'Modern current shadow map:', 'Modern scene MSAA:', 'Renderer AA:', 'Modern specular probe atlas:', 'Modern clustered specular probes:', 'Vulkan: native PBR', 'GPU skinning:', 'modernLightingOwnership'))]
-    if case.startswith('vk-direct-'):
+    telemetry = [line for line in text.splitlines() if line.startswith(('PBR material resources:', 'Modern GL executor:', 'Modern visible frame:', 'Modern classic lighting:', 'Modern forward+:', 'Modern current shadow map:', 'Modern scene MSAA:', 'Renderer AA:', 'Modern specular probe atlas:', 'Modern clustered specular probes:', 'Vulkan: native PBR', 'Vulkan PBR probes:', 'Vulkan HDR scene ownership:', 'Vulkan PBR preview:', 'GPU skinning:', 'modernLightingOwnership'))]
+    if case.startswith(('vk-direct-','ibl-')):
         samples=CASES[case].get('r_multiSamples',BASE['r_multiSamples'])
         if not re.search(rf'Renderer AA: MSAA requested={samples} effective={samples}\b',text):
             failures.append('native direct specimen did not render at its requested sample count')
@@ -1354,7 +1454,7 @@ def inspect_capture(args: argparse.Namespace, case: str, text: str, shot: Path) 
             failures.append('unsupported rendering contract did not retain complete classic ownership')
     if active_pbr and args.backend == 'gl':
         ownership = next((line for line in telemetry if line.startswith('modernLightingOwnership')), '')
-        if (case.startswith(('production','environment-')) or '-pbr' in case) and not re.search(r'override=0 requested=1 materialContract=1\b',ownership):
+        if (case.startswith(('production','environment-')) or '-pbr' in case or case in ('fog-preview','blend-preview')) and not re.search(r'override=0 requested=1 materialContract=1\b',ownership):
             failures.append('production admission relied on a parity override or lacked its material contract')
         if (case.startswith('environment-') or case.startswith('lightgrid-pbr-normal-')) and not re.search(r'interaction\(pass=0 lights=0\b',ownership):
             failures.append('environment-only control still requested direct lighting')
@@ -1365,14 +1465,17 @@ def inspect_capture(args: argparse.Namespace, case: str, text: str, shot: Path) 
         if not re.search(r'\bfallback=0\b', resources): failures.append('authored material fell back')
         forward = next((line for line in telemetry if line.startswith('Modern forward+:')), '')
         if not re.search(r'\bfallback=0\b', forward): failures.append('PBR forward draw omitted')
-        if case.startswith(('fog-pbr','blend-pbr')) and not case.endswith(('-clear','-off','-restored')) and not re.search(r'\bfog=[1-9]\d*\b',forward):
+        if (case.startswith(('fog-pbr','blend-pbr')) or case in ('fog-preview','blend-preview')) and not case.endswith(('-clear','-off','-restored')) and not re.search(r'\bfog=[1-9]\d*\b',forward):
             failures.append('exact authored fog/blend geometry was not submitted')
         if case.startswith('lightgrid-pbr') and not case.endswith(('-clear','-off')):
             if not re.search(r'lightGrid\(pass=1 draws=[1-9]\d* consumable=[1-9]\d* blocked=0 unproven=0 unprovenPass=0 ready=1\)',ownership):
                 failures.append('baked receivers did not acquire complete PBR ownership')
             if not re.search(r'\blightGrid=[1-9]\d*\b', forward):
                 failures.append('no baked irradiance receiver was submitted')
-        if case not in ('no-probes','direct') and CASES.get(case,{}).get('r_pbrIBL',BASE['r_pbrIBL'])!='0':
+        # The authored-probe suite validates variable record counts, rejected
+        # whole sets and resource fallback against its own explicit profile.
+        if (not case.startswith('probes-') and case not in ('no-probes','direct') and CASES.get(case,{}).get('r_pbrIBL',BASE['r_pbrIBL'])!='0'
+                and CASES.get(case,{}).get('r_rendererReflectionProbes',BASE['r_rendererReflectionProbes'])!='0'):
             probes = next((line for line in telemetry if line.startswith('Modern clustered specular probes:')), '')
             if not re.search(r'\buploaded=2\b', probes) or not re.search(r'\bframeReady=1\b', probes):
                 failures.append('both authored probes were not consumed')
@@ -1407,7 +1510,7 @@ def inspect_capture(args: argparse.Namespace, case: str, text: str, shot: Path) 
             stride = bits//8
             pixels = raw[18+raw[0]:]
             image = {'width':width,'height':height,'bits':bits}
-            if (width,height) != (1280,800) or stride not in (3,4) or len(pixels) != width*height*stride or raw[2] != 2:
+            if (width,height) != CASE_CAPTURE_EXTENTS.get(case,(1280,800)) or stride not in (3,4) or len(pixels) != width*height*stride or raw[2] != 2:
                 failures.append('unexpected engine screenshot layout')
             else:
                 image['greenOwnershipPixels'] = sum(pixels[i] == 0 and pixels[i+1] == 255 and pixels[i+2] == 0 for i in range(0,len(pixels),stride))
@@ -1504,9 +1607,29 @@ def capture_cases(args: argparse.Namespace, cases: list[str], save: Path) -> lis
         case_camera = manifest['cameras'][CASE_CAMERAS.get(case,args.camera)]
         commands += ['setviewpos '+' '.join(map(str,case_camera))]
         commands += [f'set {key} "{value}"' for key,value in settings.items()]
+        if case.startswith('ibl-'):
+            commands += ['g_stopTime 0']
+            for light in ('key','blue_fill','warm_fill','lab_projector'):
+                commands += [f'script "${light}.Off()"']
+            if 'ibl' not in scene_setups:
+                # Isolate the foreground specimen, including the background
+                # through its cutout holes and the independent coverage mask.
+                commands += ['script "'+'; '.join('$'+station['name']+'.hide()'
+                             for station in manifest['stations'])+'"']
+            if 'ibl' in scene_setups:
+                commands += ['script "$ibl_specimen.remove()"','wait 3']
+            material=IBL_MATERIALS[case.removeprefix('ibl-')]
+            commands += [f'spawn func_static name ibl_specimen model "{lab.MODEL}" shader "{lab.PREFIX}/{material}" origin "0 -700 380" solid 0',
+                         'wait 30','g_stopTime 1']
+            scene_setups.add('ibl')
         if case.startswith('vk-direct-'):
             commands += ['g_stopTime 0']
             if 'vk-direct' not in scene_setups:
+                # Material diagnostics also draw unlit background stations.
+                # A green opaque station behind the source-alpha specimen
+                # legitimately stays green through it, invalidating the
+                # isolated-opacity predicate. Keep only the test receiver.
+                commands += [f'script "${station["name"]}.hide()"' for station in manifest['stations']]
                 commands += [f'script "${name}.Off()"' for name in ('key','blue_fill','warm_fill','lab_projector')]
                 commands += ['spawn light name vk_direct_light origin "-120 -1000 540" angle 0 light_radius "1000 1000 1000" _color "1 1 1" noshadows 0']
             else:
@@ -1615,7 +1738,7 @@ def capture_cases(args: argparse.Namespace, cases: list[str], save: Path) -> lis
         commands += ['viewpos', 'gfxInfo', 'rendererMaterialResourceTableDump', f'screenshot "screenshots/{case}.tga"']
         if case=='vk-direct-emission-extreme':
             commands += ['rendererVulkanHDRInfo']
-        if args.linear and args.backend=='gl' and case not in LEGACY_CASES | FALLBACK_CASES:
+        if args.linear and case not in LEGACY_CASES | FALLBACK_CASES | LINEAR_UNAVAILABLE_CASES:
             commands += [f'screenshot linear "screenshots/{case}.pfm"']
         commands += [f'echo "PBRLAB_{case}_END"']
     commands += ['wait 5', 'quit']
@@ -1648,7 +1771,7 @@ def capture_cases(args: argparse.Namespace, cases: list[str], save: Path) -> lis
                 result['failures'].append('intermediate resize did not produce a 960x600 engine image')
             if not re.search(r'Modern classic lighting: ready=1 executed=1 primitives=[1-9]\d* extent=960x600\b',small_section):
                 result['failures'].append('classic lighting did not allocate and submit at the intermediate extent')
-        if args.linear and args.backend=='gl' and case not in LEGACY_CASES | FALLBACK_CASES:
+        if args.linear and case not in LEGACY_CASES | FALLBACK_CASES | LINEAR_UNAVAILABLE_CASES:
             linear = save/f'baseoq4/screenshots/{case}.pfm'
             is_linear=CASES[case].get('r_hdrToneMap',BASE['r_hdrToneMap'])=='1'
             result['linearCaptureStatus']='linear HDR' if is_linear else 'rejected encoded preview'
@@ -1672,7 +1795,7 @@ def capture_cases(args: argparse.Namespace, cases: list[str], save: Path) -> lis
         result.update({'exitCode':code,'elapsed':elapsed,'log':str(log)})
         result['sha256'].update({'cfg':digest(cfg),'cfgParts':cfg_parts,'log':digest(log) if log.is_file() else None})
         (save/f'{case}.json').write_text(json.dumps(result,indent=2)+'\n')
-        print(f'  {case}: failures={result["failures"]}',flush=True)
+        print(f'  {case}: capture failures={result["failures"]}; image comparisons pending',flush=True)
         results.append(result)
     return results
 
@@ -1689,12 +1812,12 @@ def main() -> int:
     parser.add_argument('--gl-debug',action='store_true',help='enable synchronous driver diagnostics for correctness qualification')
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument('--cases',default='lit,ownership,no-probes,legacy,master-off')
-    selection.add_argument('--suite',choices=('vulkan-direct',),help='run every control in the named suite')
+    selection.add_argument('--suite',choices=('vulkan-direct','ibl'),help='run every control in the named suite')
     parser.add_argument('--camera',default='overview',help='camera name in pbr-lab.json; station-NAME centres a station')
     parser.add_argument('--backend',choices=('gl','vk'),default='gl')
     parser.add_argument('--tier',default='gl45')
     parser.add_argument('--timeout',type=int,default=180)
-    parser.add_argument('--samples',type=int,choices=(0,4),help='override sample count for vk-direct controls')
+    parser.add_argument('--samples',type=int,choices=(0,4),help='override sample count for vk-direct or IBL controls')
     args = parser.parse_args()
     args.runtime_root = fixture.validate_runtime_root(args.runtime_root)
     args.output_dir = fixture.validate_runtime_root(args.output_dir)
@@ -1704,22 +1827,26 @@ def main() -> int:
     args.output_dir.mkdir(parents=True,exist_ok=True)
     cases = args.cases.split(',') if args.cases else []
     if args.suite=='vulkan-direct': cases=['vk-direct-'+name for name in VK_DIRECT_MATERIALS]
+    if args.suite=='ibl':
+        cases=['ibl-'+name for name in IBL_MATERIALS if args.backend=='vk' or name!='shared']
     if not cases and not (args.prepare or args.update_fixture):
         parser.error('select rendering controls, or explicitly prepare/update the fixture')
     if args.prepare and args.update_fixture: parser.error('choose --prepare or --update-fixture')
     if any(case not in CASES for case in cases): parser.error('unknown capture case')
     if args.backend!='vk' and any(case.startswith('vk-direct-') for case in cases):
         parser.error('vk-direct controls require the native Vulkan backend')
+    if args.backend!='vk' and 'ibl-shared' in cases:
+        parser.error('ibl-shared qualifies the Vulkan ambient walker; GL deliberately excludes shared ambient from modern PBR')
     if args.samples is not None:
-        if not cases or args.backend!='vk' or not all(case.startswith('vk-direct-') for case in cases):
-            parser.error('--samples requires only native vk-direct controls')
+        if not cases or not all(case.startswith('ibl-') or (args.backend=='vk' and case.startswith('vk-direct-')) for case in cases):
+            parser.error('--samples requires only IBL or native vk-direct controls')
         for case in cases:
             CASES[case]={**CASES[case],'r_multiSamples':str(args.samples)}
     if args.backend=='gl' and any(c in ('msaa-partial-restart','msaa-full-restart') or '-pbr' in c for c in cases):
         args.linear=True
     if args.batch and len({CASES[c].get('r_multiSamples',BASE['r_multiSamples']) for c in cases})>1:
         parser.error('MSAA sample count must stay fixed for a batch; use separate processes for other counts')
-    for prefix in ('multi-','local-global','sampler-','skin-','fog-','blend-','lightgrid-','vk-direct-'):
+    for prefix in ('multi-','local-global','sampler-','skin-','fog-','blend-','lightgrid-','vk-direct-','ibl-'):
         if args.batch and any(c.startswith(prefix) for c in cases) and not all(c.startswith(prefix) for c in cases):
             parser.error(f'{prefix} cases require a separate scene from other controls')
     if args.prepare: prepare(args.runtime_root,args.basepath,args.output_dir,args.timeout)
@@ -1739,7 +1866,8 @@ def main() -> int:
         raise RuntimeError('PBR map must be compiled after its source was generated')
     binaries = sorted(set([*args.runtime_root.glob('openQ4-client*'),*args.runtime_root.glob('renderer-*'),
                            *args.runtime_root.glob('*.dll'),*args.runtime_root.glob('*.so*'),
-                           *args.runtime_root.glob('*.dylib'),*args.runtime_root.glob('baseoq4/game-*')]))
+                           *args.runtime_root.glob('*.dylib'),*args.runtime_root.glob('baseoq4/game-*'),
+                           *args.runtime_root.glob('baseoq4/*.pk4')]))
     provenance = {str(p.relative_to(args.runtime_root)):digest(p) for p in binaries if p.is_file() and p.suffix not in ('.pdb','.lib','.exp')}
     report = {'schema':2, 'basepath':str(args.basepath), 'fixture':manifest, 'runtimeSHA256':provenance, 'compiledMapSHA256':digest(compiled_map), 'results':[], 'complete':False, 'harnessSHA256':digest(Path(__file__))}
     sources=args.output_dir/'harness'
@@ -1758,6 +1886,7 @@ def main() -> int:
         results += capture_cases(args,group,args.output_dir/('batch' if args.batch else group[0]))
     compare_normal_captures(results)
     compare_vulkan_direct_captures(results)
+    compare_ibl_captures(results)
     compare_sampler_captures(results)
     compare_skinning_captures(results)
     compare_material_captures(results)

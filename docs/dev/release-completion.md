@@ -2,13 +2,317 @@
 
 ## 0.13.2 release candidate
 
+- [x] Check required Vulkan device and surface capabilities before selecting
+  an adapter, allowing automatic selection to continue past an incompatible
+  GPU. Explicit selections fail without substitution. The shared production
+  selector passes 43 native cases, and all eight staged startup/GPU/recovery
+  cases pass. Four SP/MP 0x/4x lifecycle runs and two gameplay recovery runs
+  retain 34 engine captures without tracked renderer warnings. Probe
+  enumeration and broader hardware qualification remain
+  separate audit items; see [device admission](vulkan-device-selection.md).
+- [x] Separate Storage1's scripted first entry from its second-entry gameplay
+  benchmark. Both record the actual map filter and endpoint camera poses; the
+  second entry also checks its settled viewpoint. Report replay binds the
+  scene identity and generated commands. This improves evidence quality;
+  it does not close timing, continuous-view, visual-parity or platform gates.
+- [ ] Resolve the recurring Vulkan frame-slot wait stalls and complete the
+  performance matrix. Timing traces now separate fence waits from image
+  acquisition, resource retirement and presentation. Shorter waits and visible
+  background-window testing do not remove the delay. OpenGL also reproduces a
+  long resource-retirement wait. GPU queue traces narrow the observed delay to
+  NVIDIA-to-Intel presentation: both APIs have Intel wait packets pending for
+  roughly half a second after unwait events. Direct Intel passes a diagnostic
+  control, while returning to NVIDIA reproduces the stall. GPU selection is
+  not a renderer fix; the cause and foreground/platform qualification remain
+  open. See
+  [frame-pacing evidence](vulkan-frame-pacing.md).
+- [ ] Complete point-shadow parity and qualification. World-axis radial
+  arithmetic and canonical native-resolution scene rendering now bring the
+  default nine-tap mapped fixture within the existing two-display-level gate.
+  All 26 independent lighting controls and twenty ordinary material comparisons
+  pass. Three stencil boundary pixels and small single-lookup/disabled-bias
+  differences remain. Stock timing and platform qualification are separate
+  requirements; see [point-shadow evidence](vulkan-point-shadow-parity.md).
+- [ ] Complete authored Vulkan material-program execution. The initial GLSL
+  ambient draw path now compiles actual source pairs, binds material parameters
+  and textures, and passes local GL image/restart comparisons. Stock-name
+  overrides, edited-source reload and invalid-source repair now pass sixteen
+  paired image controls. Per-light GLSL execution, light/texture/matrix bindings
+  and receiver-specific stencil fallback now work in the controlled fixture;
+  full-scene shadow parity still fails. Flipped render textures,
+  broader language/state/geometry coverage, exhaustion and authored ARB remain
+  open. These local controls do not close the complete requirement. See
+  [material programs](vulkan-material-programs.md).
+- [ ] Complete native cutout filtering/coverage parity. The v49 shared-filter
+  prototypes improve aggregate sampling accuracy but retain numerical
+  differences and individual quality regressions; the refined version can
+  require 31 texture fetches. Neither is adopted. The native sampling
+  discrepancy diagnosed in v48 remains open, without reducing
+  filtering quality or comparison thresholds. See the
+  [shared-filter assessment](vulkan-pbr-cutout.md#v49-shared-filter-prototypes).
+- [x] Preserve fully opaque Vulkan PBR texels at an inclusive alpha cutoff of
+  1.0 by reading constant stage alpha directly in the fragment shader. The
+  verified 4x regression loses coverage in 4,436 pixels with the old module;
+  the fix matches opaque geometry exactly through image reload and partial/full
+  video restart. All 56 cutoff/minification controls pass on GL/Vulkan at 0x/4x,
+  with all sixteen minification-suite pairs exact. Measured 1x fragment alpha
+  and derivatives now match GL. The final staged renderer passes target/HDR/motion
+  GPU contracts without tracked renderer warnings and passes shader/header pins.
+  Separate anisotropic sampling differences remain open; see the
+  [fragment investigation](vulkan-pbr-cutout.md#v46-constant-alpha-correction-and-fragment-evidence).
+- [x] Use typed PBR albedo for admitted Vulkan cutout depth coverage, preventing
+  strongly minified masks from disappearing because the classic texture copy
+  has different alpha mip rounding. All 32 independent GL/native controls pass
+  at 0x/4x with exact opaque/minified coverage and image/video recovery. The old
+  module fails the same oracle, losing all 7,278 minified specimen pixels.
+  The subsequent framebuffer-orientation fix makes all sixteen ordinary,
+  minified and recovery pairs exact at 0x/4x. Smoothed 4x coverage with 16x
+  anisotropy improves from 444 differing pixels to four; those residuals and
+  the isolated baked-lighting comparison still fail the unchanged limit. See
+  [cutout coverage](vulkan-pbr-cutout.md).
+- [x] Resolve the 125%/8x PBR preview comparison by carrying GL framebuffer
+  coordinates through native offscreen geometry, depth and presentation. The
+  formerly maximum-49 case now matches exactly, and all 40 preview pairs pass
+  within one display value against a fresh GL reference. All 80 independent
+  GL/native preview controls, 38 HDR post controls, three GPU contracts and
+  staged SP/MP runs pass. The GPU motion contract covers both stored depth
+  origins in 36 fixtures before/after restart. No prototype switch, image
+  reflection or tolerance change remains. See [image orientation](vulkan-image-origin.md)
+  and `.tmp/vulkan-gap-closure/framebuffer-orientation/checkpoint-v44-image-origin.json`.
+- [x] Prevent native RGBA8 resolve rounding from producing different Vulkan
+  color edges with combined 8x MSAA and SMAA. The affected source matches GL
+  exactly; its display maximum drops from 59 to one byte. All thirteen raw
+  and display pairs pass, with all 26 capture/recovery controls and 124 SMAA
+  controls passing independently. Sixty of 62 SMAA image pairs pass within
+  one byte; the two native HUD filtering comparisons remain failed.
+  In that v40 snapshot, all eighty 8x PBR controls passed independently and
+  39/40 paired images passed; v44 subsequently closes the separate 125%
+  coverage failure as recorded above. GPU checks pass at 2x/4x/8x
+  for fractional coverage and partial/repeated copies, alongside existing
+  target/MRT/depth and HDR contracts. Both staged stock SP/MP runs pass with
+  sixteen captures and no tracked renderer warnings. Broader Vulkan
+  qualification stays open. Evidence:
+  `.tmp/vulkan-gap-closure/ldr-resolve/checkpoint-v40-ldr-resolve.json`.
+- [x] Prevent native-resolve darkening of bright supersampled Vulkan PBR
+  preview edges by explicitly averaging stored samples before display clamping.
+  The 150%/8x capture matches OpenGL exactly before SMAA and within one byte
+  after SMAA. All 160 independent preview/recovery controls and 26 capture
+  controls pass, as do the Vulkan HDR GPU contract, shader/header checks and
+  both staged stock SP/MP runs with sixteen captures. The strict image gate
+  passed 40/40 pairs at 4x and 39/40 at 8x in the v39 snapshot. The later v40
+  and v44 changes above close its classic 8x SMAA and 125% coverage failures.
+  Native HUD anisotropy and broader renderer qualification remain open.
+  Evidence: `.tmp/vulkan-gap-closure/msaa-input-parity/checkpoint-v39-preview-average.json`.
+- [x] Let renderer developers inspect individual RGBA8 render textures with
+  `screenshot image` on OpenGL and Vulkan. All 26 independent capture controls
+  pass through resizing, reloads, video restarts and HDR switches, including
+  exact frame preservation and invalid-request rejection. All 38 existing HDR
+  capture controls and four GPU contracts pass; shared HDR images remain exact.
+  All four staged stock SP/MP profiles pass with 32 gameplay captures and no
+  tracked rendering warnings. Existing stock-map warnings remain separate.
+  The investigation retains the classic 8x color-edge SMAA failure and exposes
+  a separate 150% HDR-off PBR preview difference under the unchanged gate.
+  Broader rendering parity remains open. See the
+  [capture contract](renderer-image-capture.md) and
+  `.tmp/vulkan-gap-closure/smaa-color-parity/`.
+- [x] Keep requested MSAA in supersampled OpenGL PBR scenes and recycle unused
+  render targets instead of falling back after repeated resolution changes.
+  Both GL allocation paths pass 39 lifecycle controls, with 326 retirements
+  each, bounded cache size and exact recovery. All 124 independent 4x/8x SMAA
+  controls pass; all five scale comparisons remain within one display byte.
+  The native HUD and one classic 8x color-edge case still fail the unchanged
+  full-frame comparison gate. All seventeen shared linear HDR pairs and
+  eighteen display pairs are exact; four GPU contracts and 32 staged stock
+  SP/MP captures pass with no tracked rendering warnings. Broader renderer
+  qualification remains open. See [target lifetime](vulkan-hdr.md#supersampling-and-render-target-lifetime)
+  and `.tmp/vulkan-gap-closure/presentation-parity/`.
+- [x] Apply authored fog and blend lights once in eligible OpenGL PBR previews
+  with HDR tone mapping off, including diagnostic colors and transparency.
+  All 111 OpenGL/Vulkan image pairs at 0x/4x/8x pass the original full-frame
+  two-byte gate with the default lighting-parity setting. Fourteen HDR controls
+  retain correct authored radiance and transparent composition. Twenty-eight
+  whole-scene GL 3.3/4.5 preview, fallback and restoration controls also pass.
+  Both staged stock GL SP/MP profiles pass with sixteen 8x captures and no
+  tracked rendering warnings. This closes the bounded fog/blend mismatch
+  recorded by the earlier preview qualification;
+  broader material admission remains open, with presentation work recorded above.
+  See [preview details](vulkan-hdr.md#pbr-previews-with-tone-mapping-off) and
+  `.tmp/vulkan-gap-closure/preview-fog/`.
+- [x] Preserve bright Vulkan PBR preview edges with HDR tone mapping off.
+  PBR radiance resolves in floating point while classic color limits remain
+  intact; prepared transparency uses pipelines matching the temporary target.
+  All 37 native preview/recovery controls pass at 0x/4x/8x, as do their GL
+  counterparts, 24 GPU clamp/resolve fixtures before/after restart, 44 resource
+  controls and sixteen staged stock SP/MP captures. Twenty paired preview
+  images per tier passed the original gate at that checkpoint; seventeen
+  fog/blend failures per tier are preserved and addressed by the later entry
+  above. The SMAA comparison improves to
+  27/29, closing all five HDR-off PBR edge failures; HUD and 125% MSAA-policy
+  differences remain. This closes the bright-edge defect,
+  not complete HDR-off PBR visual parity. See
+  [preview details](vulkan-hdr.md#pbr-previews-with-tone-mapping-off) and
+  `.tmp/vulkan-gap-closure/pbr-preview/`.
+- [x] Align Vulkan multisample coverage with the measured classic OpenGL
+  convention where programmable sample locations are supported, preserving
+  depth through transitions and resolves and retaining native MSAA elsewhere.
+  All 144 classic 4x/8x pairs pass (4x exact, 8x within one byte), as do two 2x
+  controls and all 21 linear HDR 4x float/display comparisons. Native fallback
+  controls, GPU validation and sixteen staged SP/MP 8x captures including
+  reload/restart pass. Both 29-case SMAA/recovery sequences pass
+  independently; at that checkpoint seven cross-API images were outside the unchanged gate:
+  five HDR-off PBR previews, the HUD, and the differing 125% MSAA policy.
+  See `.tmp/vulkan-gap-closure/msaa-samples/` and the
+  [sample-location notes](vulkan-hdr.md#multisample-locations). Broader Vulkan
+  material/platform qualification remains open.
+- [x] Classic Vulkan colors and cutout opacity now match the fixed-function
+  reference while preserving HDR vertex tints and PBR emission. RGB-only ASE
+  colors have defined alpha, and shared ambient preparation handles modern-only
+  lighting records without unnecessary fallback. All 324 analytic controls
+  pass; ninety 0x full-frame pairs are exact. All ten previously failing classic
+  SMAA scene pairs now pass. Bulk texture reloads also retain enough descriptors
+  for a full image-cache generation, with fence-safe cleanup and exact GPU
+  readback across 1,024 generation draws. Both validation runners reject the
+  formerly missed skipped-draw warnings; final SP/MP reload/restart checks pass
+  with sixteen 8x captures and clean Vulkan diagnostics. Historical failures,
+  source/binary identities and the original failed HUD/MSAA comparisons are bound
+  in `.tmp/vulkan-gap-closure/classic-colors/checkpoint-v33-classic-colors.json`.
+- [x] Vulkan SMAA preserves world orientation with classic and PBR materials,
+  including HDR, scene scaling, image reloads and video restarts. Graphics
+  diagnostics recognize the native programs. All 174 GL/Vulkan laboratory
+  views at 0x/4x/8x pass orientation/recovery checks, along with four stock
+  SP/MP profiles at 8x. Eighteen 0x PBR scene pairs differ by at most one byte.
+  The subsequent v33 work closes classic emission and supersedes the native
+  stock reload results after detecting warnings missed by the original gate.
+  HUD color and strict multisample cross-API comparisons remain open; this does
+  not promote the renderer. Original evidence is retained in
+  `.tmp/vulkan-gap-closure/scene-orientation/checkpoint-v32-smaa-orientation.json`.
+- [x] Scalable HUD, extended-character and console fonts retain their pixels
+  across image reloads and video restarts. Generated image callbacks restore
+  the glyph coverage; repeated reload and partial/full restart controls on GL
+  and Vulkan at 0x/4x reproduce the original HUD and atlas images exactly.
+  Linear scene captures remain unchanged with the HUD enabled. The original
+  missing-glyph/Vulkan validation failure is retained as negative evidence in
+  `.tmp/vulkan-gap-closure/linear-capture/`.
+- [x] Start level-editor modernization with a portable, source-preserving
+  document and separate experimental workspace. `editorExperimental` opens entity/map/class
+  search, an inspector, source-geometry preview, point-entity operations,
+  undo/redo, protected saves and recovery. Pane widths persist; unchanged
+  geometry is reused across property edits. Windows build/staging, 2,938 native
+  assertions and Linux ASan/UBSan pass. The original document milestone also
+  qualified 79 stock-source round trips. OpenGL and Vulkan workspace workflows
+  pass with stock SP gameplay, in-game reopening, 1280x720/1600x900 captures,
+  renderer restart, picking, rejected replacements and bounded pane resizing.
+  Visual qualification remains partial: full video restart can leave labels
+  missing on either renderer; reactivation is not a reliable OpenGL workaround.
+  The known missing retail `burn_misc_sm` image remains separately recorded.
+  Legacy Radiant source and its `editor` command remain unchanged; Meson still
+  does not build that legacy tool. Experimental settings and recovery are separate.
+  Native input, high DPI, docking and geometry/build tools remain open; this
+  does not declare the idStudio target complete. Further development is paused
+  at the user's request. Evidence: `.tmp/editor-workspace/closeout-gl/`,
+  `closeout-vk/` and `closeout-document/`. See [the editor roadmap](level-editor-modernization.md).
+- [x] Qualify native Vulkan linear PFM screenshots for completed admitted HDR
+  scenes, preserving pre-post radiance and resuming the frame without presenting.
+  Independent composition, lifecycle, public HUD/reload and GPU controls pass;
+  all 21 final 0x GL/native float pairs pass. Four stock SP/MP 0x/4x profiles
+  have passing evidence, including reruns of two cases interrupted by concurrent
+  staging. The original failed batch remains recorded. The strict 4x cross-API
+  silhouette comparison remains open; this closes the bounded export contract,
+  not all HDR/PBR parity. Evidence and retained failures are bound in
+  `.tmp/vulkan-gap-closure/linear-capture/checkpoint-v31-linear-capture.json`.
+- [x] Qualify bloom and automatic exposure for admitted native linear Vulkan
+  PBR HDR scenes. Prepared post resources, exposure-domain reset and orientation
+  checks pass, and v30 closes all 33 GL/native post pairs without changing the
+  two-byte gate. Sixty more composition pairs at 50/75/125% differ by at most
+  one byte/channel. The game now preserves GL HDR highlights through its
+  forward/resolve targets. Independent radiance, actual 4x MSAA, scaled lighting,
+  CPU/GPU animation and restart checks pass, as do four Vulkan SP/MP 0x/4x and
+  two GL stock gameplay profiles. The retained failures and source/module
+  archive are bound in `.tmp/vulkan-gap-closure/scene-scale/checkpoint-v30-scene-scale.json`.
+  This closes the bounded scene/post result; broader material, baked-lighting,
+  portal/capture, post-effect and release qualification remain open.
+- [x] Authored ambient lights now use the native PBR diffuse response and obey
+  ordered transparent alpha. The 82 lighting captures pass 110 independent
+  numerical/material/recovery checks; all 36 capacity and 88 resource controls
+  also pass at 0x/4x, along with both 68-case direct-light regressions. The
+  previous native binary fails the ambient lighting checks. Direct testing also
+  corrected a background-dependent alpha predicate, retaining its old-binary
+  reproduction and exact authored alpha in the isolated captures.
+  The mixed-material GL reference declines modern ownership, so this does not
+  claim paired scene or HDR parity. See [ambient lights](vulkan-pbr-ambient.md).
+- [x] Make Vulkan PBR material diagnostics visible without direct or environment
+  lighting. Both 62-capture suites pass channel-value, light-independence and
+  data-layout checks at 0x/4x, and all seven original unlit views match GL.
+  The 44 transparent resource/restart controls also pass at each sample count.
+  Strict mapped-filter/cutout differences and broader diagnostic integration
+  remain recorded in [material diagnostics](vulkan-pbr-diagnostics.md).
+- [x] Eligible native Vulkan PBR scenes now use linear HDR composition with
+  manual exposure. Classic and PBR lighting accumulate separately, then combine
+  per MSAA sample before fog and ordered transparency. The complete output is
+  prepared before ownership and finishes before authored post/HUD. Forty
+  composition and 86 ambient/recovery captures pass at 0x/4x, including
+  independent radiance checks and exact transparent failure/reload restoration.
+  All twenty 0x GL/native full-frame pairs pass with at most one byte per
+  channel difference. Twelve additional captures qualify actual FP16 resize,
+  scaling and full restart at both sample counts; restored images are exact.
+  The same staged module passes all five GPU cases and all four stock SP/MP
+  0x/4x compatibility profiles, including the unchanged SP 4x temporal interval.
+- [x] Implement bounded native Vulkan baked HDR lighting with complete receiver
+  preparation and rollback. Baked diffuse respects PBR metallic/occlusion while
+  retaining reflections; classic flat-normal receivers keep their own color
+  domain. The final runtime passes 79 independent GL/native controls, both GPU
+  resource/HDR contracts and staged SP/MP runs with sixteen engine captures.
+  Reload/restart and late resource failure restore exact images. Full-frame
+  comparisons still fail on emissive, reflection and cutout/coverage differences;
+  HDR-off baked previews and broader grid/material combinations remain outside
+  this scope. See [native baked HDR](vulkan-pbr-baked.md).
+- [ ] Complete native PBR HDR scene ownership across the remaining material,
+  baked-grid, portal/feedback and post-effect combinations. Those combinations
+  still decline the new whole-view owner. Shared-setting toggles do not prove
+  that the shared fog consumer executed. The v27 output GPU fixtures remain
+  qualified, with 48 new per-sample boundary executions added in v28. Broader
+  hardware/performance requirements remain open; v27's initial SP 4x
+  resized-history failure is retained alongside the successful v28 repeat. See
+  [Vulkan HDR](vulkan-hdr.md#remaining-acceptance).
+
+- [x] Keep native PBR environment lighting active under the default light-grid
+  setting on maps without baked grids. Analytic lighting, authored probes,
+  metal, cutouts and transparency pass 60 GL/Vulkan captures and 40 exact
+  toggle/restoration comparisons at 0x/4x; the prior binary fails four opaque
+  controls. Bounded baked HDR support is now implemented separately;
+  [complete baked parity remains open](vulkan-pbr-baked.md). See
+  [native environment lighting](vulkan-pbr-environment.md).
+
+- [x] Locally qualify native Vulkan authored LDR reflection probes. The shared
+  selection and native atlas pass 46 Vulkan and 40 GL controls at each of 0x/4x,
+  with all 80 paired comparisons passing. Capacity, source/resource failures,
+  transformed receivers and image/video recovery are covered. HDR probe input,
+  final integration regression and broader platforms remain separate gates.
+  See [native probes](vulkan-pbr-probes.md).
+
+- [x] Native Vulkan PBR transparency now applies opacity once over the complete mesh and replays each light with its original receiver coverage. Separate entities using the same model keep independent lighting. All 25 dedicated partial-light, instance and reload/restart controls pass at both 0x and 4x, with 12 additional room/environment controls and retained-reference comparisons passing. See [native environment lighting](vulkan-pbr-environment.md).
+
+- [x] Native Vulkan transparency now checks its complete record bound before drawing, retaining consistent classic lighting and alpha when capacity is exceeded. All 18 capacity controls pass at 0x and 4x, including exact classic fallback, active native lighting at the limit and exact image/video restoration; the same image predicate rejects the old renderer. Shadowing transparent ownership remains open.
+
+- [x] Native transparent PBR admission now survives the fog pass's drawing-state reset. Seven independent background/alpha, replay and restoration controls pass at both 0x and 4x. All 50 existing partial-light regression images remain byte-identical to their preceding references.
+
+- [x] Native transparent PBR prepares coverage, direct lighting and environment resources before taking ownership. Failure restores speculative geometry/uniform allocations, descriptor ownership and retirement state, retaining a complete classic view. All 44 resource controls pass at both 0x and 4x, including exact fallback/recovery, late failure after earlier lights, actual descriptor rollback, reload/restart and environment-only views. See [native environment lighting](vulkan-pbr-environment.md). Broader resource-failure and platform qualification remain separate.
+
+- [x] The Vulkan authored-probe source bridge reads complete immutable cubemaps with exact generation checks and sRGB/HDR decoding. GPU patterns, rejection controls and padded compressed-mip uploads pass around partial/full restart. Invalid image upload regions are rejected before GPU recording. Native atlas/blending qualification is tracked above; this resource work does not promote PBR or Vulkan. See [probe sources](vulkan-probe-sources.md).
+
+- [x] Native Vulkan PBR adds filtered analytic environment reflections and diffuse irradiance once per eligible surface, including ordered transparency without direct lights. Local 0x/4x qualification passes 27 Vulkan and 26 OpenGL controls each, plus both 26-control comparisons. Image/video restoration is exact; independent cutout coverage and radiance checks reject the retained pre-fix shader. The investigation also fixes image reload of adopted MSAA targets, verified through public image creation and raw GPU readback. Authored LDR probes are qualified separately above; baked PBR diffuse and full scene color parity remain open. See [native environment lighting](vulkan-pbr-environment.md).
+
+- [ ] Vulkan TAA now draws and consumes eligible rigid-object velocity with independent transform history, resolved-depth rejection and conservative fallback for incomplete geometry. Eighteen numerical GPU fixtures pass before/after full restart. All four SP/MP HDR/MSAA lifecycle cases pass the interval-based gate with 39-60 newly completed rigid-vector views per interval, allowing legitimate history resets. Moving-scene visual comparisons and broader temporal/platform qualification remain required; this does not promote the renderer.
+
+- [x] HDR preserves bright texture detail and the composed portal sky. The affected stock scene is image-identical across PBR toggles. A smoother stock curve and Vulkan portal-view/depth ownership pass 224 production tone-map and 20 sky-mask GPU executions around restart, four stock SP/MP 0x/4x lifecycle cases, and frozen-scene regressions on both backends with unchanged runtime packages and no tracked warnings. GL's linear PBR tone curve is unchanged; broader HDR/PBR color parity remains open.
+
 - [ ] The [PBR completeness audit](plans/2026-09-20-pbr-rendering-audit.md) now has independent BRDF/environment numerical tests and an original 24-station map. GL material channels, authored texture sampling, filtered environment lighting, HDR float/display references, moving/multiple shadows, MSAA/cutout coverage, reload/restart and resource-limit fallback controls pass locally. The two-joint animated specimen has byte-identical CPU/GPU pose, normal and shadow captures, including paused video restarts after cache-lifetime and bounds fixes. GL 3.3 HDR/MSAA qualification also passes after target-format and cluster-budget fixes. Scoped production admission now works without a forced parity override; HDR exposure, stock HUD, native fog/blend fallback and exact PBR restoration controls pass. Eligible linear HDR scenes now preserve PBR under authored fog/blend lights, with per-pixel radiance and transparency-order controls; GL 3.3/4.5 and 4x MSAA regression passes. Baked PBR diffuse/IBL separation, normal encodings, fog/blend/transparency composition, GL 3.3/4.5, MSAA and actual shader/image/video reloads now pass 81 map controls plus 15 renderer self-test markers on the v47 runtime. Broader mixed materials and portal/view-weapon grids, final stock gameplay/performance regression and native Vulkan PBR parity remain open; this is not a renderer promotion.
 - [x] Repeated SP/MP console script commands bypass the include-file cache. The PBR moving/restored-caster proof executes multiple script commands and restores the original rendered image.
 - [x] A narrow fixed classic bump/diffuse/specular path now preserves native lighting inside full-viewport, single-sample HDR PBR scenes without shadows or ambient lights. Four unclipped material references, baked-light composition, GL 3.3/4.5 reload/restart/resize and complete shadow/MSAA fallback controls pass. Video restart no longer leaves stale native shadow-caster arrays, and MSAA telemetry follows the executed owner. The [authoring guide](../user/pbr-materials.md) describes the qualified settings and limits; broader classic parity remains unpromoted.
 - [x] Experimental Vulkan gains cubemap face attachments and depth-only render targets, selected-face restoration after post effects, complete-layer image resolves, and safe attachment-view retirement on resize. Retirement overflow keeps resources alive until their recording frame completes. The on-device test passes 66 exact color/depth captures, real depth-only draws, 4x MSAA depth resolve, invalid-face rejection, and a retirement-capacity stress case under Vulkan validation. Validation requires a positive layer/debug-messenger marker; missing required modules and empty selections fail. The runtime-directory override selects its own executable and keeps generated output outside the tested package.
 - [x] Vulkan render targets now accept up to five color buffers within the device limit. Pipeline formats, clears, barriers, blend masks and resolves cover every attachment. GPU tests pass mixed RGBA8/RGBA16F outputs, unclamped float values, resumed scopes, cube faces, 4x MSAA color/depth resolves, resize, and invalid attachment/alias rejection without validation warnings. The startup gate requires this evidence; rectangular cube-target resizing is rejected before changing its images.
-- [x] Native Vulkan PBR supports scalar, packed/separate material data, optional XYZ/RG/AGB normals, matching alpha-tested coverage and single additive emission. The v69 map suite passes 68 controls each at 0x and 4x MSAA for decoding, visible effects, ownership, specular footprint filtering, cutouts, independent emission references, exact fallback, restarts and point/projected shadows. Raw FP16 tests preserve faint channels and bound one emission write at both sample counts. Source-alpha transparency, IBL/probes, quantified temporal stability, arbitrary additive overflow and full scene color parity remain open; see the [PBR audit](plans/2026-09-20-pbr-rendering-audit.md).
-- [x] Vulkan screenshot/partial-restart lifetime and hidden-window resize fixes pass stock SP/MP at 0x/4x on v63. Backend-owned MP scenes now render and resolve real MSAA, including after HDR/TAA are disabled, and diagnostics report the actual sample count. GPU attachment/MRT and 48 HDR fixture executions around full restart pass with active validation. SP automatic-exposure highlight loss, visual parity and broader Vulkan qualification remain open; see [Vulkan HDR](vulkan-hdr.md).
+- [x] Native Vulkan PBR supports scalar, packed/separate material data, optional XYZ/RG/AGB normals, matching alpha-tested coverage and single additive emission. The v69 map suite passes 68 controls each at 0x and 4x MSAA for decoding, visible effects, ownership, specular footprint filtering, cutouts, independent emission references, exact fallback, restarts and point/projected shadows. Raw FP16 tests preserve faint channels and bound one emission write at both sample counts. Later v70 evidence closes native source-alpha ownership, and the analytic environment increment is tracked above. Authored probes, baked PBR diffuse, quantified temporal stability, arbitrary additive overflow and full scene color parity remain open; see the [PBR audit](plans/2026-09-20-pbr-rendering-audit.md).
+- [x] Vulkan screenshot/partial-restart lifetime and hidden-window resize fixes pass stock SP/MP at 0x/4x on v63. Backend-owned MP scenes now render and resolve real MSAA, including after HDR/TAA are disabled, and diagnostics report the actual sample count. GPU attachment/MRT and 48 HDR fixture executions around full restart pass with active validation. The later highlight/portal-sky repair is qualified above; broader visual parity and Vulkan qualification remain open. See [Vulkan HDR](vulkan-hdr.md).
 - [x] Vulkan window, surface, swapchain and mandatory-resource startup failures now recover to OpenGL in the same process, after renderer owners and callbacks are retired safely. The requested renderer preference and original failure log survive. All four injected failures, ordinary Vulkan startup and both earlier fallback drills pass locally; resource-failure SP/MP gameplay produces engine captures and exits cleanly. Renderer ABI v14 requires matching engine and both renderer modules. Later full `vid_restart` device failures retain next-launch recovery; hosted/platform qualification remains open.
 - [ ] Linux x64/ARM64 push and ARM64 pull-request jobs now select mandatory lavapipe Vulkan startup/render-target and fallback checks. Hosted results, full Vulkan feature parity, physical GPU/platform qualification, repeated comparisons and promotion sign-off remain pending. See [Vulkan gap closure](plans/2026-09-20-vulkan-gap-closure.md).
 - [x] Bot-only effect/feedback queues no longer fill in busy multiplayer combat, and bot recipients skip network visibility work. Native delivery checks preserve human spectators, demo/repeater recording and the documented unreliable broadcast destination. This resolves queue-overflow warnings found during the bot audit.

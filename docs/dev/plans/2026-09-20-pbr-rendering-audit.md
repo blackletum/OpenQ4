@@ -5,6 +5,150 @@ path and proves the result with a purpose-built, reproducible in-engine map.
 It coordinates with the Vulkan gap-closure task; neither task may claim the
 other backend is qualified merely because shared material metadata exists.
 
+As of 2026-09-23 the separate PBR task is terminal. The user resumed the
+[Vulkan gap-closure task](2026-09-20-vulkan-gap-closure.md), which now owns the
+remaining Vulkan/PBR work and build/GPU execution. Its screenshot investigation
+found stock HDR washout with PBR disabled; that repair does not close the native
+environment/probe and full color-management requirements recorded below.
+
+The v41 follow-up narrows the remaining 125%/8x emissive edge difference to
+viewport/rasterization rounding. Uploaded geometry and the shader-produced
+positions at the affected edge agree. A deliberately reflected Vulkan
+viewport control matches GL exactly after normalizing that reflection.
+The renderer source is restored to v40, and the original strict comparison
+remains failed. No material, BRDF or shader change is retained from this
+investigation. See the [edge evidence](../vulkan-hdr.md#125-percent-msaa-edge-investigation).
+
+The v40 follow-up closes the classic 8x color-edge SMAA failure by explicitly
+averaging stored RGBA8 samples. All thirteen raw/display pairs pass within one
+byte, all 124 independent 4x/8x SMAA controls pass, and 60/62 full-frame pairs
+pass; only native HUD anisotropy still fails. All eighty 8x PBR preview controls
+pass independently. The separate 125% coverage comparison remains failed,
+maximum 49, while the other 39 pairs pass. This change does not extend PBR
+admission or establish broader platform/performance qualification. See the
+[resolve contract](../renderer-image-capture.md#rgba8-multisample-resolve).
+
+The v39 follow-up repairs the 150% HDR-off PBR resolve failure exposed by v38:
+explicitly averaging stored float samples produces an exact GL raw-scene match
+and a display difference of at most one byte after SMAA. All 160 independent
+4x/8x preview/recovery controls pass, as do all 26 image-capture controls, the
+Vulkan HDR GPU contract and both staged stock SP/MP runs. Forty paired images
+pass at 4x and 39/40 at 8x. A newly added 125%/8x control separately differs
+at one scene texel and three display pixels; GL depth/color probes place it
+before the final handoff, with GL 3.3 and 4.5 agreeing. This comparison remains
+failed and also reproduces with the archived v38 Vulkan module. The classic
+8x color-edge SMAA difference is now traced to native resolve
+of identical stored samples, and remained open until v40. Capture correctness does
+not establish complete PBR parity. See the
+[current Vulkan work record](2026-09-20-vulkan-gap-closure.md#work-record).
+
+The v37 follow-up preserves requested MSAA in supersampled OpenGL PBR scenes
+and prevents repeated resolution changes from exhausting the render-target
+cache. Both GL allocation paths pass 39 lifecycle controls, each recycling
+326 targets while restoring the original images exactly. The shared seventeen
+linear HDR pairs and eighteen display pairs also match exactly. Native HUD
+anisotropy and one 8x classic color-edge SMAA case remain outside the existing
+display comparison gate; broader PBR admission is unchanged. See
+[target lifetime and presentation evidence](../vulkan-hdr.md#supersampling-and-render-target-lifetime).
+
+The v36 follow-up closes the bounded HDR-off fog/blend preview mismatch.
+OpenGL now uses its exact authored fog geometry and blend stages before
+transparent PBR, retaining encoded classic colors and avoiding a second
+clustered/shared contribution. All 111 full-frame GL/Vulkan image pairs at
+0x/4x/8x pass the existing two-byte gate with the default lighting-parity
+setting. Fourteen separate HDR controls preserve authored radiance and
+transparent background composition. Vulkan's v35 binary is unchanged; this
+fix corrects the OpenGL reference and does not promote either experimental
+path. See [preview scope and retained evidence](../vulkan-hdr.md#pbr-previews-with-tone-mapping-off).
+
+The v30 follow-up closes scaled GL/native HDR comparisons for eligible complete
+views: all 33 post pairs and sixty composition pairs at 50/75/125% pass within
+one byte/channel. It also fixes the game's GL forward/resolve target clipping
+emission before tone mapping. Independent radiance, MSAA, animation and staged
+SP/MP regressions pass. This bounded result leaves unsupported material,
+baked-lighting, portal/capture and post-effect combinations open; see
+[HDR scope and retained evidence](../vulkan-hdr.md).
+
+Native authored ambient lights now evaluate the PBR diffuse response and take
+part in complete transparent admission and replay. All 82 dedicated captures
+pass independent radiance, material and alpha/recovery checks at 0x/4x. The GL
+mixed classic/ambient reference declines modern ownership, so it is retained
+as an invalid comparison rather than a parity pass. The 36 ambient capacity,
+88 resource and 136 direct-light integration captures also pass. The full
+linear HDR scene contract is still open. See
+[native ambient lighting](../vulkan-pbr-ambient.md).
+
+The resumed task has since implemented the native analytic environment pass
+using the shared filtered source, diffuse convolution and BRDF lookup data.
+Local 0x/4x qualification passes 27 Vulkan and 26 OpenGL controls at each sample
+count, with all common specimen comparisons passing. The investigation also
+fixed zero-direct-light transparency admission, image reload of adopted MSAA
+targets, and filtered cutout coverage. Authored probes, baked diffuse composition
+and full color management remain separate requirements. Details and retained
+failures: [Vulkan PBR environment](../vulkan-pbr-environment.md).
+
+The native authored-probe source bridge now reads resident cubemap faces with
+explicit color decoding, generation checks and complete-output admission.
+Native atlas residency, shared CPU selection and visible probe blending are
+now connected. Original LDR sources pass all 172 native/GL captures and 80 paired
+comparisons at 0x/4x, including capacity, lifecycle, resource failures and
+transformed receivers. Full HDR input/accumulation and broader platforms remain
+unqualified. The default-light-grid correction has its own 60-capture,
+40-toggle qualification at 0x/4x, preserving environment light where no baked
+grid applies. Later direct-light candidates have separate gates.
+See [Vulkan probes](../vulkan-pbr-probes.md) and the retained
+[source-reader qualification](../vulkan-probe-sources.md).
+
+Further per-light isolation finds projected-light receiver coverage differences
+between clustered GL and native Vulkan. A separate native transparency defect
+has been repaired: full-mesh opacity no longer depends on the first light's
+triangle subset, and instances of the same model retain separate light records.
+The dedicated partial-light regression and remaining qualification scope are
+recorded in the same environment ledger.
+
+The native direct-light frontend now preserves normal-mapped PBR triangles
+that classic geometric facing rejection would remove. A fully back-facing
+plane proves real mapped illumination, classic rollback and light-volume
+rejection, including an old-binary negative control. The plane receiver passes
+at 0x/4x; classic ceiling MSAA differences and several curved grazing pixels
+remain failed comparisons. See [receiver geometry](../vulkan-pbr-geometry.md).
+Native full-surface material diagnostics are also under qualification so
+unlit materials can be inspected independently of direct-light coverage.
+The v25 62-capture suites pass semantic checks at both sample counts, and all
+seven original unlit views pass. Constant normals and non-mipmapped sampling
+match within one byte; independent sample-position oracles reproduce the
+opaque sphere's complete 4x coverage. The 44 transparent resource/restart
+controls pass again at 0x/4x. A separate 20-image HDR comparison reproduces a
+larger native PBR presentation gap: native output still uses the stock tone
+curve rather than GL's linear PBR filmic/output transfer. Details:
+[material diagnostics](../vulkan-pbr-diagnostics.md).
+
+The next capacity investigation reproduces mixed native/classic transparency
+above the 256-record limit. Vulkan now counts the complete candidate view before
+drawing and declines native transparency when it cannot fit, with observable
+admission and draw counters. The capacity regression compares overflow with
+the complete classic image and checks restoration at the exact limit.
+Shadowing-transparent ownership remains open; subsequent resource preparation
+is qualified separately below.
+
+The same change keeps view admission alive through the fog pass's drawing-state
+reset. Both seven-control post-fog suites pass the independent authored-alpha
+equation at 0x/4x; the old v9 renderer fails it by approximately 112 bytes.
+The 18 capacity controls pass at each sample count, while all 50 existing
+partial-light captures remain byte-identical to v9. The environment ledger and
+`.tmp/vulkan-gap-closure/pbr-capacity/` retain the complete v10 evidence.
+
+Native transparent coverage, lighting and environment resources are now prepared
+as one transaction before drawing. Failures release speculative allocations and
+retain the complete classic path; committed draws bind retained resources and
+geometry offsets. All 44 injected-resource controls pass at both 0x and 4x, with
+exact whole-frame fallback and recovery, late failures after earlier light
+records, actual descriptor rollback, reload/restart and environment-only views.
+The v12 module and evidence are retained under
+`.tmp/vulkan-gap-closure/pbr-resources/`. This qualifies the native transparent
+preparation path, not arbitrary device exhaustion, other resource consumers,
+authored probes or broader hardware/platform support.
+
 ## Target and boundaries
 
 The target is the PBR quality expected of the id Tech 6 generation: consistent

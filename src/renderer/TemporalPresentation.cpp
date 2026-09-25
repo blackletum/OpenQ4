@@ -787,4 +787,8 @@ void R_TemporalPresentation_PrintStatus_f( const idCmdArgs &args ) {
 		rg_temporalResolutionState.droppedScaleChanges,
 		rg_temporalResolutionState.raisedScaleChanges,
 		rg_temporalResolutionState.discontinuityResets );
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	extern void VK_PostProcess_PrintTemporalMotion( void );
+	VK_PostProcess_PrintTemporalMotion();
+#endif
 }

@@ -68,6 +68,7 @@ ENGINE_SOURCE_GLOBS = [
     "renderer/OpenGL/*.cpp",
     "tools/compilers/aas/*.cpp",
     "tools/compilers/dmap/*.cpp",
+    "tools/leveleditor/*.cpp",
     "sound/*.cpp",
     "sound/OpenAL/*.cpp",
     "sys/*.cpp",
@@ -115,10 +116,13 @@ RENDERER_VK_SOURCE_GLOBS = [
 # satisfies the broad discovery glob.
 RENDERER_VK_REQUIRED_SOURCES = (
     "renderer/Vulkan/VulkanGpuFrameTiming.cpp",
+    "renderer/Vulkan/vk_HDRScene.cpp",
 )
 
 RENDERER_VK_EXCLUDED_SOURCES = (
     "src/renderer/RendererModule.cpp",
+    # Standalone admission library, shared with its native fake-driver tests.
+    "src/renderer/Vulkan/VulkanDeviceSelection.cpp",
     # GL backend, replaced wholesale
     "src/renderer/draw_arb2.cpp",
     "src/renderer/draw_common.cpp",

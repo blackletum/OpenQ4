@@ -45,6 +45,10 @@
 #include "VulkanDevice.h"
 #include "VulkanBringup.h"
 #include "vk_Image.h"
+#include "vk_ExecutorHooks.h"
+#include "vk_HDRScene.h"
+#include "vk_PBRProbes.h"
+#include "vk_MaterialPrograms.h"
 
 // the back-end state object normally defined by tr_backend.cpp
 backEndState_t	backEnd;
@@ -118,14 +122,6 @@ bool VK_GuiExecutor_EnsureFrameOpen( void );
 bool VK_GuiExecutor_EndFrameAndPresent( void );
 void VK_PostProcess_ApplyBackBuffer( void );
 bool VK_GuiExecutor_FrameIsOpen( void );
-idRenderTexture *VK_Exec_ActiveRenderTexture( void );
-bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace = 0 );
-void VK_Exec_ClearRenderTarget( bool clearColor, bool clearDepth, float depthValue,
-		const float colorValue[ 4 ] );
-bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
-		int cubeFace, bool copyDepth );
-bool VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
-		idRenderTexture *destinationRenderTexture, bool resolveDepth );
 bool VK_GuiExecutor_ResolveTemporalPresentation(
 		const resolveTemporalPresentationCommand_t &command );
 
@@ -410,6 +406,7 @@ bool GLimp_SetScreenParms( glimpParms_t parms ) {
 void GLimp_SwapBuffers( void ) {
 	// live window-state poll, mirroring the GL seam
 	if ( vkBackendServices != NULL && vkBackendServices->RefreshNativeWindowHandles != NULL ) {
+		const unsigned long long windowBegin = r_rendererMetrics.GetInteger() > 0 ? R_RendererMetrics_CpuClock() : 0;
 		renderModuleWindowInfo_t info;
 		memset( &info, 0, sizeof( info ) );
 		vkBackendServices->RefreshNativeWindowHandles( &info );
@@ -429,6 +426,7 @@ void GLimp_SwapBuffers( void ) {
 				}
 			}
 		}
+		R_RendererMetrics_EndPresentPhase( RENDERER_PRESENT_WINDOW_STATE, windowBegin );
 	}
 
 	// present whatever the frame holds; a frame with no draws still clears
@@ -438,7 +436,9 @@ void GLimp_SwapBuffers( void ) {
 		// before presentation.  The GL backend observes the same
 		// tr.takingScreenshot contract in RB_SwapBuffers.
 		if ( !tr.takingScreenshot ) {
+			const unsigned long long swapBegin = r_rendererMetrics.GetInteger() > 0 ? R_RendererMetrics_CpuClock() : 0;
 			VK_GuiExecutor_EndFrameAndPresent();
+			R_RendererMetrics_EndPresentPhase( RENDERER_PRESENT_SWAP, swapBegin );
 		}
 	}
 }
@@ -530,6 +530,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			scenePackets = &vkClassicDomainPacketFrame;
 		}
 		R_MaterialResourceTable_PrepareFrame( *scenePackets );
+		VK_PBRProbes_PrepareFrame( *scenePackets );
 		if ( r_rendererSharedGui.GetBool()
 				|| r_rendererSharedInWorldGui.GetBool() ) {
 			R_ClassicGuiDomain_PrepareFrame( *scenePackets );
@@ -583,6 +584,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			case RC_SET_BUFFER: {
 				const setBufferCommand_t *cmd = (const setBufferCommand_t *)cmds;
 				backEnd.frameCount = cmd->frameCount;
+				VK_PostProcess_ResetLinearCapture();
 				// clear-color policy mirrors the GL RB_SetBuffer; black
 				// otherwise (the swapchain load op always clears)
 				float c[ 3 ];
@@ -744,12 +746,16 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 				pendingSharedSubview = NULL;
 				break;
 			}
-			case RC_SWAP_BUFFERS:
+			case RC_SWAP_BUFFERS: {
+				const bool timingEnabled = r_rendererMetrics.GetInteger() > 0;
+				const int presentBegin = timingEnabled ? Sys_Milliseconds() : 0;
+				const unsigned long long postBegin = timingEnabled ? R_RendererMetrics_CpuClock() : 0;
 				// RB_SwapBuffers runs the back-buffer passes (CRT, then
 				// r_brightness/r_gamma) before presenting, and screenshots read
 				// the result, so they run here whether or not this frame is a
 				// capture.
 				VK_PostProcess_ApplyBackBuffer();
+				R_RendererMetrics_EndPresentPhase( RENDERER_PRESENT_FINAL_POST, postBegin );
 				// CaptureRenderToFile flushes a cropped save-preview frame with
 				// tr.takingScreenshot set. Match RB_SwapBuffers: retain that
 				// back-buffer work for readback so it can be replaced by the real
@@ -757,7 +763,9 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 				if ( !tr.takingScreenshot ) {
 					GLimp_SwapBuffers();
 				}
+				if ( timingEnabled ) { R_RendererMetrics_AddPresentMsec( Sys_Milliseconds() - presentBegin ); }
 				break;
+			}
 			default:
 				// Debug-only command families remain part of the later
 				// long-tail parity phase.
@@ -1039,79 +1047,7 @@ static const char *VK_MaterialProgramBaseName( const char *name ) {
 }
 
 vkGLSLProgramFamily_t R_GetGLSLProgramFamily( const char *program ) {
-	idStr base = VK_MaterialProgramBaseName( program );
-	idStr extension;
-	base.ExtractFileExtension( extension );
-	base.StripFileExtension();
-
-	// openQ4's live depth-aware postprocess uses the split-source token
-	// `blur.fs`; all retail Quake 4 families use canonical `.glsl` tokens.
-	// Reject other extensions before comparing basenames so an unrelated
-	// split shader cannot silently inherit a stock-family ABI.
-	if ( !base.Icmp( "Blur" ) && !extension.Icmp( "fs" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_DEPTH_AWARE_BLUR;
-	}
-	if ( !extension.Icmp( "fs" ) ) {
-		if ( !base.Icmp( "smaa_edge" ) ) {
-			return VK_GLSL_PROGRAM_FAMILY_SMAA_EDGE;
-		}
-		if ( !base.Icmp( "smaa_weights" ) ) {
-			return VK_GLSL_PROGRAM_FAMILY_SMAA_WEIGHTS;
-		}
-		if ( !base.Icmp( "smaa_blend" ) ) {
-			return VK_GLSL_PROGRAM_FAMILY_SMAA_BLEND;
-		}
-	}
-	if ( extension.Icmp( "glsl" ) != 0 ) {
-		return VK_GLSL_PROGRAM_FAMILY_UNKNOWN;
-	}
-
-	if ( !base.Icmp( "Displacement" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_DISPLACEMENT;
-	}
-	if ( !base.Icmp( "DisplacementTwoStage" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_DISPLACEMENT_TWO_STAGE;
-	}
-	if ( !base.Icmp( "GhostPulling" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_GHOST_PULLING;
-	}
-	if ( !base.Icmp( "Displacement2" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_DISPLACEMENT2;
-	}
-	if ( !base.Icmp( "MultiplyBlend" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_MULTIPLY_BLEND;
-	}
-	if ( !base.Icmp( "DisplacementCube" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_DISPLACEMENT_CUBE;
-	}
-	if ( !base.Icmp( "SniperStretch2" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_SNIPER_STRETCH2;
-	}
-	if ( !base.Icmp( "DepthTexture" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_DEPTH_TEXTURE;
-	}
-	if ( !base.Icmp( "Blur" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_BLUR;
-	}
-	if ( !base.Icmp( "MedLabs" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_MEDLABS;
-	}
-	if ( !base.Icmp( "DepthTexture2" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_DEPTH_TEXTURE2;
-	}
-	if ( !base.Icmp( "AL" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_AL;
-	}
-	if ( !base.Icmp( "Parallaxbump" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_PARALLAX_BUMP;
-	}
-	if ( !base.Icmp( "Customlit" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_CUSTOM_LIT;
-	}
-	if ( !base.Icmp( "Water" ) ) {
-		return VK_GLSL_PROGRAM_FAMILY_WATER;
-	}
-	return VK_GLSL_PROGRAM_FAMILY_UNKNOWN;
+    return VK_MaterialPrograms_NativeFamily( program );
 }
 
 static vkMaterialProgramFamily_t VK_MaterialProgramCanonicalFamily( const char *name ) {
@@ -1429,13 +1365,18 @@ void RB_ReportAppleGL21RouteCounters( void ) {
 }
 
 void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
+	R_ReloadGLSLPrograms_f( args );
+}
+
+void R_ReloadGLSLPrograms_f( const idCmdArgs &args ) {
 	(void)args;
-	common->Printf( "reloadARBprograms: not applicable under the Vulkan backend\n" );
+	VK_MaterialPrograms_Reload();
 }
 
 void R_ReportShaderPrograms_f( const idCmdArgs &args ) {
 	(void)args;
 	common->Printf( "Vulkan material programs: %d registered\n", vkNumMaterialPrograms );
+	VK_MaterialPrograms_Report();
 	for ( int i = 0; i < vkNumMaterialPrograms; i++ ) {
 		const vkMaterialProgramRecord_t &record = vkMaterialPrograms[ i ];
 		common->Printf( "  %3d  %s  %s  %s\n", i + 1,
@@ -1452,13 +1393,13 @@ bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 
 	const vkGLSLProgramFamily_t family =
 			R_GetGLSLProgramFamily( stage->glslProgramName );
-	const bool supported = family > VK_GLSL_PROGRAM_FAMILY_UNKNOWN
-			&& family < VK_GLSL_PROGRAM_FAMILY_COUNT;
+	const bool supported = ( family > VK_GLSL_PROGRAM_FAMILY_UNKNOWN
+			&& family < VK_GLSL_PROGRAM_FAMILY_COUNT ) || VK_MaterialPrograms_Validate( stage );
 
 	stage->glslProgramLoaded = true;
 	stage->glslProgramValid = supported;
 	stage->glslProgramGeneration = tr.glContextGeneration;
-	// Vulkan pipelines are selected by the stable family enum. Keep all GL
+	// Vulkan pipelines belong to the native caches. Keep all GL
 	// object handles zero so material teardown cannot mistake native Vulkan
 	// identities for live OpenGL resources.
 	stage->glslProgramObject = 0;
@@ -1491,6 +1432,10 @@ idImage *RB_ResolveGLSLShaderTextureImage( const newShaderStage_t *stage,
 					? globalImages->specularTableImage : globalImages->defaultImage;
 		case GLSL_SHADERTEXTURE_IMAGE:
 		default:
+			if ( din != NULL && RB_FlatDiffuseSurfaceActive( din->surf )
+					&& idStr::Icmp( stage->shaderTextureNames[ slot ], "DiffuseMap" ) == 0 ) {
+				return globalImages->whiteImage;
+			}
 			return stage->shaderTextureImages[ slot ];
 	}
 }
@@ -1575,19 +1520,20 @@ void R_ModernGLExecutor_InvalidatePlans( void ) {
 }
 
 void R_ModernGLExecutor_PrintGfxInfo( void ) {
+	VK_PBR_PrintGfxInfo();
+	VK_PBRProbes_PrintGfxInfo();
+	VK_HDRScene_PrintInfo();
 }
 
 bool R_ModernGLExecutor_LinearScreenshot( const char *fileName ) {
-	(void)fileName;
-	common->Printf( "screenshot linear: modern GL HDR capture unavailable on this backend\n" );
-	return false;
+	return VK_PostProcess_LinearScreenshot( fileName );
 }
 
 bool R_ModernGLExecutor_ModernVisibleRequestedForPost( void ) {
 	return false;
 }
 
-bool R_ModernGLExecutor_PBRLinearSceneActive( void ) { return false; }
+bool R_ModernGLExecutor_PBRLinearSceneActive( void ) { return VK_HDRScene_LinearActive(); }
 
 const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void ) {
 	static modernGLExecutorStats_t stats;
@@ -1712,5 +1658,3 @@ VK_GL_SELFTEST_STUB( RendererUpload_RunSelfTest )
 VK_GL_SELFTEST_STUB( RendererVisiblePath_RunSelfTest )
 
 #endif /* OPENQ4_RENDERER_VK_MODULE */
-
-

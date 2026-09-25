@@ -1,4 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "pbr_vertex.glsl"
+#include "point_shadow_math.glsl"
 
 // openQ4 Vulkan point-shadow-receiving interaction — vertex stage (Phase
 // F2b, docs/dev/plans/2026-07-19-vulkan-phase-f.md).
@@ -89,12 +92,16 @@ void main() {
     vec3 toLight = inter.localLightOrigin.xyz - position.xyz;
     vec3 toView = inter.localViewOrigin.xyz - position.xyz;
 
-    vLightVector = TangentSpaceVector(toLight);
+    vLightVector = pc.d.x > 0.5 ? toLight : TangentSpaceVector(toLight);
     vHalfAngleVector = TangentSpaceVector(normalize(toLight) + normalize(toView));
-    vViewVector = TangentSpaceVector(toView);
+    // PBR dot products use the interpolated object-space material normal.
+    vViewVector = pc.d.x > 0.5 ? toView : TangentSpaceVector(toView);
     vPBRTangent0 = inTangent0;
     vPBRTangent1 = inTangent1;
     vPBRNormal = inNormal;
+    if (pc.d.x > 0.5) {
+        PBRVertexFrame(inNormal, inTangent0, inTangent1, vPBRNormal, vPBRTangent0, vPBRTangent1);
+    }
 
     vBumpTexCoord = vec2(dot(texCoord, inter.bumpMatrixS), dot(texCoord, inter.bumpMatrixT));
     vDiffuseTexCoord = vec2(dot(texCoord, inter.diffuseMatrixS), dot(texCoord, inter.diffuseMatrixT));
@@ -119,7 +126,7 @@ void main() {
         dot(vec4(inNormal, 0.0), shadow.modelRow2)));
     float shadowLightCos = max(dot(normalize(inNormal), normalize(toLight)), 0.0);
     float shadowSinTheta = sqrt(max(1.0 - shadowLightCos * shadowLightCos, 0.0));
-    float normalOffset = shadow.biasParams.w * length(pointShadowVector) * shadowSinTheta;
+    float normalOffset = shadow.biasParams.w * PointShadowRadialLength(pointShadowVector) * shadowSinTheta;
     vPointShadowVector = pointShadowVector + worldNormal * normalOffset;
     vShadowLightCos = shadowLightCos;
 

@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "framebuffer_coords.glsl"
 
 // Baked light-grid indirect diffuse. A port of
 // content/baseoq4/pak0/glprogs/lightgrid_indirect.fs: the body below is that
@@ -204,7 +206,7 @@ float LightGridContributionScale() {
 }
 
 vec2 LightGridDepthCoord() {
-	vec2 fragCoordGL = vec2( gl_FragCoord.x, uDepthViewport.w - gl_FragCoord.y );
+	vec2 fragCoordGL = vec2( gl_FragCoord.x, CanonicalWindowY(uDepthViewport.w) );
 	return ( fragCoordGL - uDepthViewport.xy ) * uDepthInfo.xy;
 }
 

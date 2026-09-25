@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "framebuffer_coords.glsl"
 
 // Soft particles: a BSE sprite fades out where it meets the opaque scene
 // behind it. A port of content/baseoq4/pak0/glprogs/soft_particle.fs, which
@@ -49,7 +51,7 @@ void main() {
 		discard;
 	}
 
-	vec2 fragCoordGL = vec2( gl_FragCoord.x, block.framebuffer.x - gl_FragCoord.y );
+	vec2 fragCoordGL = vec2( gl_FragCoord.x, CanonicalWindowY(block.framebuffer.x) );
 	vec2 depthUv = ( fragCoordGL - viewportOrigin ) * invDepthTexSize;
 	float fade = 1.0;
 

@@ -50,6 +50,10 @@ typedef struct {
 	// if lightTris == LIGHT_TRIS_DEFERRED, then the calculation of the
 	// lightTris has been deferred, and must be done if ambientTris is visible
 	srfTriangles_t *		lightTris;
+	// Native PBR evaluates the interpolated normal per fragment. Keep its
+	// light-volume-clipped triangles separate from the classic facing subset.
+	// Owned for this interaction's lifetime; NULL means the classic set suffices.
+	srfTriangles_t *		pbrLightTris;
 
 	// shadow volume triangle surface
 	srfTriangles_t *		shadowTris;

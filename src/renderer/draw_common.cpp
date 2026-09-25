@@ -722,105 +722,6 @@ static void RB_PrintGLSLInfoLog( GLhandleARB object, const char *label, const ch
 	Mem_Free( logBuffer );
 }
 
-static bool RB_PathHasGlprogsPrefix( const idStr &path ) {
-	return idStr::Icmpn( path.c_str(), "glprogs/", 8 ) == 0;
-}
-
-static idStr RB_NormalizeGLSLPath( const idStr &path ) {
-	idStr result = path;
-	result.BackSlashesToSlashes();
-	if ( !RB_PathHasGlprogsPrefix( result ) ) {
-		idStr prefixed = "glprogs/";
-		prefixed += result;
-		return prefixed;
-	}
-	return result;
-}
-
-static bool RB_ReadGLSLSourcePair( const idStr &vertexPath, const idStr &fragmentPath, char **vertexBuffer, char **fragmentBuffer ) {
-	*vertexBuffer = NULL;
-	*fragmentBuffer = NULL;
-
-	fileSystem->ReadFile( vertexPath.c_str(), (void **)vertexBuffer, NULL );
-	if ( *vertexBuffer == NULL ) {
-		return false;
-	}
-
-	fileSystem->ReadFile( fragmentPath.c_str(), (void **)fragmentBuffer, NULL );
-	if ( *fragmentBuffer == NULL ) {
-		fileSystem->FreeFile( *vertexBuffer );
-		*vertexBuffer = NULL;
-		return false;
-	}
-
-	return true;
-}
-
-static bool RB_FindGLSLSourcePair( const char *programName, idStr &vertexPath, idStr &fragmentPath, char **vertexBuffer, char **fragmentBuffer ) {
-	idStr name = programName;
-	name.BackSlashesToSlashes();
-
-	idStr stripped = name;
-	stripped.StripFileExtension();
-
-	idStr ext;
-	const char *dot = strrchr( name.c_str(), '.' );
-	if ( dot != NULL ) {
-		ext = dot + 1;
-		ext.ToLower();
-	}
-
-	idStr vertexCandidates[10];
-	idStr fragmentCandidates[10];
-	int numCandidates = 0;
-
-	if ( ext.Length() > 0 ) {
-		if ( ext == "glsl" ) {
-			vertexCandidates[numCandidates] = stripped + ".glslvp";
-			fragmentCandidates[numCandidates++] = stripped + ".glslfp";
-			vertexCandidates[numCandidates] = stripped + ".vs";
-			fragmentCandidates[numCandidates++] = stripped + ".fs";
-		} else if ( ext == "fs" ) {
-			vertexCandidates[numCandidates] = stripped + ".vs";
-			fragmentCandidates[numCandidates++] = name;
-		} else if ( ext == "vs" ) {
-			vertexCandidates[numCandidates] = name;
-			fragmentCandidates[numCandidates++] = stripped + ".fs";
-		} else if ( ext == "fp" ) {
-			vertexCandidates[numCandidates] = stripped + ".vp";
-			fragmentCandidates[numCandidates++] = name;
-		} else if ( ext == "vp" ) {
-			vertexCandidates[numCandidates] = name;
-			fragmentCandidates[numCandidates++] = stripped + ".fp";
-		}
-	}
-
-	vertexCandidates[numCandidates] = name + ".vs";
-	fragmentCandidates[numCandidates++] = name + ".fs";
-	vertexCandidates[numCandidates] = name + ".glslvp";
-	fragmentCandidates[numCandidates++] = name + ".glslfp";
-	vertexCandidates[numCandidates] = name + ".vp";
-	fragmentCandidates[numCandidates++] = name + ".fp";
-	vertexCandidates[numCandidates] = stripped + ".vs";
-	fragmentCandidates[numCandidates++] = stripped + ".fs";
-	vertexCandidates[numCandidates] = stripped + ".glslvp";
-	fragmentCandidates[numCandidates++] = stripped + ".glslfp";
-	vertexCandidates[numCandidates] = stripped + ".vp";
-	fragmentCandidates[numCandidates++] = stripped + ".fp";
-
-	for ( int i = 0; i < numCandidates; i++ ) {
-		const idStr candidateVertex = RB_NormalizeGLSLPath( vertexCandidates[i] );
-		const idStr candidateFragment = RB_NormalizeGLSLPath( fragmentCandidates[i] );
-		if ( RB_ReadGLSLSourcePair( candidateVertex, candidateFragment, vertexBuffer, fragmentBuffer ) ) {
-			vertexPath = candidateVertex;
-			fragmentPath = candidateFragment;
-			return true;
-		}
-	}
-
-	return false;
-}
-
 bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 	if ( !stage->glslProgram ) {
 		return false;
@@ -837,12 +738,16 @@ bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 	}
 
 	RB_FreeGLSLProgram( stage );
+	// Cache a failed attempt in this context too. Explicit GLSL reload (or a
+	// new context) retries repaired files without recompiling an error per draw.
+	stage->glslProgramLoaded = true;
+	stage->glslProgramGeneration = tr.glContextGeneration;
 
 	char *vertexBuffer = NULL;
 	char *fragmentBuffer = NULL;
 	idStr vertexPath;
 	idStr fragmentPath;
-	if ( !RB_FindGLSLSourcePair( stage->glslProgramName, vertexPath, fragmentPath, &vertexBuffer, &fragmentBuffer ) ) {
+	if ( !R_FindGLSLSourcePair( stage->glslProgramName, vertexPath, fragmentPath, &vertexBuffer, &fragmentBuffer ) ) {
 		stage->glslProgramLoaded = true;
 		stage->glslProgramValid = false;
 		common->Warning( "Couldn't find GLSL sources for program '%s'", stage->glslProgramName );
@@ -924,6 +829,8 @@ bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 				stage->glslProgramName,
 				stage->shaderTextureNames[i] );
 			RB_FreeGLSLProgram( stage );
+			stage->glslProgramLoaded = true;
+			stage->glslProgramGeneration = tr.glContextGeneration;
 			return false;
 		}
 	}
@@ -1514,6 +1421,84 @@ static void RB_RestoreSceneScaling( const rbSceneScaleState_t &state ) {
 			*state.rectRestores[i].rect = state.rectRestores[i].original;
 		}
 	}
+}
+
+static rbSceneScaleState_t rbModernSceneScaleState;
+static const viewDef_t *rbModernSceneScaleView = NULL;
+
+bool RB_BeginModernSceneScaling( const emptyCommand_t *cmds,
+		int &sceneWidth, int &sceneHeight ) {
+	sceneWidth = glConfig.vidWidth;
+	sceneHeight = glConfig.vidHeight;
+	if ( !R_ModernGLExecutor_ModernVisibleRequestedForPost()
+			|| RB_RequestedScreenFraction() == RB_SCREEN_FRACTION_NATIVE
+			|| rbModernSceneScaleView != NULL ) {
+		return false;
+	}
+	const viewDef_t *root = NULL;
+	idRenderTexture *target = NULL;
+	idRenderTexture *feedback = NULL;
+	idRenderTexture *rootTarget = NULL;
+	idRenderTexture *rootFeedback = NULL;
+	for ( const emptyCommand_t *cmd = cmds; cmd != NULL;
+			cmd = reinterpret_cast<const emptyCommand_t *>( cmd->next ) ) {
+		if ( cmd->commandId == RC_SET_RENDERTEXTURE ) {
+			const setRenderTargetCommand_t *bind =
+				reinterpret_cast<const setRenderTargetCommand_t *>( cmd );
+			target = bind->renderTexture;
+			feedback = bind->feedbackRenderTexture;
+		} else if ( cmd->commandId == RC_DRAW_VIEW ) {
+			const viewDef_t *view = reinterpret_cast<const drawSurfsCommand_t *>( cmd )->viewDef;
+			if ( view == NULL || view->viewEntitys == NULL ) {
+				continue;
+			}
+			// The modern graph has one scene extent. Keep multi-view, portal and
+			// capture streams on their existing path until each view owns a graph.
+			if ( root != NULL || !RB_IsMainScenePostProcessView( view )
+					|| !RB_ViewCoversBackBuffer( view ) ) {
+				return false;
+			}
+			root = view;
+			rootTarget = target;
+			rootFeedback = feedback;
+		}
+	}
+	if ( root == NULL ) {
+		return false;
+	}
+
+	const viewDef_t *savedView = backEnd.viewDef;
+	idRenderTexture *savedTarget = backEnd.renderTexture;
+	idRenderTexture *savedFeedback = backEnd.feedbackRenderTexture;
+	backEnd.viewDef = const_cast<viewDef_t *>( root );
+	backEnd.renderTexture = rootTarget;
+	backEnd.feedbackRenderTexture = rootFeedback;
+	int width = 0, height = 0, percent = RB_SCREEN_FRACTION_NATIVE;
+	const bool scaled = rootTarget != NULL
+		? RB_FeedbackSceneTargetScalingExtent( root, width, height, percent )
+		: RB_ComputeScaledSceneSize( root, width, height, &percent );
+	if ( scaled ) {
+		RB_BeginSceneScalingToExtent( rbModernSceneScaleState, width, height, percent );
+		rbModernSceneScaleView = root;
+		sceneWidth = width;
+		sceneHeight = height;
+	}
+	backEnd.viewDef = const_cast<viewDef_t *>( savedView );
+	backEnd.renderTexture = savedTarget;
+	backEnd.feedbackRenderTexture = savedFeedback;
+	return scaled;
+}
+
+void RB_EndModernSceneScaling( void ) {
+	if ( rbModernSceneScaleView == NULL ) {
+		return;
+	}
+	const viewDef_t *savedView = backEnd.viewDef;
+	backEnd.viewDef = const_cast<viewDef_t *>( rbModernSceneScaleView );
+	RB_RestoreSceneScaling( rbModernSceneScaleState );
+	backEnd.viewDef = const_cast<viewDef_t *>( savedView );
+	rbModernSceneScaleView = NULL;
+	RB_ClearSceneScaleState( rbModernSceneScaleState );
 }
 
 static void RB_RecenterDirectTemporalProjection( rbSceneScaleState_t &state,
@@ -7367,6 +7352,33 @@ static void RB_DestroyPostProcessRenderTexture( idRenderTexture *&renderTexture 
 	renderTexture = NULL;
 }
 
+static void RB_FreeBuiltinMaterialGLSLPrograms() {
+	newShaderStage_t *stages[] = {
+		&rbLightGridIndirectStage, &rbPlayerRimlightStage, &rbPlayerOutlineStage,
+		&rbCelOutlineStage, &rbSSAOStage, &rbMotionBlurStage, &rbMotionVectorStage,
+		&rbBloomExtractStage, &rbBloomDownsampleStage, &rbBloomBlurStage,
+		&rbHDRLuminanceStage, &rbBloomCompositeStage, &rbResolutionScaleStage,
+		&rbCRTStage, &rbUnderwaterStage, &rbSoftParticleStage, &rbRVSpecialDepthStage,
+		&rbRVSpecialBlurStage, &rbRVSpecialMedLabsStage, &rbRVSpecialALStage
+	};
+	for ( newShaderStage_t *stage : stages ) { RB_FreeGLSLProgram( stage ); }
+}
+
+void R_ReloadGLSLPrograms_f( const idCmdArgs &args ) {
+	(void)args;
+	int count = 0;
+	for ( int i = 0; i < declManager->GetNumDecls( DECL_MATERIAL ); ++i ) {
+		const idMaterial *material = static_cast<const idMaterial *>( declManager->DeclByIndex( DECL_MATERIAL, i, false ) );
+		if ( material == NULL ) { continue; }
+		for ( int j = 0; j < material->GetNumStages(); ++j ) {
+			newShaderStage_t *stage = material->GetStage( j )->newStage;
+			if ( stage != NULL && stage->glslProgram ) { RB_FreeGLSLProgram( stage ); ++count; }
+		}
+	}
+	RB_FreeBuiltinMaterialGLSLPrograms();
+	common->Printf( "GLSL material programs: invalidated %d authored stages; reload on use\n", count );
+}
+
 void RB_ShutdownScenePostProcess( void ) {
 	RB_FreeTemporalResolveProgram();
 	RB_FreeSceneDepthAwarePresentProgram();
@@ -7377,26 +7389,8 @@ void RB_ShutdownScenePostProcess( void ) {
 	rbTemporalResolveRejectedGeneration = 0;
 	RB_ClearTemporalDepthStamps();
 
-	RB_FreeGLSLProgram( &rbLightGridIndirectStage );
-	RB_FreeGLSLProgram( &rbPlayerRimlightStage );
-	RB_FreeGLSLProgram( &rbPlayerOutlineStage );
-	RB_FreeGLSLProgram( &rbCelOutlineStage );
-	RB_FreeGLSLProgram( &rbSSAOStage );
-	RB_FreeGLSLProgram( &rbMotionBlurStage );
-	RB_FreeGLSLProgram( &rbMotionVectorStage );
-	RB_FreeGLSLProgram( &rbBloomExtractStage );
-	RB_FreeGLSLProgram( &rbBloomDownsampleStage );
-	RB_FreeGLSLProgram( &rbBloomBlurStage );
-	RB_FreeGLSLProgram( &rbHDRLuminanceStage );
-	RB_FreeGLSLProgram( &rbBloomCompositeStage );
-	RB_FreeGLSLProgram( &rbResolutionScaleStage );
-	RB_FreeGLSLProgram( &rbCRTStage );
+	RB_FreeBuiltinMaterialGLSLPrograms();
 	RB_FreeColorMappingProgram();
-	RB_FreeGLSLProgram( &rbSoftParticleStage );
-	RB_FreeGLSLProgram( &rbRVSpecialDepthStage );
-	RB_FreeGLSLProgram( &rbRVSpecialBlurStage );
-	RB_FreeGLSLProgram( &rbRVSpecialMedLabsStage );
-	RB_FreeGLSLProgram( &rbRVSpecialALStage );
 
 	RB_DestroyPostProcessRenderTexture( rbSceneRenderTexture );
 	rbSceneRenderTextureSamples = -1;
@@ -10679,7 +10673,22 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 						}
 						continue;
 					}
+					// The linker assigns tangent/bitangent/normal to generic lanes
+					// 9/10/11. Ambient GLSL needs the same surface data as custom
+					// lighting; disabled arrays otherwise expose stale constants.
+					glNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
+					glEnableClientState( GL_NORMAL_ARRAY );
+					glVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT0_OFFSET ) );
+					glVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_TANGENT1_OFFSET ) );
+					glVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DrawVertAttributePointer( ac, DRAWVERT_NORMAL_OFFSET ) );
+					glEnableVertexAttribArrayARB( 9 );
+					glEnableVertexAttribArrayARB( 10 );
+					glEnableVertexAttribArrayARB( 11 );
 					RB_DrawElementsWithCounters( tri );
+					glDisableVertexAttribArrayARB( 9 );
+					glDisableVertexAttribArrayARB( 10 );
+					glDisableVertexAttribArrayARB( 11 );
+					glDisableClientState( GL_NORMAL_ARRAY );
 					RB_FinishStageTexturing( pStage, surf, ac );
 				}
 

@@ -36,6 +36,7 @@
 
 #include "VulkanDevice.h"
 #include "vk_ExecutorHooks.h"
+#include "vk_HDRScene.h"
 #include "shaders/scene_shaders_spv.h"
 
 void VK_FixupClipSpaceZ( float dst[ 16 ], const float src[ 16 ] );
@@ -417,6 +418,8 @@ static const int VK_LIGHTGRID_RESIDENCY_UNTOUCHED = -0x40000000;
 static idRenderWorldLocal *vkLightGridResidencyWorld = NULL;
 static idList<int> vkLightGridResidencyLastTouched;
 static int vkLightGridResidencyFrame = 0;
+static const viewDef_t *vkLightGridPreparedResidencyView;
+static int vkLightGridPreparedResidencyFrame = -1;
 
 static void VK_LightGrid_LoadImage( idImage *image ) {
 	if ( image != NULL && !image->IsLoaded() ) {
@@ -559,6 +562,78 @@ static bool VK_LightGrid_HasActiveAlbedoStage( const idMaterial *shader, const f
 		}
 	}
 	return false;
+}
+
+bool VK_LightGrid_SurfaceRequestsBakedDiffuse( const viewDef_t *viewDef, const drawSurf_t *surf ) {
+	if ( !r_useLightGrid.GetBool() || r_skipDiffuse.GetBool() || viewDef == NULL
+			|| viewDef->viewEntitys == NULL || viewDef->renderWorld == NULL
+			|| !viewDef->renderWorld->AnyLightGridAvailable() ) {
+		return false;
+	}
+	const LightGrid *grid = NULL;
+	if ( !VK_LightGrid_SurfaceHasGrid( surf, grid )
+			&& !VK_LightGrid_SurfaceHasViewWeaponGrid( viewDef, surf, grid ) ) {
+		return false;
+	}
+	return VK_LightGrid_ReceiverOnlySubmission( r_lightGridDebug.GetInteger() )
+		|| VK_LightGrid_HasActiveAlbedoStage( surf->material, surf->shaderRegisters );
+}
+
+// Match the bounded modern GL receiver contract. Portal blending and view
+// weapons need multiple grids/depth ranges and remain in the classic walker.
+void VK_LightGrid_PrepareModernView( const viewDef_t *view ) {
+	VK_LightGrid_UpdateResidency( view );
+	vkLightGridPreparedResidencyView = view;
+	vkLightGridPreparedResidencyFrame = backEnd.frameCount;
+}
+
+bool VK_LightGrid_PrepareModern( const viewDef_t *view, const drawSurf_t *surf,
+		idImage *images[3], float params[7][4] ) {
+	const LightGrid *grid = NULL;
+	vkLightGridPortalBlend_t blend;
+	if ( view == NULL || view->renderWorld == NULL || r_lightGridDebug.GetInteger() != 0
+			|| !VK_LightGrid_SurfaceHasGrid( surf, grid ) || VK_LightGrid_PortalBlend( view, surf, blend )
+			|| !view->renderWorld->EnsureLightGridAreaImages( grid->area ) ) { return false; }
+	images[0] = grid->irradianceImage;
+	images[1] = grid->visibilityImage;
+	images[2] = grid->probeImage;
+	for ( int i = 0; i < 3; ++i ) {
+		if ( images[i] == NULL ) { return false; }
+		VK_LightGrid_LoadImage( images[i] );
+		if ( !images[i]->IsLoaded() || images[i]->IsDefaulted() || images[i]->GetOpts().textureType != TT_2D
+				|| images[i]->GetOpts().width <= 0 || images[i]->GetOpts().height <= 0 ) { return false; }
+		images[i]->SetSamplerState( TF_LINEAR, TR_CLAMP );
+	}
+	const int64_t cellsX = int64_t( grid->lightGridBounds[0] ) * grid->lightGridBounds[2];
+	const int64_t cellsY = grid->lightGridBounds[1];
+	if ( grid->lightGridBounds[0] <= 0 || grid->lightGridBounds[2] <= 0 || cellsY <= 0
+			|| grid->imageSingleProbeSize <= grid->imageBorderSize || grid->imageBorderSize < 0
+			|| cellsX > images[0]->GetOpts().width
+			|| cellsX * grid->imageSingleProbeSize != images[0]->GetOpts().width
+			|| cellsY * grid->imageSingleProbeSize != images[0]->GetOpts().height
+			|| images[1]->GetOpts().width != images[0]->GetOpts().width
+			|| images[1]->GetOpts().height != images[0]->GetOpts().height
+			|| images[2]->GetOpts().width != cellsX || images[2]->GetOpts().height != cellsY ) { return false; }
+	memset( params, 0, sizeof( float ) * 28 );
+	for ( int axis = 0; axis < 3; ++axis ) {
+		params[0][axis] = grid->lightGridOrigin[axis];
+		params[1][axis] = grid->lightGridSize[axis];
+		params[2][axis] = float( grid->lightGridBounds[axis] );
+	}
+	params[0][3] = 1.0f;
+	params[1][3] = idMath::ClampFloat( 0.25f, 4.0f, r_lightGridIrradianceGamma.GetFloat() );
+	params[2][3] = idMath::ClampFloat( 0.0f, 16.0f, r_lightGridIntensity.GetFloat() );
+	params[3][0] = 1.0f / images[0]->GetOpts().width;
+	params[3][1] = 1.0f / images[0]->GetOpts().height;
+	params[3][2] = float( grid->imageSingleProbeSize );
+	params[3][3] = float( grid->imageBorderSize );
+	params[4][0] = grid->visibilityMaxDistance > 0.0f ? grid->visibilityMaxDistance : 4096.0f;
+	params[4][1] = 3.0f;
+	params[4][2] = idMath::ClampFloat( 0.0f, 1.0f, r_lightGridVisibilityFloor.GetFloat() );
+	params[4][3] = 2.0f;
+	params[5][0] = grid->relocationMaxDistance > 0.0f ? grid->relocationMaxDistance : 48.0f;
+	params[6][3] = idMath::ClampFloat( 0.0f, 16.0f, r_lightGridMaxContribution.GetFloat() );
+	return true;
 }
 
 static void VK_LightGrid_SetIdentityMatrix( idVec4 matrix[ 2 ] ) {
@@ -875,7 +950,7 @@ static VkPipeline VK_LightGrid_SetDrawState( vkLightGridPassState_t &pass ) {
 		vkCmdSetDepthBias( pass.cmd, biasUnits, 0.0f, biasFactor );
 	}
 	vkCmdSetStencilTestEnable( pass.cmd, VK_FALSE );
-	vkCmdSetFrontFace( pass.cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( pass.cmd, VK_Exec_CanonicalFrontFace() );
 
 	const int blendBits = replace ? ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO ) : ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
 	return VK_Scene_Pipeline( VK_SCENE_LIGHT_GRID, VK_SCENE_MODULE_LIGHT_GRID_VERT,
@@ -883,6 +958,7 @@ static VkPipeline VK_LightGrid_SetDrawState( vkLightGridPassState_t &pass ) {
 }
 
 static bool VK_SceneEffects_DrawLightGrid( const viewDef_t *viewDef ) {
+	if ( VK_PBR_BakedViewReady( viewDef ) && VK_HDRScene_Accumulating() ) { return false; }
 	if ( !r_useLightGrid.GetBool() || r_skipDiffuse.GetBool() || viewDef->viewEntitys == NULL ) {
 		return false;
 	}
@@ -903,7 +979,9 @@ static bool VK_SceneEffects_DrawLightGrid( const viewDef_t *viewDef ) {
 		return false;
 	}
 
-	VK_LightGrid_UpdateResidency( viewDef );
+	if ( vkLightGridPreparedResidencyView != viewDef || vkLightGridPreparedResidencyFrame != backEnd.frameCount ) {
+		VK_LightGrid_UpdateResidency( viewDef );
+	}
 
 	// RB_PrepareLightGridDepthTexture: the shader's own depth test reads the
 	// prepass depth, which ambient stages have not changed since
@@ -1112,9 +1190,9 @@ static void VK_Scene_ClearOutlineStencil( const vkSceneOverlayPass_t &pass ) {
 	const int width = viewDef->scissor.x2 - viewDef->scissor.x1 + 1;
 	const int height = viewDef->scissor.y2 - viewDef->scissor.y1 + 1;
 	int x1 = Max( 0, x0 );
-	int y1 = Max( 0, pass.fbHeight - y0GL - height );
+	int y1 = Max( 0, VK_Exec_ActiveLowerOrigin() ? y0GL : pass.fbHeight - y0GL - height );
 	const int x2 = Min( VK_Exec_ActiveFramebufferWidth(), x0 + width );
-	const int y2 = Min( pass.fbHeight, pass.fbHeight - y0GL );
+	const int y2 = Min( pass.fbHeight, VK_Exec_ActiveLowerOrigin() ? y0GL + height : pass.fbHeight - y0GL );
 	if ( x2 <= x1 || y2 <= y1 ) {
 		return;
 	}
@@ -1307,7 +1385,7 @@ static bool VK_SceneEffects_DrawPlayerVisibility( const viewDef_t *viewDef, draw
 		return false;
 	}
 	VK_Exec_SetViewViewport( pass.cmd, viewDef, 1.0f );
-	vkCmdSetFrontFace( pass.cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( pass.cmd, VK_Exec_CanonicalFrontFace() );
 	vkCmdSetDepthBiasEnable( pass.cmd, VK_FALSE );
 	vkCmdSetStencilTestEnable( pass.cmd, VK_FALSE );
 
@@ -1433,7 +1511,7 @@ static bool VK_SceneEffects_DrawCelOutlines( const viewDef_t *viewDef, drawSurf_
 	// OpenGL draws these with the plain projection and the full depth range,
 	// view weapon included, and the weapon ring leans on the depth test alone
 	VK_Exec_SetViewViewport( pass.cmd, viewDef, 1.0f );
-	vkCmdSetFrontFace( pass.cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( pass.cmd, VK_Exec_CanonicalFrontFace() );
 	vkCmdSetDepthBiasEnable( pass.cmd, VK_FALSE );
 	vkCmdSetStencilTestEnable( pass.cmd, VK_FALSE );
 
@@ -1487,6 +1565,27 @@ true when anything drew; the caller then restores its viewport and space
 tracking and treats _currentRender as stale.
 ====================
 */
+const char *VK_SceneEffects_HDRRejection( const viewDef_t *viewDef ) {
+	if ( r_useLightGrid.GetBool() && !r_skipDiffuse.GetBool() && viewDef->renderWorld != NULL
+			&& viewDef->renderWorld->AnyLightGridAvailable()
+			&& !VK_PBR_BakedViewReady( viewDef ) ) { return "baked-lighting"; }
+	for ( int i = 0; i < viewDef->numDrawSurfs; ++i ) {
+		const drawSurf_t *surf = viewDef->drawSurfs[i];
+		if ( R_CelOutlineEnabled() && R_CelOutlineSurfaceActive( surf ) ) { return "cel-shells"; }
+		if ( !r_skipPlayerVisibilityEffects.GetBool() && VK_Player_SurfaceAllowed( surf ) ) {
+			const renderEntity_t &entity = surf->space->entityDef->parms;
+			if ( entity.brightSkinColor[3] > 0 || entity.rimlightColor[3] > 0 || VK_Player_HasOutline( entity ) ) {
+				return "player-visibility";
+			}
+		}
+	}
+	drawSurf_t **outlineOnly = NULL;
+	if ( !r_skipPlayerVisibilityEffects.GetBool() && VK_Player_OutlineOnlySurfaces( viewDef, outlineOnly ) > 0 ) {
+		return "player-visibility";
+	}
+	return NULL;
+}
+
 bool VK_SceneEffects_DrawPreFog( const viewDef_t *viewDef, int processed ) {
 	if ( viewDef == NULL || viewDef->viewEntitys == NULL || !VK_GuiExecutor_FrameIsOpen() ) {
 		return false;
@@ -1516,6 +1615,8 @@ void VK_SceneEffects_Shutdown( void ) {
 	vkLightGridResidencyWorld = NULL;
 	vkLightGridResidencyLastTouched.Clear();
 	vkLightGridResidencyFrame = 0;
+	vkLightGridPreparedResidencyView = NULL;
+	vkLightGridPreparedResidencyFrame = -1;
 }
 
 #endif /* OPENQ4_RENDERER_VK_MODULE */

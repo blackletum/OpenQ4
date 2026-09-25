@@ -1,8 +1,9 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "../../PBRMath.h"
+#include "point_shadow_math.glsl"
 
-// openQ4 Vulkan point-shadow-receiving interaction — fragment stage (Phase
+// openQ4 Vulkan point-shadow-receiving interaction â€” fragment stage (Phase
 // F2b).
 //
 // interaction.frag plus the point-light cube shadow sample of the GL
@@ -10,7 +11,7 @@
 // and unfiltered raw-depth cube samplers, selected by
 // r_shadowMapPointDepthCompare at runtime. The stock fixed/stable-rotated
 // tangent-disc kernel uses exact 1/5/9/13 Poisson tap tiers. The compare value
-// is the normalized radial distance from the light — exactly what the
+// is the normalized radial distance from the light â€” exactly what the
 // caster's fragment stage wrote into native depth. Out-of-envelope receivers
 // stay lit (factor 1.0). Vulkan cube sampling is always seamless (parity with
 // the GL path's GL_TEXTURE_CUBE_MAP_SEAMLESS enable).
@@ -178,7 +179,7 @@ float SampleShadowFactor() {
         return 1.0;
     }
 
-    float depth = length(vPointShadowVector) / far;
+    float depth = PointShadowRadialDepth(vPointShadowVector, far);
     if (depth <= 0.0 || depth >= 1.0) {
         return 1.0;
     }
@@ -289,7 +290,7 @@ vec4 PointShadowDebugOutput() {
         return vec4(1.0, 0.0, 1.0, 1.0);
     }
 
-    float depth = length(vPointShadowVector) / far;
+    float depth = PointShadowRadialDepth(vPointShadowVector, far);
     if (depth <= 0.0 || depth >= 1.0) {
         return vec4(1.0, 1.0, 0.0, 1.0);
     }
@@ -366,6 +367,11 @@ float CelSpecularTerm(float term) {
     return CelLadder(clamp(term, 0.0, 1.0));
 }
 
+#ifdef VK_HDR_DOMAIN_MRT
+layout(location = 1) out vec4 outPBRColor;
+#define main HDRMaterialMain
+#endif
+
 void main() {
     if (pc.d.x > 2.5) {
         // Emission is drawn once per surface in the ambient walk. An ordered
@@ -428,3 +434,15 @@ void main() {
     light = CelQuantizeLight(light);
     outColor = vec4((diffuse + specular) * light * vVertexColor, 0.0);
 }
+
+#ifdef VK_HDR_DOMAIN_MRT
+#undef main
+void main() {
+    HDRMaterialMain();
+    // Both attachments use the same blend state. Preserve source alpha in
+    // both outputs for coverage/blending; the primary stores scene alpha.
+    bool nativePBR = pc.d.x > 0.5;
+    outPBRColor = vec4(nativePBR ? outColor.rgb : vec3(0.0), outColor.a);
+    if (nativePBR) outColor.rgb = vec3(0.0);
+}
+#endif

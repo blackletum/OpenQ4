@@ -221,6 +221,20 @@ if not build_engine and not build_games
 endif
 
 if get_option('build_native_tests')
+  test('openq4-vulkan-material-sources', py,
+    args: [files('tools/build/vulkan_material_sources.py'), '--check'], timeout: 30)
+  openq4_editor_document_test = executable(
+    'openq4-editor-document-test',
+    files(
+      'tools/tests/native/EditorDocumentTest.cpp',
+      'src/tools/leveleditor/MapDocument.cpp',
+      'src/tools/leveleditor/MapWorkspace.cpp',
+    ),
+    include_directories: root_include_dir,
+    install: false,
+  )
+  test('openq4-editor-document', openq4_editor_document_test, timeout: 30)
+
   openq4_file_memory_under_test = custom_target(
     'openq4-file-memory-under-test',
     input: files('src/framework/File.h', 'src/framework/File.cpp'),
@@ -1727,6 +1741,41 @@ endif
 # their GL call sites satisfied by the hook-resolving GLEW flavor + the
 # module's GL stub TU; no GL and no SDL are linked.
 if build_renderer_vk and build_engine
+  # Keep device admission independent of renderer globals and the engine PCH.
+  # Native tests exercise this exact implementation through Vulkan query PFNs.
+  vk_device_selection = static_library('openq4-vulkan-device-selection',
+    'src/renderer/Vulkan/VulkanDeviceSelection.cpp',
+    include_directories: include_directories('src/external/vulkan/include'),
+    install: false)
+  vk_device_selection_dep = declare_dependency(link_with: vk_device_selection,
+    include_directories: include_directories('src/external/vulkan/include'))
+  if get_option('build_native_tests')
+    vk_device_selection_test = executable('openq4-vulkan-device-selection-test',
+      'tools/tests/native/VulkanDeviceSelectionTest.cpp',
+      dependencies: vk_device_selection_dep, install: false)
+    test('openq4-vulkan-device-selection', vk_device_selection_test, timeout: 30)
+  endif
+
+  # Compile authored material shaders in process. The pinned, static compiler
+  # follows the project's CRT/architecture settings; no SDK executable is used
+  # or installed at runtime. Keep optional tools and external dependencies out.
+  glslang_project = subproject('glslang')
+  glslang_deps = [glslang_project.get_variable('glslang_dep')]
+  install_data('docs/licenses/glslang-LICENSE.txt',
+    install_dir: install_root_dir / 'licenses', rename: 'glslang-LICENSE.txt')
+
+  material_compiler = static_library('openq4-material-compiler',
+    'src/renderer/materialprogram/GLSLCompiler.cpp',
+    dependencies: glslang_deps, install: false)
+  material_compiler_dep = declare_dependency(link_with: material_compiler,
+    dependencies: glslang_deps)
+  if get_option('build_native_tests')
+    material_compiler_test = executable('openq4-material-compiler-test',
+      'tools/tests/native/MaterialCompilerTest.cpp',
+      dependencies: material_compiler_dep, install: false)
+    test('openq4-material-compiler', material_compiler_test, timeout: 60)
+  endif
+
   renderer_vk_source_discovery = run_command(
     py,
     meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
@@ -1768,7 +1817,7 @@ if build_renderer_vk and build_engine
   endif
   renderer_vk_link_args = []
   renderer_vk_link_depends = []
-  renderer_vk_deps = [glew_dedicated_dep]
+  renderer_vk_deps = [glew_dedicated_dep, material_compiler_dep, vk_device_selection_dep]
   if host_system == 'windows'
     renderer_vk_link_args += ['/FIXED:NO', '/LARGEADDRESSAWARE']
   elif host_system == 'linux'

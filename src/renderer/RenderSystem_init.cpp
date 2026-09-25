@@ -472,6 +472,7 @@ idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware
 idCVar r_actualRenderer( "r_actualRenderer", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "actual active renderer backend after request/fallback selection" );
 idCVar r_glTier( "r_glTier", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "OpenGL renderer tier: auto, legacy, gl33, gl41, gl43, gl45, gl46", r_glTierArgs, idCmdSystem::ArgCompletion_String<r_glTierArgs> );
 idCVar r_vkValidation( "r_vkValidation", "0", CVAR_RENDERER | CVAR_BOOL, "enable Vulkan validation layers for the Vulkan renderer module and rendererVkProbe" );
+idCVar r_vkSampleLocations( "r_vkSampleLocations", "1", CVAR_RENDERER | CVAR_BOOL, "use lower-left standard MSAA locations when supported; read at Vulkan initialization" );
 idCVar r_vkStartupFailure( "r_vkStartupFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
 		"diagnostic Vulkan startup failure: 0 = off, 1 = window, 2 = surface, 3 = swapchain, 4 = renderer resources", 0, 4 );
 idCVar r_vkDevice( "r_vkDevice", "-1", CVAR_RENDERER | CVAR_INTEGER, "Vulkan physical-device index override, -1 = automatic selection", -1, 15 );
@@ -1973,7 +1974,6 @@ void R_InitOpenGL( void ) {
 	R_RenderGraphResources_Init( glConfig.backendCaps, glConfig.renderFeatures );
 	R_MaterialResourceTable_Init( glConfig.backendCaps, glConfig.renderFeatures );
 
-	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
 	R_ReloadARBPrograms_f( idCmdArgs() );
 	R_GLDebugOutput_FlushMessages();
 
@@ -3510,12 +3510,43 @@ screenshot
 screenshot [filename]
 screenshot [width] [height]
 screenshot [width] [height] [samples]
+screenshot image <imageName> screenshots/<name>.tga
 ================== 
 */ 
 #define	MAX_BLENDS	256	// to keep the accumulation in shorts
 void R_ScreenShot_f( const idCmdArgs &args ) {
 	static int lastNumber = 0;
 	idStr checkname;
+	if ( args.Argc() >= 2 && !idStr::Icmp( args.Argv( 1 ), "image" ) ) {
+		if ( args.Argc() != 4 ) {
+			common->Printf( "usage: screenshot image <imageName> screenshots/<name>.tga\n" );
+			return;
+		}
+		idStr path( args.Argv( 3 ) );
+		if ( path.Icmpn( "screenshots/", 12 ) != 0 || path.Find( ".." ) >= 0
+				|| path.Find( ':' ) >= 0 || path.Find( '\\' ) >= 0 || !path.CheckExtension( ".tga" ) ) {
+			common->Printf( "screenshot image: use screenshots/<name>.tga\n" );
+			return;
+		}
+		idImage *image = globalImages->GetImage( args.Argv( 2 ) );
+		if ( image == NULL || image->IsDefaulted() ) {
+			common->Printf( "screenshot image: image '%s' is unavailable\n", args.Argv( 2 ) );
+			return;
+		}
+		idList<byte> pixels;
+		if ( !image->ReadPixelsRGBA8( pixels ) ) {
+			common->Printf( "screenshot image: readback requires a loaded single-sample RGBA8 2D image up to 8192x8192\n" );
+			return;
+		}
+		const int width = image->GetUploadWidth(), height = image->GetUploadHeight();
+		if ( pixels.Num() != width * height * 4
+				|| !R_WriteTGA( path.c_str(), pixels.Ptr(), width, height, true ) ) {
+			common->Printf( "screenshot image: write failed\n" );
+			return;
+		}
+		common->Printf( "Wrote %s (image %s, %dx%d RGBA8)\n", path.c_str(), image->GetName(), width, height );
+		return;
+	}
 	if ( args.Argc() >= 2 && !idStr::Icmp( args.Argv( 1 ), "linear" ) ) {
 		if ( args.Argc() != 3 ) {
 			common->Printf( "usage: screenshot linear screenshots/<name>.pfm\n" );
@@ -4048,13 +4079,13 @@ static void R_GfxInfoPrintAAState( void ) {
 		effectiveMSAA = VK_PostProcess_SceneSamples();
 		msaaReason = effectiveMSAA > 1 ? "vulkan-scene" : "vulkan-scene-single-sample";
 #else
-		if ( supersamplingActive ) {
-			msaaReason = "supersampling";
-		} else if ( modernVisiblePost ) {
+		if ( modernVisiblePost ) {
 			const modernGLExecutorStats_t &modern = R_ModernGLExecutor_Stats();
 			effectiveMSAA = modern.modernVisibleExecuted && modern.sceneMSAAColorResolves > 0
 				&& modern.sceneMSAADepthResolves > 0 ? modern.sceneMSAASamples : 0;
 			msaaReason = effectiveMSAA > 1 ? "modern-forward-resolve" : "modern-scene-single-sample";
+		} else if ( supersamplingActive ) {
+			msaaReason = "supersampling";
 		} else if ( !textureMSAAAvailable ) {
 			msaaReason = "texture-msaa-unavailable";
 		} else {
@@ -4081,6 +4112,8 @@ static void R_GfxInfoPrintAAState( void ) {
 	} else if ( r_skipPostProcess.GetBool() ) {
 		postAAEffective = false;
 		postAAReason = "r_skipPostProcess";
+#ifndef OPENQ4_RENDERER_VK_MODULE
+	// Vulkan embeds its native SMAA programs and has no OpenGL GLSL context.
 	} else if ( !glConfig.GLSLProgramAvailable ) {
 		postAAEffective = false;
 		postAAReason = "glsl-unavailable";
@@ -4088,6 +4121,7 @@ static void R_GfxInfoPrintAAState( void ) {
 		// SMAA shaders require #version 130; Apple GL 2.1 stops at GLSL 1.20.
 		postAAEffective = false;
 		postAAReason = "glsl-130-unavailable";
+#endif
 	}
 
 	char glMaxSamplesText[32];
@@ -4943,11 +4977,10 @@ static void R_PerformFullVidRestart( bool forceWindow ) {
 	// Input is tied to the native window/context lifecycle.
 	Sys_ShutdownInput();
 
-	// Scalable GUI fonts are backed by scratch images.  Release their cached
-	// faces and reset the one-shot console-atlas guard before those images lose
-	// their device storage; the UI refresh below will rasterise them for the new
-	// viewport instead of retaining stale metrics and empty texture objects.
-	R_DoneFreeType();
+	// Release cached faces and metrics, but retain atlas pixels for the image
+	// generators used during context restoration. The UI refresh then rebuilds
+	// the fonts at the new viewport scale and codepage.
+	R_DoneFreeType( true );
 
 	// Force image/object handles to rebuild against the new context.
 	globalImages->PurgeAllImages();
@@ -5260,6 +5293,9 @@ void R_InitCommands( void ) {
 	extern void R_RendererVulkanRenderTargetsSelfTest_f( const idCmdArgs &args );
 	extern void R_RendererVulkanHDRInfo_f( const idCmdArgs &args );
 	extern void R_RendererVulkanHDRSelfTest_f( const idCmdArgs &args );
+	extern void R_RendererVulkanTemporalMotionSelfTest_f( const idCmdArgs &args );
+	cmdSystem->AddCommand( "rendererVulkanTemporalMotionSelfTest", R_RendererVulkanTemporalMotionSelfTest_f,
+			CMD_FL_RENDERER, "test Vulkan rigid temporal motion and history rejection on the active GPU" );
 	cmdSystem->AddCommand( "rendererVulkanHDRSelfTest", R_RendererVulkanHDRSelfTest_f,
 			CMD_FL_RENDERER, "test Vulkan floating-point scenes and exposure on the active GPU" );
 	cmdSystem->AddCommand( "rendererVulkanHDRInfo", R_RendererVulkanHDRInfo_f,
@@ -5313,6 +5349,8 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "reportSurfaceAreas", R_ReportSurfaceAreas_f, CMD_FL_RENDERER, "lists all used materials sorted by surface area" );
 	cmdSystem->AddCommand( "reportImageDuplication", R_ReportImageDuplication_f, CMD_FL_RENDERER, "checks all referenced images for duplications" );
 	cmdSystem->AddCommand( "reportShaderPrograms", R_ReportShaderPrograms_f, CMD_FL_RENDERER, "shows ARB plus material/shadow GLSL shader program status" );
+	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB and authored GLSL material programs" );
+	cmdSystem->AddCommand( "reloadGLSLprograms", R_ReloadGLSLPrograms_f, CMD_FL_RENDERER, "reloads authored GLSL material programs" );
 	cmdSystem->AddCommand( "regenerateWorld", R_RegenerateWorld_f, CMD_FL_RENDERER, "regenerates all interactions" );
 	cmdSystem->AddCommand( "showInteractionMemory", R_ShowInteractionMemory_f, CMD_FL_RENDERER, "shows memory used by interactions" );
 	cmdSystem->AddCommand( "showTriSurfMemory", R_ShowTriSurfMemory_f, CMD_FL_RENDERER, "shows memory used by triangle surfaces" );

@@ -3,7 +3,8 @@
 PBR is an opt-in material extension for new openQ4 content. It does not convert
 retail Quake 4 materials automatically. The OpenGL implementation is experimental;
 unsupported scenes retain the authored classic rendering path. Vulkan currently
-supports a smaller direct-light subset. See the [qualification ledger](../dev/plans/2026-09-20-pbr-rendering-audit.md)
+supports a smaller material subset with direct, authored ambient and analytic environment lighting.
+See the [qualification ledger](../dev/plans/2026-09-20-pbr-rendering-audit.md)
 for current evidence and limitations.
 
 ## Material declaration
@@ -123,18 +124,64 @@ replacement emits once, including without any direct lights.
 Source-alpha transparency is ordered: a translucent surface is absent from the
 depth fill, so the light pass records its admitted draws instead of adding
 them and the material walk composites them where the authored stage would have
-drawn. The first recorded light composites through the alpha and the rest add
-through it, which is the classic composite of the summed radiance. The whole
+drawn. Opacity is applied once across the complete mesh. Each light then adds
+through that alpha using its own receiver triangles and scissor; environment
+lighting adds across the full mesh. Separate objects using the same model keep
+their own lighting. The whole
 view returns to classic ownership when a shadowing light reaches a translucent
 receiver, because stencil shadow coverage is reset with its light and cannot
 be replayed afterwards.
 
+Native transparency also checks its 256-record limit before drawing. A record
+is one eligible surface under one active light stage. If that conservative
+bound is exceeded, all translucent materials in the view keep their complete
+classic lighting and blend stages. `gfxInfo` reports the admission reason,
+required record bound, recorded draws and composited surfaces; `reason=capacity`
+with zero recorded draws identifies this fallback. The decision resets every
+view, so reducing the light or surface count restores native ownership.
+
+The dedicated partial-light and model-instance regression uses the same prepared
+laboratory runtime:
+
+```text
+python tools/tests/renderer_vulkan_pbr_transparency.py --runtime-root .tmp/pbr-native --output-dir .tmp/pbr-alpha0 --basepath "E:/SteamLibrary/steamapps/common/Quake 4" --samples 0
+python tools/tests/renderer_vulkan_pbr_transparency.py --runtime-root .tmp/pbr-native --output-dir .tmp/pbr-alpha4 --basepath "E:/SteamLibrary/steamapps/common/Quake 4" --samples 4
+```
+
+`tools/tests/renderer_vulkan_pbr_capacity.py` accepts the same arguments and
+checks below-limit, exact-limit, overflow, restoration and image/video reload
+controls. Overflow captures must match the complete classic reference image.
+`tools/tests/renderer_vulkan_pbr_fog.py` uses the same arguments to verify that
+native lighting and authored alpha survive the intervening fog pass.
+`tools/tests/renderer_vulkan_pbr_resources.py` also accepts these arguments and
+checks complete classic fallback and native recovery when transparent PBR
+resources cannot be prepared, including across image and video reloads.
+
+Authored ambient lights now supply isotropic PBR diffuse lighting, including
+through source-alpha transparency. Metallic surfaces receive their reflections
+from environment lighting; ambient lights do not add a diffuse metallic glow.
+The [ambient-light qualification](../dev/vulkan-pbr-ambient.md) records numerical,
+capacity and recovery controls. Both capacity and resource harnesses accept
+`--ambient-lights` to exercise those light stages.
+
 Mismatched masks/glows and unsupported stage combinations keep classic
-ownership. Vulkan does not yet consume PBR environment/probe data. Native
-diagnostics implement emission (6) and ownership (7); material-channel modes
-1–5 require OpenGL. Both markers keep a transparent surface's coverage, so the
-ownership view composites the marker through the authored alpha rather than
-replacing the pixel. The native laboratory separately checks equivalent
+ownership. Vulkan now supplies filtered analytic environment reflections and
+diffuse irradiance through `r_pbrIBL`, with material AO and roughness. The default
+light-grid setting preserves this lighting when no baked grid applies to the
+receiver. Experimental authored
+reflection probes now have [local LDR/0x/4x qualification](../dev/vulkan-pbr-probes.md)
+through `r_rendererReflectionProbes`. Eligible Vulkan HDR views now receive
+[baked PBR diffuse](../dev/vulkan-pbr-baked.md) while retaining environment
+specular; broader grid/material coverage and full image parity remain in progress. Environment light
+also participates in the ordered transparent composite when no direct lights
+are present. See [native environment lighting](../dev/vulkan-pbr-environment.md)
+for its exact scope and qualification. Native material diagnostics now draw
+albedo (1), normals (2), metallic (3), roughness (4), AO (5) and ownership (7)
+once over the full surface, including when direct and environment lights are
+off. Emission (6) retains the authored glow. These views are under
+[qualification](../dev/vulkan-pbr-diagnostics.md)
+with `renderer_vulkan_pbr_diagnostics.py` and its paired image comparator.
+Transparent diagnostics retain authored alpha. The native laboratory separately checks equivalent
 layouts, mapped shadows, emission, cutout and source-alpha coverage, rollback
 and restart. Its green marker proves the admitted native surface path, not
 complete environment lighting.
@@ -142,7 +189,7 @@ Vulkan filters both surface curvature and normal-map variation with the same
 bounded roughness kernel. `r_vkPBRSpecularAA 0` disables this filtering for
 diagnostic comparisons; it defaults to 1 and is not archived.
 Full scene linearization and display-color parity also remain unqualified on
-Vulkan; the direct-material controls do not establish a matching OpenGL image.
+Vulkan; controlled material comparisons do not establish full scene parity.
 
 Build and stage the engine using the project's normal Meson wrapper first.
 From the repository root, the following creates an independent runtime,
@@ -165,6 +212,10 @@ probes, colored point lights and a projector. Additional scripted controls
 exercise moving shadows, skinning, baked lighting, fallback, resize and reloads.
 Reports retain binary/fixture/map/harness hashes, ownership diagnostics, display
 TGA images and pre-tone-map PFM radiance for completed linear HDR scenes.
+Use `screenshot linear screenshots/<name>.pfm` for a completed linear HDR scene
+on either backend. Native Vulkan exports the scene after fog and transparency,
+before exposure, bloom, tone mapping and HUD, at the active scene resolution.
+Views that cannot use complete linear HDR, menus and invalid paths are rejected.
 The engine rejects linear capture of the encoded non-HDR preview. Add `hdr`
 to the example's case list to capture linear radiance. Scene-target storage is
 bounded to finite, nonnegative half-float values (maximum 65,504) on the OpenGL

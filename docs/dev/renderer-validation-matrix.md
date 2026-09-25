@@ -21,7 +21,161 @@ tools\build\meson_setup.ps1 compile -C builddir -- -j1
 tools\build\meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects
 ```
 
+## Authored Material Lighting
+
+`tools/tests/renderer_vulkan_material_lighting.py` runs 26 hidden, windowed,
+input-disabled gameplay controls through the engine's `screenshot` command.
+It uses actual per-light GLSL source, point/projected lights, independently
+changed light images/falloff, material tint/texture transforms, vertex colors,
+conditions, multiple lights/stages, rotation, stencil/mapped requests and
+image/shader/video recovery. Both backends require visible binding responses,
+exact recovery images and exact mapped-to-stencil output on the authored
+receiver. The Vulkan log must show actual authored shader execution and both
+point/projected fallback ownership.
+
+Run `--backend gl` and `--backend vk` with separate `--output-dir` values, the
+same `--runtime-root` laboratory and retail `--basepath`, then use
+`--compare GL_REPORT VK_REPORT`. Comparison requires unchanged matching runtime,
+source and map inputs and at most two display levels over the full frame.
+The v53e backend controls pass independently, but the full-frame comparison
+remains failed for three point-stencil and nineteen point-map background pixels.
+All custom-receiver comparisons remain within one level, and the shadowed
+receiver comparisons are exact. Receiver analysis localizes the failures; it
+does not replace or relax the full-frame acceptance gate. Raw failed development
+runs are retained beside the final reports under
+`.tmp/vulkan-gap-closure/authored-lighting/`.
+
+## Authored Material Shader Reload
+
+`tools/tests/renderer_vulkan_material_reload.py` runs sixteen hidden, windowed,
+input-disabled gameplay controls on the existing laboratory runtime. It edits
+shader files only in the isolated save directory and captures with the engine's
+`screenshot` command. The controls cover actual fragment/vertex edits, stock-name
+overrides, a matching basename in another directory, invalid-source caching and
+repair, incomplete-pair repair, both GLSL/ARB reload commands and video restart.
+Use `--backend gl` and `--backend vk` with separate output directories, then
+`--compare GL_REPORT VK_REPORT` to require matching sources/runtime and a maximum
+two-level full-frame image difference. Same-backend failure/recovery references
+must be exact. The v52 accepted pair differs by at most one display level.
+
+The native `openq4-vulkan-material-sources` test and script CI compare the checked-in
+native source table with its reviewed manifest. Source hashes are never updated
+automatically from changed GLSL. These checks and local image captures do not
+close the full custom-program, platform or promotion requirements. See
+[authored material programs](vulkan-material-programs.md) for evidence and limits.
+
 ## PBR Material Laboratory
+
+`renderer_pbr_preview.py` includes forty HDR-off preview and recovery controls,
+covering 50%, 75%, 125%, 150% and 200% scene scales. Its matched-backend
+comparison retains the full-frame two-byte gate. Pair it with
+`renderer_image_capture.py` to inspect the pre-SMAA source at 150%/8x, where a
+native float-resolve discrepancy was reproduced before explicit preview
+averaging. See the [preview resolve diagnosis](vulkan-hdr.md#pbr-previews-with-tone-mapping-off).
+The v39 local qualification passes all 160 independent 4x/8x controls and
+79/80 matched images. The ordinary 125%/8x emissive coverage comparison remains
+failed, including with the archived pre-fix Vulkan module; it is not an accepted
+exception to the gate.
+
+`renderer_image_capture.py` qualifies the shared `screenshot image` command
+through thirteen classic/PBR controls at requested 4x or 8x MSAA. It requires
+exact repeated raw reads, unchanged presentation around interleaved captures,
+correct orientation and target dimensions, exact restoration after resource
+changes, and rejection of missing images, unsupported formats and invalid paths.
+See the [capture contract](renderer-image-capture.md). This command's RGBA8
+support does not relax `screenshot linear`'s completed-HDR-scene requirement.
+
+The mandatory Vulkan target self-test also checks RGBA8 fractional resolves
+at every supported 2x/4x/8x sample count. Known coverage masks exercise all four
+channels and repeated copies into larger, smaller and equal targets. Pixels
+outside the copied extent must survive unchanged; non-halfway byte averages
+must be exact. The 4x result is a required startup marker. See the
+[resolve contract](renderer-image-capture.md#rgba8-multisample-resolve).
+
+The final v40 Windows build passes all 26 independent raw-capture controls,
+all 124 4x/8x SMAA controls and all eighty 8x PBR preview controls. Every
+pair in the thirteen-case raw-capture suite stays within one byte, before and
+after SMAA. Sixty of 62 SMAA pairs and 39/40 PBR
+preview pairs pass the strict full-frame gate. Native HUD anisotropy and the
+125%/8x PBR coverage comparison remain failed; they are not accepted exceptions.
+
+`renderer_vulkan_hdr_scene.py --suite composition` accepts `--scene-scale` values
+of `50`, `75`, `100` or `125` and checks actual scene dimensions, linear radiance
+and complete-view ownership.
+`renderer_vulkan_hdr_scene_compare.py` and `renderer_vulkan_hdr_post_compare.py`
+retain the strict two-byte full-frame gate for matched runtime/fixture inputs.
+The v30 runtime passes sixty scaled composition pairs and 33 post pairs within
+one byte/channel. The post runner also requires actual GL graph dimensions and
+4x color/depth resolves. Lighting, animation and stock-map regressions are bound
+in `.tmp/vulkan-gap-closure/scene-scale/checkpoint-v30-scene-scale.json`; broader
+material, multi-view and platform qualification remain separate.
+
+The `ibl` suite isolates analytic environment lighting by disabling all direct
+lights. It covers 27 native Vulkan controls and 26 common OpenGL controls at
+0x/4x MSAA, including negative controls and image/video lifecycle restoration.
+`renderer_pbr_environment_parity.py` compares the same package and fixture with
+retained image/log hashes and bounded specimen error. The extra shared-ambient
+control is Vulkan-only; OpenGL deliberately excludes that combination from its
+aggregate modern owner. Separate hard/filtered masks prove cutout coverage,
+then bound lighting error independently of driver sample-mask quantization.
+The final v7 paired suites and comparisons pass locally at both sample counts;
+the coverage gate rejects the retained pre-fix shader. See
+[Vulkan environment scope](vulkan-pbr-environment.md).
+
+`renderer_vulkan_pbr_transparency.py` isolates partial-light source-alpha coverage
+and shared-model instance identity. Its 25 controls check full material coverage,
+background attenuation, additive direct/environment contributions, unrelated
+instances, light order and reload/restart restoration at 0x or 4x. Classic room
+lighting is excluded from the foreground opacity comparison; direct-light effects
+must occur on the specimens themselves. This does not qualify arbitrary record
+capacity exhaustion or shadowing transparent ownership.
+The v9 runtime passes all 25 controls at each sample count with exact opacity,
+additive-light and restoration results. Six broader-room and six existing
+environment-transparency controls also pass; retained-reference comparisons
+confirm unchanged pixels outside the corrected transparent specimen.
+
+`renderer_vulkan_pbr_capacity.py` separately exercises the bounded record table.
+Its 18 controls pass locally at both 0x and 4x, requiring actual admission/draw
+counters at 252 and 256 records, zero native ownership above capacity,
+whole-frame classic fallback equality, a real native lighting effect, and exact
+restoration after light/count changes and image/video reload. The same overflow
+image predicate rejects the retained v9 renderer. Shadowing transparent
+ownership remains unqualified; resource preparation has its own gate below.
+
+`renderer_vulkan_pbr_fog.py` checks that native transparent ownership survives
+the intervening fog pass. Its seven controls pass at 0x and 4x, comparing the
+authored source-alpha equation with an independently captured fog background,
+requiring actual native coverage/replay counters, and checking exact restoration
+and unchanged output across the shared-fog option. All 50 existing partial-light
+v10 captures also remain byte-identical to v9.
+
+`renderer_vulkan_pbr_resources.py` injects failures in coverage, direct-light and
+environment pipeline/descriptor/uniform/geometry preparation, plus environment
+images. Its 44 controls pass at both 0x and 4x on v12. Full-frame fallback and
+native restoration must be exact; late failures must discard earlier native
+records and release uniform allocations. Cold failures prove new descriptors
+are freed. Reload/restart, no-light and skipped-interaction controls verify
+lifetime boundaries, with nonzero image effects preventing an always-classic
+implementation from passing. This is native transparent preparation evidence,
+not device-loss or universal out-of-memory recovery.
+The final v12 package passes 242 capture controls across these five native
+suites at 0x/4x, plus the GPU render-target/contract suite. All 154 existing
+transparency, capacity, fog and environment images are byte-identical to their
+retained references. Exact source/package/report provenance is recorded in
+`.tmp/vulkan-gap-closure/pbr-resources/checkpoint-v12.json`.
+
+The native authored-probe source prerequisite has a separate GPU gate:
+`renderer-vk-clear-startup` requires real cube readback evidence, and
+`renderer-vk-probe-source-lifecycle` requires it before/after partial and full
+restart with active validation. Local v15 executions pass 29 radiance patterns,
+32 rejection controls and eight compressed-mip readbacks each. Output clearing,
+in-place upload generations, image reload, face orientation, HDR and sRGB are
+checked independently of rendering a probe-lit surface. Both workflow selections
+include the lifecycle case; hosted results remain pending. Native atlas
+residency, selection and shader consumption have since passed the bounded LDR
+0x/4x lighting qualification; full HDR and wider material coverage remain open.
+See [probe sources](vulkan-probe-sources.md) and
+[native probe lighting](vulkan-pbr-probes.md).
 
 The [PBR authoring guide](../user/pbr-materials.md) includes a reproducible command
 for the original 24-station map. The generator and harness live in
@@ -36,6 +190,101 @@ reloads, restarts and complete fallback. Every capture uses the engine command.
 Linear PFM proof requires a completed HDR frame; encoded-preview export must
 be refused. Reports retain binary, fixture, map and harness hashes.
 
+`renderer_hdr_linear_capture.py` runs `--suite composition` or `--suite lifecycle`
+with `--backend gl` or `vk` and `--samples 0` or `4`, using the same runtime,
+basepath and output arguments as the laboratory. Its independent PFM reader
+checks scene-sized images without relaxing the laboratory's fixed 1280x800
+contract. Composition checks scalar, emissive, alpha, fog and authored blend
+radiance; lifecycle checks exposure independence, orientation, scaling, reloads,
+restarts, repeated PFM/TGA interleaving and capture rejection. The native safe
+case `renderer-vk-linear-capture-rejection` checks startup before any completed
+scene. `renderer_hdr_linear_compare.py --gl <report.json> --vk <report.json>
+--output <comparison.json>` compares every composition pixel with fixed absolute
+0.005 and relative 0.002 float tolerances; input failures or changed files fail
+the comparison. These float tolerances do not replace the existing two-byte
+display-image gate.
+
+Admitted modern GL scenes retain the requested MSAA above 100% scene scale,
+matching Vulkan. The lifecycle fixture requires actual requested coverage at
+every tested scale. The classic GL supersampling policy remains separate.
+
+`renderer_font_reload.py` uses the same laboratory arguments with `--backend`
+and `--samples`. It compares HUD text and GUI, extended-character and console
+atlas pixels before/after repeated image reloads and partial/full video restarts.
+All restoration comparisons are exact. The seven public linear captures must
+stay identical with and without the HUD; Vulkan also rejects the stale scene
+immediately after image reload. Both APIs require clean driver diagnostics.
+
+`renderer_pbr_preview.py` uses the same runtime/basepath/output arguments,
+`--backend gl|vk` and `--samples 0|2|4|8`. It checks HDR-off opaque/emissive and
+transparent PBR with fog/blend lights, ordinary emission, scaled scenes,
+game/backend targets, HDR toggles, reloads, restarts and the PBR-off control.
+The comparison keeps `r_rendererModernLightingParity 0`, exercising OpenGL's
+default admission of the exact authored fog/blend phase. Vulkan must report
+complete preview ownership for every enabled
+case and disabled ownership for the HDR/PBR-off controls. Restoration is exact.
+`--compare-gl-report <report.json>` requires matching fixture/profile/harness
+provenance and retains the two-byte full-image gate in a separate
+`comparison.json`. The GPU HDR self-test additionally requires all 24 preview
+clamp/resolve fixtures before and after a full renderer restart.
+
+The laboratory's `fog-preview` and `blend-preview` controls also exercise the
+complete authored scene on GL, including both probes and transparency.
+The `*-fallback`/`*-fallback-native` pairs disable the required scissor contract
+and require complete classic ownership plus identical images. Normal native,
+off and restored controls keep their ordinary scissor setting. These controls
+are separate from the linear `fog-pbr`/`blend-pbr` radiance equations.
+
+`renderer_smaa_orientation.py` uses the laboratory runtime/basepath/output
+arguments with `--backend gl|vk` and `--samples 0|4|8`. Its off-centre emissive
+specimen checks all four SMAA presets with classic/PBR and HDR off/on, then
+50/75/125/150/200% scaling, image reload, partial/full video restart and the stock HUD.
+Every view must preserve orientation and report the effective AA settings;
+SMAA must visibly change edges, and restored views must match exactly.
+This is a display-image test. HDR radiance and cross-API comparisons retain
+their separate acceptance gates. Fixed simulation tics and a freeze from startup
+make the HUD animation time reproducible; the ordinary anisotropic sampler
+setting is retained, including any cross-API image differences.
+
+`renderer_render_target_lifetime.py` uses the same runtime/basepath/output
+arguments with `--tier gl33|gl45` and `--samples 0|4|8`. Its 39 captures change
+scene size from 50% to 200%, reverse the sequence with HDR off, then restore,
+reload and restart. Each frame requires active PBR, complete graph resources
+and the requested MSAA. The resource dump must prove at least 64 retirements
+before any restart while the cache stays within its 64-allocation limit.
+Restored full images must be exact. Both the binding-based and DSA allocation
+paths need separate runs; main-menu self-tests alone do not qualify this fix.
+
+`renderer_classic_colors.py` uses the same runtime/basepath/output arguments
+with `--backend gl|vk` and `--samples 0|2|4|8`. Seventy-two ordinary controls cover
+primary, vertex and inverse vertex colors, LDR/HDR, replacement/alpha blending,
+masked depth coverage, and negative and over-range values. Eighteen additional
+direct LDR controls at 0x require actual shared ambient ownership. Those
+adapters retain their existing offscreen restrictions, including the MSAA scene
+target, so multisample runs contain the 72 ordinary controls. Analytic central
+patch checks include the imported ASE vertex alpha; outside the specimen must
+remain black. The optional modern GL visible path
+is explicitly disabled and checked, so it cannot replace the fixed-function
+reference. With MSAA, alpha-to-coverage is disabled to isolate color and alpha
+test semantics from the separate coverage tests. `--reference report.json`
+adds the strict full-frame two-byte comparison after both individual proofs
+pass; sample-position differences remain failures of that comparison.
+The Vulkan proof records the startup sample-location capability mask.
+`--native-samples` disables optional sample alignment and requires a zero
+compatible-count mask, while retaining the requested MSAA and analytic color
+checks. This supports explicit fallback qualification without relaxing the
+paired image gate.
+
+The mandatory Vulkan render-target self-test also draws 256 successive image
+generations into separate stripes before submitting, then verifies exact float
+readback over four frames. This exceeds the former 128-descriptor retirement
+limit and exercises reuse of both frame slots. Bulk reload capacity now covers
+a full image-table generation plus the existing feedback allowance; old sets
+remain protected by the slot fence. Both startup and gameplay validation reject
+Vulkan warnings that report skipped or refused draws, including a refused HDR
+post pass. Earlier reports made before this gate need their retained logs
+rechecked; a plausible final screenshot does not prove that earlier draws ran.
+
 Keep MSAA sample counts fixed within each batch. Include shadow off/on/off
 controls before restart: restarting alone misses shadow-resource history leaks.
 Use the existing numerical and negative-image oracles; a clean log or plausible
@@ -47,6 +296,11 @@ absolute expectation there was wrong for both backends. Final retail gameplay/pe
 backend/platform promotion remain separate gates.
 
 ## Automated Safe Matrix
+
+The modern-visible and low-overhead GL self-tests explicitly request a hidden
+640x480 window, 4x MSAA and disabled mouse/controller input. Their fixed fixture
+viewport must match the window for a legal multisampled depth handoff; desktop
+resolution and archived display settings must not determine this test setup.
 
 The safe matrix starts the staged client, runs renderer self-tests or startup probes, prints `gfxInfo`, then quits. It does not launch maps.
 
@@ -72,8 +326,9 @@ Automated coverage:
 | Case | Coverage |
 |---|---|
 | `renderer-foundation-selftests` | context ladder, tier selector, tier workload contract, backend-neutral authored/evaluated pass/clip/layout/buffer contracts, exact four-weight GPU-animation contract, upload manager, GPU timer, scene packet, render graph, render graph resource owner, ordered material resource table, PBR/authored-probe material parsing, specular-probe atlas placement/slot/generation, transactional classic-GUI, classic cinematic/authored-post, render-demo/Raven special-frame, classic-world-ambient, classic-interaction, classic-fog/blend, and capture-backed classic-subview domains, geometry/instance resource records, GL state cache, Shader Library V2 pass-family/permutation/reflection coverage, draw plan, submit plan, modern executor, and shadow planner self-tests |
-| `renderer-vk-clear-startup` | Vulkan device, swapchain, GUI executor, and mandatory shared renderer contracts, with a positive marker proving that the validation layer and debug messenger are active. The on-device render-target self-test checks 66 face captures at two sizes with cube and shared 2D depth attachments, including real depth-only draws, exact color/depth readback, complete-layer resolve, MSAA depth resolve, resize, retirement beyond the fixed queue capacity, and invalid face selection. A second mandatory GPU test draws to two color attachments and, where supported, five. It checks mixed RGBA8/RGBA16F formats, unclamped float values, blend masks, scope-load preservation, cube faces, every color/depth resolve, resize, and invalid attachment/alias rejection. The log records effective sample counts so a device fallback is not mistaken for MSAA coverage. |
-| `renderer-vk-hdr-selftest` | Mandatory GPU HDR exercise: 24 unclamped RGBA16F scene/capture fixtures cover 0x and 4x MSAA, square and rectangular resize, bright/mixed/dark radiance, logarithmic luminance reduction, synchronous and frame-fenced asynchronous exposure, and stale/duplicate/disabled sample rejection. Active validation and the completed fixture marker are required. |
+| `renderer-vk-clear-startup` | Vulkan device, swapchain, GUI executor, and mandatory shared renderer contracts, with a positive marker proving that the validation layer and debug messenger are active. The on-device render-target self-test checks 66 face captures at two sizes with cube and shared 2D depth attachments, including real depth-only draws, exact color/depth readback, complete-layer resolve, MSAA depth resolve, resize, retirement beyond the fixed queue capacity, and invalid face selection. A second mandatory GPU test draws to two color attachments and, where supported, five. It checks mixed RGBA8/RGBA16F formats, unclamped float values, blend masks, scope-load preservation, cube faces, every color/depth resolve, resize, and invalid attachment/alias rejection. A scratch-image lifecycle regression adopts generated placeholders, then checks exact floating-point resolves after reload and purge/load at 0x/4x; unadopted generated images must still regenerate. The log records effective sample counts so a device fallback is not mistaken for MSAA coverage. |
+| `renderer-vk-hdr-selftest` | Mandatory GPU HDR exercise: 24 unclamped RGBA16F scene/capture fixtures cover 0x and 4x MSAA, square and rectangular resize, bright/mixed/dark radiance, logarithmic luminance reduction, synchronous and frame-fenced asynchronous exposure, and stale/duplicate/disabled sample rejection. It also checks 112 stock tone-map fixtures, 320 linear filmic/sRGB fixtures, 32 bloom/grade/debug/alpha controls and twenty portal-sky masks, including stale-frame, viewport and target rejection. Another 24 production-boundary fixtures check separate classic/PBR accumulation, completed classic decoding before MSAA resolve, spatial patterns, distinct sample radiance and exact alpha. The prepared post chain adds 32 manual/automatic exposure and bloom fixtures, six unchanged-scene/uniform rollback checks, and four numeric-domain history resets. Linear tests require actual 0x/4x targets; synthetic inputs alone do not establish native gameplay scene ownership. Active validation and all ordered fixture markers around full restart are required. |
+| `renderer-vk-temporal-motion-selftest` | Eighteen numerical rigid-velocity GPU fixtures exercise translation, rotation, camera/jitter motion, asymmetric depth occlusion, scaled scissors, temporal resolve sampling and stale/missing history. Active validation and completion before/after full restart are mandatory. |
 | `renderer-vk-device-fallback-drill` | Vulkan device break drill: `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` point at an empty manifest, so the module loads but no Vulkan driver exists. Requires `Renderer API: requested=vulkan active=gl disposition=fallback` with a `device probe failed:` reason, and fails if device bring-up (`VK_InitRenderDevice`) was reached. Skipped on macOS, which loads MoltenVK directly rather than through the loader's driver list. The companion `renderer-vk-fallback-drill` hides the module file instead. |
 | `renderer-vk-window-recovery`, `renderer-vk-surface-recovery`, `renderer-vk-swapchain-recovery`, `renderer-vk-resources-recovery` | Inject failure at each real startup stage using the non-archived `r_vkStartupFailure` diagnostic (1–4; normal operation is 0). Require ordered engine-log evidence of failure, owner teardown/module unload, fresh OpenGL selection/context, and module self-test success. Surface, swapchain and resource cases also require active Vulkan validation. They run hidden/windowed with isolated config and fail on Vulkan diagnostics or fatal startup. Linux push/PR Vulkan selections require all four cases. |
 | `renderer-visible-depth-selftest` | opt-in `r_rendererModernVisibleDepth` coverage for graph-backed scene depth, compatible shadow-depth resources, fallback accounting, depth-overlay readiness, and `gfxInfo` reporting |
@@ -189,7 +444,7 @@ The shader-library tier cases force `r_glTier gl33`, `gl41`, `gl43`, `gl45`, and
 
 The foundation self-test case also runs `rendererPBRMaterialSelfTest`, while `rendererScenePacketSelfTest` and `rendererMaterialResourceTableSelfTest` include the matching PBR packet/resource cases. Together these assetless contracts are expected to verify that opt-in `pbr {}` metadata leaves classic Quake 4 stages untouched, image usage and scalar registers survive parsing, explicit and approximate classic fallbacks are classified deterministically, packet records preserve PBR metadata, and packed, separate, scalar-only, unsupported-workflow, and missing-map resource records expose deterministic reasons. Packed ORM, separate metallic/roughness/AO, and scalar-only records may become `pbrModernReady`; the separate maps are bound through direct sampler units rather than the four-entry texture-table ABI. The material parser self-test also owns the namespaced authored light-material probe metadata contract without changing the public light/game/save/demo/network ABI.
 
-`renderer-pbr-visible-selftest` runs `rendererPBRVisibleSelfTest` for guarded opaque resource admission, linked G-buffer/deferred/forward programs, G-buffer command/input packing, scalar propagation, `r_rendererModernQuality 0` rollback, and clustered-forward surface-owner deduplication. It does not itself exercise source-alpha admission, analytic IBL, PBR debug routes, or authored-probe atlas/binding readiness. `renderer_pbr_materials.py` statically pins the GGX/Smith/Schlick source, explicit PBR eligibility marker, direct texture-unit contracts, analytic-IBL path, source-alpha admission, debug routes, probe shader ABI, and the Vulkan direct-material contract. The foundation executor self-test owns probe atlas placement/slot/generation checks; the deferred and forward+ self-tests validate reflected probe sampler/UBO bindings; `rendererClusterGridSelfTest` owns producer-side probe selection and clustered-decal transactions. Vulkan admission additionally requires exactly one declared and active classic bump -> diffuse -> specular sequence, rejects duplicate/invalid/reordered or custom-lighting co-ownership, and replaces only the final interaction submit. The v69 native path supports scalar, packed/separate data, XYZ/RG/AGB normals, matching alpha-tested coverage and single additive emission. The laboratory passes 68 isolated Vulkan controls each at 0x and 4x MSAA, including specular footprint filtering and constant-normal/roughness-ceiling invariants, independent emission references, cutout alpha-to-coverage, mismatched-mask/glow fallback, restarts and point/projected shadows. Cross-report MSAA proof verifies binary/map identity and capture/log hashes. Raw FP16 emission tests at 0x/4x preserve a faint channel while bounding brighter channels after texture modulation. These tests do not qualify arbitrary multi-light overflow. The unchanged full-map ownership requirement still fails source-alpha transparency; native IBL, probes, temporal-shimmer qualification, clustered decals and complete scene color parity remain open.
+`renderer-pbr-visible-selftest` runs `rendererPBRVisibleSelfTest` for guarded opaque resource admission, linked G-buffer/deferred/forward programs, G-buffer command/input packing, scalar propagation, `r_rendererModernQuality 0` rollback, and clustered-forward surface-owner deduplication. It does not itself exercise source-alpha admission, analytic IBL, PBR debug routes, or authored-probe atlas/binding readiness. `renderer_pbr_materials.py` statically pins the GGX/Smith/Schlick source, explicit PBR eligibility marker, direct texture-unit contracts, analytic-IBL path, source-alpha admission, debug routes, probe shader ABI, and the Vulkan direct-material contract. The foundation executor self-test owns probe atlas placement/slot/generation checks; the deferred and forward+ self-tests validate reflected probe sampler/UBO bindings; `rendererClusterGridSelfTest` owns producer-side probe selection and clustered-decal transactions. Vulkan admission additionally requires exactly one declared and active classic bump -> diffuse -> specular sequence, rejects duplicate/invalid/reordered or custom-lighting co-ownership, and replaces only the final interaction submit. The v69 native path supports scalar, packed/separate data, XYZ/RG/AGB normals, matching alpha-tested coverage and single additive emission. The laboratory passes 68 isolated Vulkan controls each at 0x and 4x MSAA, including specular footprint filtering and constant-normal/roughness-ceiling invariants, independent emission references, cutout alpha-to-coverage, mismatched-mask/glow fallback, restarts and point/projected shadows. Cross-report MSAA proof verifies binary/map identity and capture/log hashes. Raw FP16 emission tests at 0x/4x preserve a faint channel while bounding brighter channels after texture modulation. These tests do not qualify arbitrary multi-light overflow. The later v70 full-map ownership requirement passes native source-alpha transparency against the emission-adjusted OpenGL oracle. Native analytic IBL now has its own paired laboratory suite below; authored probes, baked PBR diffuse composition, temporal-shimmer qualification, clustered decals and complete scene color parity remain open.
 
 Milestone F adds three dependency-light contracts. `openq4-advanced-lighting-core-test` covers generation-bound bounded transactions, malformed/NaN input, capacity and reference overflow, deterministic priority/weight/stable-id top-two selection, probe blend weights, and complete master-disabled rejection. `openq4-specular-probe-atlas-packing-test` covers fixed six-face placement for eight cubemaps without needing a GL context. `rendererClusterGridSelfTest` covers the engine-side probe/decal integration, including the 32-probe record limit, top-two cluster indices, and atomic decal prepare/seal ownership capped at 1,024 records and 65,536 references. A rejected probe uses analytic PBR fallback; a rejected decal transaction publishes no modern ownership. These paths are OpenGL-only, and `MODERN_LIGHTING_PARITY_PROVEN_DOMAINS` remains `0`.
 
@@ -555,7 +810,27 @@ documented in the GPU-animation guide.
 
 ## Gameplay Benchmark Harness
 
-`tools\tests\renderer_gameplay_benchmark.py` is the Phase 12 map-loading runner. It launches the staged client from `.install` or a named ordinary package below `.tmp\stock-runtime\`, uses isolated save paths under `.tmp\renderer-gameplay\`, enters SP maps or a pure MP listen server plus auto-joining loopback client, waits for streaming, runs a fixed static spawn camera path unless a case is later extended with authored poses, captures screenshots, emits `rendererBenchmarkCapture`, `framePacingSnapshot`, and `gfxInfo`, and writes Markdown/JSON reports. The alternate root deliberately matches `stage_fast_install.py --temporary-runtime` and the stock-baseline harness, so one immutable staged package can be hashed and exercised by both evidence tools. The report binds the selected runtime path, executable, every runtime-file hash, current Git state, budget-contract id/hash, launch-derived backend, thresholds, and measured CPU/GPU percentiles.
+`tools\tests\renderer_gameplay_benchmark.py` is the Phase 12 map-loading runner. It launches the staged client from `.install` or a named ordinary package below `.tmp\stock-runtime\`, uses isolated save paths under `.tmp\renderer-gameplay\`, enters SP maps or a pure MP listen server plus auto-joining loopback client, waits for streaming, captures the selected scene, emits `rendererBenchmarkCapture`, `framePacingSnapshot`, and `gfxInfo`, and writes Markdown/JSON reports. A stock spawn can start a scripted camera or mover; its name alone does not prove a static gameplay view. The alternate root deliberately matches `stage_fast_install.py --temporary-runtime` and the stock-baseline harness, so one immutable staged package can be hashed and exercised by both evidence tools. The report binds the selected runtime path, executable, every runtime-file hash, current Git state, budget-contract id/hash, launch-derived backend, thresholds, and measured CPU/GPU percentiles.
+
+Storage1 has two separate required cases. `sp-storage1` explicitly selects
+`game/storage1 first` and retains the drop-pod sequence. Its endpoint poses are
+recorded without claiming a static camera. `sp-storage1-second` explicitly
+selects `game/storage1 second`, waits at least 720 settling frames, and checks
+both sampling endpoints against the settled lift view: origin
+`(-2592, 2504, 4.2)`, angles `(0, 90, 0)`. Position must remain within one world
+unit and angles within one degree, including the difference between endpoints.
+The stock simulation keeps running; the harness does not teleport or freeze it.
+Both cases assert the actual map and entity filter at each endpoint.
+
+Schema-5 reports retain these scene contracts, observations and generated
+configs. Replay checks the case/map identity against the scene catalog and
+recomputes endpoint evidence from the engine log, rejecting missing, conflicting
+or altered records. Old reports remain historical evidence and cannot be
+promoted through the new schema. First- and second-entry timings use the same
+unchanged per-map budgets but are different workloads; do not pool them into a
+before/after comparison. Endpoint checks do not prove continuous camera
+stability, visual parity or representative coverage of an entire map. Other
+stock spawn views still need individual qualification.
 
 Capture output directories must be new or empty. The runner hashes the complete
 runtime before launch and again after every case; any package mutation fails the
@@ -581,13 +856,14 @@ test and is not promotable CPU/GPU budget evidence.
 
 The runner uses the SP/MP `g_autoExecAfterMapLoad` hook to execute its generated cfg after the map is active, not during loading UI. Renderer metrics are enabled only inside the gameplay capture window, which keeps load-screen logs quiet while still producing benchmark samples, GPU timing where available, frame-pacing output, and a screenshot artifact.
 
-Use `--pacing-only` for high-FPS presentation acceptance after a diagnostic metrics pass is already clean. This keeps renderer metrics, GPU timestamps, and the FPS overlay out of the timed window, still emits `framePacingSnapshot`, and can fail the run with presentation-only thresholds such as `--min-pacing-hz 120 --max-p95-ms 12`. A pacing-only report explicitly records that per-map CPU/GPU budgets were not enforced and cannot pass budget-evidence replay. The `game/storage1` acceptance run should start sampling two seconds after the active map draw with `r_swapInterval 0` and `com_maxfps 0` so the result measures renderer throughput rather than the old low-FPS plan cap.
+Use `--pacing-only` for high-FPS presentation acceptance after a diagnostic metrics pass is already clean. This keeps renderer metrics, GPU timestamps, and the FPS overlay out of the timed window, still emits `framePacingSnapshot`, and can fail the run with presentation-only thresholds such as `--min-pacing-hz 120 --max-p95-ms 12`. A pacing-only report explicitly records that per-map CPU/GPU budgets were not enforced and cannot pass budget-evidence replay. For a settled Storage1 gameplay view, select `sp-storage1-second`; the first entry's active-map delay does not skip its scripted intro. Uncapped throughput probes can use `r_swapInterval 0` and `com_maxfps 0`, with the same scene and settings on both backends.
 
 Common runs:
 
 ```powershell
 python tools\tests\renderer_gameplay_benchmark.py --list
 python tools\tests\renderer_gameplay_benchmark.py --profile smoke
+python tools\tests\renderer_gameplay_benchmark.py --cases sp-storage1-second --render-api vk
 python tools\tests\renderer_gameplay_benchmark.py --profile smoke --render-api gl --runtime-dir .tmp\stock-runtime\current-build
 python tools\tests\renderer_gameplay_benchmark.py --profile smoke --render-api vk --runtime-dir .tmp\stock-runtime\current-build
 python tools\tests\renderer_gameplay_benchmark.py --profile smoke --pacing-only --autoexec-delay-ms 2000 --min-pacing-hz 120 --max-p95-ms 12

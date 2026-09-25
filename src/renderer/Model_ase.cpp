@@ -460,6 +460,9 @@ static void ASE_KeyCFACE_LIST( const char *token )
 			pMesh->faces[ase.currentFace].vertexColors[remap[i]][0] = pMesh->cvertexes[a][0] * 255;
 			pMesh->faces[ase.currentFace].vertexColors[remap[i]][1] = pMesh->cvertexes[a][1] * 255;
 			pMesh->faces[ase.currentFace].vertexColors[remap[i]][2] = pMesh->cvertexes[a][2] * 255;
+			// ASE vertex colors contain RGB only. Never propagate an uninitialized
+			// fourth byte into material blending or alpha-tested coverage.
+			pMesh->faces[ase.currentFace].vertexColors[remap[i]][3] = 255;
 		}
 
 		ase.currentFace++;

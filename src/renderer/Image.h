@@ -250,6 +250,9 @@ public:
 	void		SetTexParameters();	// update aniso and trilinear
 
 	bool		IsLoaded() const { return texnum != TEXTURE_NOT_LOADED; }
+	// Explicit diagnostic readback of mip zero. Only single-sample RGBA8 2D
+	// images are accepted; rows are bottom-up, with no filtering or color transfer.
+	bool		ReadPixelsRGBA8( idList<byte> &pixels );
 	uint64_t	GetStorageGeneration() const { return storageGeneration; }
 
 	// _policyName is the logical image name the downsize policy is classified

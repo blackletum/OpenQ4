@@ -7,10 +7,29 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace openq4PBR {
 using namespace openq4PBRMath;
+// Nonnegative finite HDR storage, rounded to nearest with ties to even.
+// The Vulkan uploader consumes native-endian IEEE binary16 bytes.
+inline std::uint16_t RadianceHalf(float value) {
+    if (!(value > 0.0f) || !std::isfinite(value)) return 0;
+    if (value >= 65504.0f) return 0x7bff;
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const int exponent = int((bits >> 23) & 255) - 127;
+    if (exponent < -25) return 0;
+    const std::uint32_t significand = (bits & 0x7fffff) | 0x800000;
+    const int shift = exponent < -14 ? -exponent - 1 : 13;
+    const std::uint32_t truncated = significand >> shift;
+    const std::uint32_t remainder = significand & ((1u << shift) - 1);
+    const std::uint32_t midpoint = 1u << (shift - 1);
+    const std::uint32_t rounded = truncated
+        + (remainder > midpoint || (remainder == midpoint && (truncated & 1)));
+    return std::uint16_t(rounded + (exponent < -14 ? 0 : (exponent + 14) * 1024));
+}
 struct Vector {
     float x, y, z;
     Vector operator+(Vector b) const { return {x + b.x, y + b.y, z + b.z}; }

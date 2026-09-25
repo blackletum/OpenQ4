@@ -878,6 +878,20 @@ static bool RB_DrawSharedRenderDemoView( const void *data ) {
 	return true;
 }
 
+class rbModernSceneScaleGuard_t {
+public:
+	explicit rbModernSceneScaleGuard_t( const emptyCommand_t *cmds ) {
+		active = RB_BeginModernSceneScaling( cmds, width, height );
+	}
+	~rbModernSceneScaleGuard_t() {
+		if ( active ) {
+			RB_EndModernSceneScaling();
+		}
+	}
+	bool active;
+	int width, height;
+};
+
 void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// r_debugRenderToTexture
 	int	c_draw3d = 0, c_draw2d = 0, c_setBuffers = 0, c_swapBuffers = 0, c_copyRenders = 0, c_specialEffects = 0, c_renderTargetOps = 0;
@@ -902,9 +916,10 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// frame and this frame's modern submits; cached state from last frame is stale.
 	R_GLStateCache_InvalidateAll( "backend frame begin" );
 	if ( R_ScenePackets_SidePipelineRequired() ) {
+		const rbModernSceneScaleGuard_t sceneScale( cmds );
 		const int packetBuildStart = Sys_Milliseconds();
 		const idScenePacketFrame *scenePackets = NULL;
-		if ( R_ScenePackets_FrontEndFrameAvailable() ) {
+		if ( !sceneScale.active && R_ScenePackets_FrontEndFrameAvailable() ) {
 			scenePackets = &R_ScenePackets_FrontEndFrame();
 		} else {
 			R_ScenePackets_BuildLegacyCommandStream( cmds, rg_backendScenePacketFrame );
@@ -941,7 +956,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 				graphStats.presentOps,
 				graphStats.overflow );
 		}
-		R_RenderGraphResources_PrepareFrame( legacyGraph );
+		R_RenderGraphResources_PrepareFrame( legacyGraph, sceneScale.width, sceneScale.height );
 		R_RendererMetrics_RecordRenderGraphResources( R_RenderGraphResources_Stats() );
 		R_MaterialResourceTable_PrepareFrame( *scenePackets );
 		R_RendererMetrics_RecordMaterialResourceTable( R_MaterialResourceTable_Stats() );

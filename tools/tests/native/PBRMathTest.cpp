@@ -28,6 +28,24 @@ static double ReferenceVisibility(double v, double l, double roughness) {
 
 static void EnvironmentTests() {
     using namespace openq4PBR;
+    // Independent numeric decoding covers every nonnegative finite binary16
+    // value, including subnormals and the mantissa/exponent carry boundaries.
+    for (unsigned int half = 0; half <= 0x7bff; ++half) {
+        const int exponent = half >> 10, mantissa = half & 1023;
+        const float value = exponent == 0 ? std::ldexp(float(mantissa), -24)
+            : std::ldexp(1.0f + float(mantissa)/1024.0f, exponent-15);
+        Require(RadianceHalf(value) == half, "finite half-float round trip");
+        if (half < 0x7bff) {
+            const unsigned int next = half + 1;
+            const float nextValue = (next >> 10) == 0 ? std::ldexp(float(next & 1023), -24)
+                : std::ldexp(1.0f + float(next & 1023)/1024.0f, int(next >> 10)-15);
+            Require(RadianceHalf((value + nextValue)*0.5f) == (half & 1 ? next : half),
+                "half-float midpoint ties to even");
+        }
+    }
+    Require(RadianceHalf(-1.0f) == 0 && RadianceHalf(INFINITY) == 0
+        && RadianceHalf(NAN) == 0 && RadianceHalf(1e10f) == 0x7bff,
+        "invalid radiance and finite HDR saturation");
     Cube cube;
     cube.size = 8;
     for (auto &face : cube.faces) { face.assign(64, {0.25f, 0.5f, 2.0f}); }

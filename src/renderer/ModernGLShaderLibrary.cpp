@@ -781,7 +781,7 @@ static void R_ModernGLShaderLibrary_BuildFragmentBody( int glslVersion, modernGL
 		"}\n"
 		"vec3 ModernClusterApplyFogAndBlend(vec3 color, uvec4 clusterRange, int clusterLightCount, vec3 viewPosition) {\n"
 		"    // The shared phase applies exact authored fog between opaque and transparency.\n"
-		"    if (uPBRIBL.z > 1.5) { return color; }\n"
+		"    if (abs(uPBRIBL.z) > 1.5) { return color; }\n"
 		"    for (int i = 0; i < clusterLightCount; ++i) {\n"
 		"        uint lightIndex = ModernClusterFetchLightIndex(clusterRange.x + uint(i));\n"
 		"        if (lightIndex == 0xffffffffu || lightIndex >= uint(max(uClusterGrid.counts.x, 0.0))) { continue; }\n"

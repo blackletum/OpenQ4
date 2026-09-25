@@ -17248,6 +17248,7 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 	}
 	RB_RecordCurrentInteractionSelectionBreadcrumb();
 	RB_ErrorIfDriverRequiredSimpleInteractionFailed();
+	R_ReloadGLSLPrograms_f( args );
 	common->Printf( "-------------------------------\n" );
 	if ( r_shaderReport.GetInteger() >= 1 ) {
 		R_ReportShaderPrograms_f( idCmdArgs() );

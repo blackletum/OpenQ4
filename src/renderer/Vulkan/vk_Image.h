@@ -41,6 +41,15 @@ typedef struct vkImageEntry_s {
 	int				numLayers;		// 6 for cube maps
 	bool			isCube;
 	bool			everUploaded;	// first upload transitions from UNDEFINED
+	bool			lastUploadSucceeded; // all-or-nothing generated image admission
+	// True when stored rows run top-down relative to GL image coordinates.
+	// Writers and resolves maintain this for both color and depth. Material
+	// UVs and native temporal sampling normalize each image at the consumer.
+	bool			materialSampleFlipY;
+	// Probe sources require every base face and an exact content fingerprint.
+	// Storage generations alone cannot detect a SubImageUpload in place.
+	unsigned int	uploadedCubeFaces;
+	uint64_t		uploadGeneration;
 	// generation counter for executor-side descriptor caching
 	unsigned int	generation;
 } vkImageEntry_t;

@@ -2052,13 +2052,9 @@ idRenderSystemLocal::CreateImage
 ===============
 */
 idImage* idRenderSystemLocal::CreateImage(const char* name, idImageOpts* opts, textureFilter_t textureFilter) {
-	// Check to see if the image already exists.
-	idImage* image = globalImages->GetImage(name);
-	if (image != nullptr) {
-		image->AllocImage(*opts, textureFilter, TR_CLAMP);
-		return image;
-	}
-
+	// Adopt existing intrinsic placeholders through the same ownership path as
+	// new images. Allocating them directly leaves their generators in charge of
+	// reload, which discards the render target's current size and format.
 	return globalImages->ScratchImage(name, opts, textureFilter, TR_CLAMP, TD_DEFAULT);
 }
 

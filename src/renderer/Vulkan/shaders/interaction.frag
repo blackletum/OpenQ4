@@ -2,13 +2,13 @@
 #extension GL_GOOGLE_include_directive : require
 #include "../../PBRMath.h"
 
-// openQ4 Vulkan interaction pipeline — fragment stage (Phase F1).
+// openQ4 Vulkan interaction pipeline â€” fragment stage (Phase F1).
 //
 // interaction.vfp parity math: DXT5/RXGB bump decode (alpha=x, green=y,
 // blue=z, no renormalization), projected light-falloff and light-projection
-// samples, diffuse map × diffuseColor, and specular through the REAL
-// _specularTable ramp — the table carries clamp((N·H)·4−3)² and the CPU-side
-// ARB2 path doubles the specular env constant, so the ×2 lives here.
+// samples, diffuse map Ã— diffuseColor, and specular through the REAL
+// _specularTable ramp â€” the table carries clamp((NÂ·H)Â·4âˆ’3)Â² and the CPU-side
+// ARB2 path doubles the specular env constant, so the Ã—2 lives here.
 // Direction vectors normalize in-shader (no normalization cube map, locked
 // Phase F decision). Ambient lights substitute the constant tangent-space
 // direction the ambient normal-map cube decodes to (pushed as pc.b, with
@@ -89,6 +89,8 @@ vec3 ApplyFlatDiffuseSweep(vec3 diffuse, float localZ) {
 }
 
 #include "pbr_direct.glsl"
+#include "pbr_environment.glsl"
+#include "pbr_debug.glsl"
 
 // ---------------------------------------------------------------------------
 // Cel banding, from glprogs/material_interaction.fs and the shadow interaction
@@ -142,7 +144,20 @@ float CelSpecularTerm(float term) {
     return CelLadder(clamp(term, 0.0, 1.0));
 }
 
+#ifdef VK_HDR_DOMAIN_MRT
+layout(location = 1) out vec4 outPBRColor;
+#define main HDRMaterialMain
+#endif
+
 void main() {
+    if (pc.d.x > 4.5) {
+        outColor = vec4(EvaluatePBRDebug(), PBRTransparentAlpha(vDiffuseTexCoord));
+        return;
+    }
+    if (pc.d.x > 3.5) {
+        outColor = vec4(EvaluatePBREnvironment(), PBRTransparentAlpha(vDiffuseTexCoord));
+        return;
+    }
     vec2 bumpTexCoord = vBumpTexCoord;
     vec2 diffuseTexCoord = vDiffuseTexCoord;
     vec2 specularTexCoord = vSpecularTexCoord;
@@ -194,3 +209,15 @@ void main() {
     light = CelQuantizeLight(light);
     outColor = vec4((diffuse + specular) * light * vVertexColor, 0.0);
 }
+
+#ifdef VK_HDR_DOMAIN_MRT
+#undef main
+void main() {
+    HDRMaterialMain();
+    // Both attachments use the same blend state. Preserve source alpha in
+    // both outputs for coverage/blending; the primary stores scene alpha.
+    bool nativePBR = pc.d.x > 0.5;
+    outPBRColor = vec4(nativePBR ? outColor.rgb : vec3(0.0), outColor.a);
+    if (nativePBR) outColor.rgb = vec3(0.0);
+}
+#endif

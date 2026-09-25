@@ -19,6 +19,7 @@
 */
 
 #include "volk.h"
+#include "VulkanDeviceSelection.h"
 
 // VMA handles as opaque forward declarations; TUs that call VMA include
 // vk_mem_alloc.h themselves (with the PCH-poison compensations)
@@ -34,12 +35,6 @@ static const int VK_FRAMES_IN_FLIGHT = 2;
 
 // Explicit startup fault injection, inactive during normal rendering.
 bool VK_Device_InjectStartupFailure( int stage );
-
-// The widest pipeline layout the back end builds is the shadowed-interaction
-// one: six reused per-image sampler sets, the interaction UBO set, and the
-// shadow set. Metal-backed implementations cap maxBoundDescriptorSets at
-// exactly this value, so it is checked once at device creation.
-static const int VK_REQUIRED_BOUND_DESCRIPTOR_SETS = 8;
 
 // deferred GPU-object destruction: resources retired while their frame may
 // still be in flight are queued per slot and destroyed once that slot's
@@ -65,6 +60,9 @@ typedef struct vkDeviceContext_s {
 	VkSurfaceKHR		surface;
 	VkPhysicalDevice	physicalDevice;
 	VkPhysicalDeviceProperties deviceProperties;
+	// Fixed for the device lifetime. Zero retains the driver's native pattern.
+	// All multisample pipelines and depth-image transitions use the same pattern.
+	VkSampleCountFlags sampleLocationCounts;
 	bool				depthClampSupported;
 	bool				depthBoundsSupported;
 	// line widths and point sizes other than 1, for the debug tools
@@ -159,6 +157,8 @@ typedef struct vkDeviceContext_s {
 
 // the module-wide device context; valid while initialized is true
 extern vkDeviceContext_t vkCtx;
+
+bool VK_Device_SampleLocations( VkSampleCountFlagBits samples, VkSampleLocationsInfoEXT &info );
 
 // resolves the Vulkan library into volk exactly the way SDL will for the
 // surface (SDL_VULKAN_LIBRARY, the bundled MoltenVK, then the system loader);

@@ -113,17 +113,17 @@ def tone_map_hdr(color, exposure, white_point, highlight_desaturation, gamut_com
     safe_exposure = max(exposure, 1.0e-3)
     exposed = tuple(channel * safe_exposure for channel in color)
     safe_white = max(white_point, 1.0)
-    shoulder_start = 0.98
-    exposed_white = max(safe_white * safe_exposure, shoulder_start + 1.0e-3)
-    shoulder_range = max(exposed_white - shoulder_start, 1.0e-3)
-    shoulder_norm = max(1.0 - math.exp(-4.0), 1.0e-4)
+    shoulder_start = 0.5
+    exposed_white = max(safe_white * safe_exposure, 1.0)
+    shoulder_range = exposed_white - shoulder_start
+    curvature = 1.0 / (1.0 - shoulder_start) - 1.0 / shoulder_range
     mapped = []
     for channel in exposed:
         if channel < shoulder_start:
             mapped.append(channel)
             continue
-        shoulder_t = max(channel - shoulder_start, 0.0) / shoulder_range
-        shoulder_value = shoulder_start + (1.0 - shoulder_start) * (1.0 - math.exp(-shoulder_t * 4.0)) / shoulder_norm
+        shoulder_t = max(channel - shoulder_start, 0.0)
+        shoulder_value = shoulder_start + shoulder_t / (1.0 + curvature * shoulder_t)
         mapped.append(shoulder_value)
     compressed = highlight_compress(tuple(mapped), highlight_desaturation, gamut_compression)
     return tuple(clamp(channel, 0.0, 1.0) for channel in compressed)
@@ -262,16 +262,22 @@ def test_tone_map_preserves_midrange_sdr():
         assert_true(abs(mapped_channel - source_channel) < 0.02, "HDR tonemap should preserve midrange SDR contrast before the shoulder")
 
 
-def test_tone_map_preserves_ldr_authored_highlights():
-    colors = [
-        (1.0, 1.0, 1.0),
-        (0.85, 1.0, 1.0),
-        (1.0, 0.7, 0.35),
-    ]
-    for color in colors:
-        mapped = tone_map_hdr(color, 1.0, 6.0, 0.35, 1.0)
-        for mapped_channel, source_channel in zip(mapped, color):
-            assert_true(abs(mapped_channel - source_channel) < 0.03, "HDR tonemap should not dull stock LDR-authored additive highlights")
+def test_tone_map_retains_exposed_highlight_detail():
+    # The old .98 knee gave nearly every sunlit texel the same display code
+    # when exposure reached eight. These independent perceptual bounds demand
+    # useful contrast in both ordinary and strongly exposed highlights.
+    for exposure in (1.0, 3.0, 8.0):
+        low = tone_map_hdr((0.25,) * 3, exposure, 6.0, 0.35, 1.0)[0]
+        high = tone_map_hdr((0.75,) * 3, exposure, 6.0, 0.35, 1.0)[0]
+        assert_true(high - low > 0.08, "sunlit texture range must retain at least 20 display codes")
+        assert_true(high < 0.97, "ordinary highlights must leave headroom below white")
+    white = tone_map_hdr((1.0,) * 3, 1.0, 6.0, 0.35, 1.0)[0]
+    assert_true(0.75 < white < 0.85, "scene white must leave room for overbright energy")
+    epsilon = 1.0e-5
+    below = tone_map_hdr((0.5 - epsilon,) * 3, 1.0, 6.0, 0.0, 0.0)[0]
+    above = tone_map_hdr((0.5 + epsilon,) * 3, 1.0, 6.0, 0.0, 0.0)[0]
+    assert_true(abs((above - below) / (2 * epsilon) - 1) < 0.001,
+                "highlight shoulder must join the midrange without a slope discontinuity")
 
 
 def test_hdr_rejects_negative_scene_energy():
@@ -412,7 +418,7 @@ def main():
         test_tone_map_monotonic,
         test_white_point_near_one,
         test_tone_map_preserves_midrange_sdr,
-        test_tone_map_preserves_ldr_authored_highlights,
+        test_tone_map_retains_exposed_highlight_detail,
         test_hdr_rejects_negative_scene_energy,
         test_no_nan_edge_cases,
         test_modern_lighting_keeps_scene_referred_energy,

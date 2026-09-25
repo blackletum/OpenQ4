@@ -33,6 +33,7 @@ typedef struct rendererBenchmarkFrameSample_s {
 	int				backEndMsec;
 	int				presentMsec;
 	unsigned long long presentPhaseMicroseconds[RENDERER_PRESENT_CPU_PHASE_COUNT];
+	unsigned long long waitPhaseMicroseconds[RENDERER_WAIT_CPU_PHASE_COUNT];
 	unsigned long long uploadRetireMicroseconds;
 	unsigned long long cpuFrameMicroseconds;
 	int				gpuMsec;

@@ -53,7 +53,65 @@ static const renderWindowServices_t *vkWindowServices = NULL;
 
 extern idCVar r_vkValidation;
 extern idCVar r_vkDevice;
+extern idCVar r_vkSampleLocations;
 extern idCVar r_swapInterval;
+
+// Multisampled image attachments use GL window coordinates and a positive
+// viewport height. Keep the standard sample indices in that same convention;
+// barriers and depth resolves use these exact locations as well.
+bool VK_Device_SampleLocations( VkSampleCountFlagBits samples, VkSampleLocationsInfoEXT &info ) {
+	static const VkSampleLocationEXT locations2[] = { { .75f, .75f }, { .25f, .25f } };
+	static const VkSampleLocationEXT locations4[] = {
+		{ .375f, .125f }, { .875f, .375f }, { .125f, .625f }, { .625f, .875f }
+	};
+	static const VkSampleLocationEXT locations8[] = {
+		{ .5625f, .3125f }, { .4375f, .6875f }, { .8125f, .5625f }, { .3125f, .1875f },
+		{ .1875f, .8125f }, { .0625f, .4375f }, { .6875f, .9375f }, { .9375f, .0625f }
+	};
+	memset( &info, 0, sizeof( info ) );
+	if ( ( vkCtx.sampleLocationCounts & samples ) == 0 ) { return false; }
+	switch ( samples ) {
+		case VK_SAMPLE_COUNT_2_BIT: info.pSampleLocations = locations2; break;
+		case VK_SAMPLE_COUNT_4_BIT: info.pSampleLocations = locations4; break;
+		case VK_SAMPLE_COUNT_8_BIT: info.pSampleLocations = locations8; break;
+		default: return false;
+	}
+	info.sType = VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT;
+	info.sampleLocationsPerPixel = samples;
+	info.sampleLocationGridSize.width = info.sampleLocationGridSize.height = 1;
+	info.sampleLocationsCount = (uint32_t)samples;
+	return true;
+}
+
+static void VK_Device_RestrictSampleLocationDepthFormats( void ) {
+	// Only enable counts for which every public depth format can preserve these
+	// locations. Color and depth must never select different raster patterns.
+	const VkFormat formats[] = { VK_FORMAT_D32_SFLOAT, vkCtx.depthFormat };
+	for ( int i = 0; i < 2 && vkCtx.sampleLocationCounts != 0; ++i ) {
+		VkFormatProperties properties;
+		vkGetPhysicalDeviceFormatProperties( vkCtx.physicalDevice, formats[ i ], &properties );
+		VkPhysicalDeviceImageFormatInfo2 query = {};
+		query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+		query.format = formats[ i ];
+		query.type = VK_IMAGE_TYPE_2D;
+		query.tiling = VK_IMAGE_TILING_OPTIMAL;
+		query.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+			| VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+		if ( ( properties.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT ) != 0 ) {
+			query.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		}
+		query.flags = VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT;
+		VkImageFormatProperties2 result = {};
+		result.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+		if ( vkGetPhysicalDeviceImageFormatProperties2( vkCtx.physicalDevice, &query, &result ) != VK_SUCCESS ) {
+			vkCtx.sampleLocationCounts = 0;
+		} else {
+			vkCtx.sampleLocationCounts &= result.imageFormatProperties.sampleCounts;
+		}
+	}
+	common->Printf( "Vulkan: MSAA sample locations lower-left-standard counts=0x%x native-standard=%d\n",
+		(unsigned int)vkCtx.sampleLocationCounts, vkCtx.deviceProperties.limits.standardSampleLocations ? 1 : 0 );
+}
 
 /*
 ====================
@@ -459,52 +517,15 @@ static bool VK_Device_CreateSwapchain( void ) {
 	// The legacy renderer already produces display-coded SDR values.  Use a
 	// non-sRGB UNORM attachment with the standard nonlinear presentation colour
 	// space so attachment writes do not encode those values a second time.
-	uint32_t formatCount = 0;
-	VkResult formatResult = vkGetPhysicalDeviceSurfaceFormatsKHR(
-		vkCtx.physicalDevice, vkCtx.surface, &formatCount, NULL );
+	VkSurfaceFormatKHR chosen = {};
+	const VkResult formatResult = VK_SelectSurfaceFormat( vkGetPhysicalDeviceSurfaceFormatsKHR,
+			vkCtx.physicalDevice, vkCtx.surface, chosen );
 	if ( formatResult != VK_SUCCESS ) {
-		common->Warning( "Vulkan: surface-format count query failed (%d)", (int)formatResult );
-		return false;
-	}
-	if ( formatCount == 0 ) {
-		common->Warning( "Vulkan: surface reports no formats" );
-		return false;
-	}
-	if ( formatCount > 64 ) {
-		formatCount = 64;
-	}
-	VkSurfaceFormatKHR formats[ 64 ];
-	formatResult = vkGetPhysicalDeviceSurfaceFormatsKHR(
-		vkCtx.physicalDevice, vkCtx.surface, &formatCount, formats );
-	if ( formatResult != VK_SUCCESS && formatResult != VK_INCOMPLETE ) {
-		common->Warning( "Vulkan: surface-format query failed (%d)", (int)formatResult );
-		return false;
-	}
-	VkSurfaceFormatKHR chosen;
-	memset( &chosen, 0, sizeof( chosen ) );
-	chosen.format = VK_FORMAT_UNDEFINED;
-	bool compatibleSurfaceFormat = false;
-	for ( uint32_t i = 0; i < formatCount; i++ ) {
-		if ( ( formats[ i ].format == VK_FORMAT_B8G8R8A8_UNORM || formats[ i ].format == VK_FORMAT_R8G8B8A8_UNORM )
-				&& formats[ i ].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ) {
-			chosen = formats[ i ];
-			compatibleSurfaceFormat = true;
-			break;
+		if ( formatResult == VK_ERROR_FORMAT_NOT_SUPPORTED ) {
+			common->Warning( "Vulkan: surface has no compatible legacy SDR UNORM + SRGB_NONLINEAR format" );
+		} else {
+			common->Warning( "Vulkan: surface-format enumeration failed (%d)", (int)formatResult );
 		}
-	}
-	if ( !compatibleSurfaceFormat ) {
-		for ( uint32_t i = 0; i < formatCount; i++ ) {
-			if ( formats[ i ].format == VK_FORMAT_UNDEFINED
-					&& formats[ i ].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ) {
-				chosen.format = VK_FORMAT_B8G8R8A8_UNORM;
-				chosen.colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-				compatibleSurfaceFormat = true;
-				break;
-			}
-		}
-	}
-	if ( !compatibleSurfaceFormat ) {
-		common->Warning( "Vulkan: surface has no compatible legacy SDR UNORM + SRGB_NONLINEAR format" );
 		return false;
 	}
 
@@ -948,96 +969,39 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	}
 	vkCtx.surface = (VkSurfaceKHR)surfaceHandle;
 
-	// physical device: honor r_vkDevice when set, else first suitable
-	uint32_t deviceCount = 0;
-	vkEnumeratePhysicalDevices( vkCtx.instance, &deviceCount, NULL );
-	if ( deviceCount == 0 ) {
-		common->Warning( "Vulkan: no physical devices" );
-		VK_Device_Shutdown();
-		return false;
-	}
-	if ( deviceCount > 16 ) {
-		deviceCount = 16;
-	}
-	VkPhysicalDevice devices[ 16 ];
-	vkEnumeratePhysicalDevices( vkCtx.instance, &deviceCount, devices );
-
+	// Admit each candidate before publishing it. A graphics/present queue alone
+	// is insufficient: an earlier 1.2 or feature-limited adapter must not hide a
+	// later usable one. An explicit r_vkDevice selection never substitutes GPUs.
+	const vkDeviceSelectionApi_t selectionApi = {
+		vkEnumeratePhysicalDevices, vkGetPhysicalDeviceProperties,
+		vkGetPhysicalDeviceFeatures2, vkEnumerateDeviceExtensionProperties,
+		vkGetPhysicalDeviceQueueFamilyProperties, vkGetPhysicalDeviceSurfaceSupportKHR,
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR, vkGetPhysicalDeviceSurfaceFormatsKHR,
+		vkGetPhysicalDeviceFormatProperties
+	};
+	vkDeviceSelection_t selected = {};
 	const int forcedDevice = r_vkDevice.GetInteger();
-	int chosenDevice = -1;
-	uint32_t chosenQueueFamily = 0;
-	uint32_t chosenTimestampValidBits = 0;
-
-	for ( uint32_t d = 0; d < deviceCount; d++ ) {
-		if ( forcedDevice >= 0 && (int)d != forcedDevice ) {
-			continue;
-		}
-		uint32_t familyCount = 0;
-		vkGetPhysicalDeviceQueueFamilyProperties( devices[ d ], &familyCount, NULL );
-		if ( familyCount > 16 ) {
-			familyCount = 16;
-		}
-		VkQueueFamilyProperties families[ 16 ];
-		vkGetPhysicalDeviceQueueFamilyProperties( devices[ d ], &familyCount, families );
-		for ( uint32_t f = 0; f < familyCount; f++ ) {
-			if ( !( families[ f ].queueFlags & VK_QUEUE_GRAPHICS_BIT ) ) {
-				continue;
-			}
-			VkBool32 presentable = VK_FALSE;
-			vkGetPhysicalDeviceSurfaceSupportKHR( devices[ d ], f, vkCtx.surface, &presentable );
-			if ( presentable ) {
-				chosenDevice = (int)d;
-				chosenQueueFamily = f;
-				chosenTimestampValidBits = families[ f ].timestampValidBits;
-				break;
-			}
-		}
-		if ( chosenDevice >= 0 ) {
-			break;
-		}
-	}
-	if ( chosenDevice < 0 ) {
-		common->Warning( "Vulkan: no graphics+present capable device%s",
-				forcedDevice >= 0 ? " (r_vkDevice selection rejected)" : "" );
+	res = VK_SelectPhysicalDevice( selectionApi, vkCtx.instance, vkCtx.surface,
+			forcedDevice, selected,
+			[]( uint32_t index, const VkPhysicalDeviceProperties &properties,
+					const char *reason, VkResult result, void * ) {
+				common->Printf( "Vulkan: skipping device %u '%s' (API %u.%u.%u, descriptor sets %u): %s (%d)\n",
+						index, properties.deviceName, VK_API_VERSION_MAJOR( properties.apiVersion ),
+						VK_API_VERSION_MINOR( properties.apiVersion ), VK_API_VERSION_PATCH( properties.apiVersion ),
+						properties.limits.maxBoundDescriptorSets, reason, (int)result );
+			} );
+	if ( res != VK_SUCCESS ) {
+		common->Warning( "Vulkan: no compatible physical device (r_vkDevice=%d, result=%d)", forcedDevice, (int)res );
 		VK_Device_Shutdown();
 		return false;
 	}
-	vkCtx.physicalDevice = devices[ chosenDevice ];
-	vkCtx.graphicsQueueFamily = chosenQueueFamily;
-	vkCtx.graphicsTimestampValidBits = chosenTimestampValidBits;
-	vkGetPhysicalDeviceProperties( vkCtx.physicalDevice, &vkCtx.deviceProperties );
-	common->Printf( "Vulkan: device %d '%s' (queue family %u, timestampValidBits=%u, timestampPeriod=%.6fns)\n",
-			chosenDevice, vkCtx.deviceProperties.deviceName, chosenQueueFamily,
-			chosenTimestampValidBits, vkCtx.deviceProperties.limits.timestampPeriod );
-
-	// Hard API floor. The back end calls ~135 core-1.3 entry points
-	// (vkCmdBeginRendering, vkCmdPipelineBarrier2, vkQueueSubmit2 and the
-	// extended-dynamic-state setters); on a device below the floor volk leaves
-	// them NULL and the first frame faults. Fail here with a diagnosable
-	// message instead, so the loader's fail-closed ladder drops back to GL.
-	// MoltenVK advertises 1.3 from 1.3.0 onward (1.4 by default today, but the
-	// advertised version is user-tunable downward, so this is a >= test).
-	if ( vkCtx.deviceProperties.apiVersion < VK_API_VERSION_1_3 ) {
-		common->Warning( "Vulkan: device '%s' reports API %u.%u.%u; this renderer requires Vulkan 1.3 "
-				"(dynamic rendering, synchronization2, extended dynamic state)",
-				vkCtx.deviceProperties.deviceName,
-				VK_API_VERSION_MAJOR( vkCtx.deviceProperties.apiVersion ),
-				VK_API_VERSION_MINOR( vkCtx.deviceProperties.apiVersion ),
-				VK_API_VERSION_PATCH( vkCtx.deviceProperties.apiVersion ) );
-		VK_Device_Shutdown();
-		return false;
-	}
-
-	// The shadowed-interaction pipeline layout binds 8 descriptor sets, which is
-	// exactly the ceiling on Metal-backed implementations. Report it here rather
-	// than failing opaquely inside vkCreatePipelineLayout much later.
-	if ( vkCtx.deviceProperties.limits.maxBoundDescriptorSets < VK_REQUIRED_BOUND_DESCRIPTOR_SETS ) {
-		common->Warning( "Vulkan: device '%s' supports only %u bound descriptor sets; this renderer needs %d",
-				vkCtx.deviceProperties.deviceName,
-				vkCtx.deviceProperties.limits.maxBoundDescriptorSets,
-				VK_REQUIRED_BOUND_DESCRIPTOR_SETS );
-		VK_Device_Shutdown();
-		return false;
-	}
+	vkCtx.physicalDevice = selected.device;
+	vkCtx.graphicsQueueFamily = selected.queueFamily;
+	vkCtx.graphicsTimestampValidBits = selected.timestampValidBits;
+	vkCtx.deviceProperties = selected.properties;
+	common->Printf( "Vulkan: device %u '%s' (queue family %u, timestampValidBits=%u, timestampPeriod=%.6fns)\n",
+			selected.index, vkCtx.deviceProperties.deviceName, selected.queueFamily,
+			selected.timestampValidBits, vkCtx.deviceProperties.limits.timestampPeriod );
 
 	// light cookies are the only packed-16-bit users; widen them when the
 	// implementation has no R5G6B5 (Metal exposes it on Apple GPUs only)
@@ -1071,9 +1035,36 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	// enabled when they advertise it, and their optional subset features read
 	// back through the chained feature struct. Native drivers advertise neither,
 	// and every portability capability then stays at its permissive default.
-	const char *deviceExtensions[ 2 ];
+	const char *deviceExtensions[ 3 ];
 	uint32_t deviceExtensionCount = 0;
 	deviceExtensions[ deviceExtensionCount++ ] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+	if ( r_vkSampleLocations.GetBool() && vkGetPhysicalDeviceMultisamplePropertiesEXT != NULL
+			&& VK_Device_DeviceExtensionSupported( vkCtx.physicalDevice, VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME ) ) {
+		VkPhysicalDeviceSampleLocationsPropertiesEXT locations = {};
+		locations.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLE_LOCATIONS_PROPERTIES_EXT;
+		VkPhysicalDeviceProperties2 query = {};
+		query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+		query.pNext = &locations;
+		vkGetPhysicalDeviceProperties2( vkCtx.physicalDevice, &query );
+		for ( int shift = 1; shift <= 3; ++shift ) {
+			const VkSampleCountFlagBits samples = (VkSampleCountFlagBits)( 1u << shift );
+			const unsigned int precision = shift + 1;
+			const float minimum = 1.0f / (float)( 1u << precision );
+			if ( ( locations.sampleLocationSampleCounts & samples ) == 0
+					|| locations.sampleLocationSubPixelBits < precision
+					|| locations.sampleLocationCoordinateRange[ 0 ] > minimum
+					|| locations.sampleLocationCoordinateRange[ 1 ] < 1.0f - minimum ) { continue; }
+			VkMultisamplePropertiesEXT grid = {};
+			grid.sType = VK_STRUCTURE_TYPE_MULTISAMPLE_PROPERTIES_EXT;
+			vkGetPhysicalDeviceMultisamplePropertiesEXT( vkCtx.physicalDevice, samples, &grid );
+			if ( grid.maxSampleLocationGridSize.width > 0 && grid.maxSampleLocationGridSize.height > 0 ) {
+				vkCtx.sampleLocationCounts |= samples;
+			}
+		}
+		if ( vkCtx.sampleLocationCounts != 0 ) {
+			deviceExtensions[ deviceExtensionCount++ ] = VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME;
+		}
+	}
 
 	vkCtx.portabilitySubset = VK_Device_DeviceExtensionSupported(
 			vkCtx.physicalDevice, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME );
@@ -1251,6 +1242,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 		return false;
 	}
 
+	VK_Device_RestrictSampleLocationDepthFormats();
 	vkCtx.initialized = true;
 	return true;
 }

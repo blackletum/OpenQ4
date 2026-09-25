@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "../../PBRMath.h"
 
-// openQ4 Vulkan shadow-receiving interaction — fragment stage (Phase F2a).
+// openQ4 Vulkan shadow-receiving interaction â€” fragment stage (Phase F2a).
 //
 // interaction.frag plus the projected shadow sample of the GL
 // shadow_interaction.fs projected CSM contract: view-depth cascade selection
@@ -700,6 +700,11 @@ float CelSpecularTerm(float term) {
     return CelLadder(clamp(term, 0.0, 1.0));
 }
 
+#ifdef VK_HDR_DOMAIN_MRT
+layout(location = 1) out vec4 outPBRColor;
+#define main HDRMaterialMain
+#endif
+
 void main() {
     if (shadow.pcssParams.w > 0.5) {
         gShadowDepthGradients = vec4(
@@ -771,3 +776,15 @@ void main() {
     light = CelQuantizeLight(light);
     outColor = vec4((diffuse + specular) * light * vVertexColor, 0.0);
 }
+
+#ifdef VK_HDR_DOMAIN_MRT
+#undef main
+void main() {
+    HDRMaterialMain();
+    // Both attachments use the same blend state. Preserve source alpha in
+    // both outputs for coverage/blending; the primary stores scene alpha.
+    bool nativePBR = pc.d.x > 0.5;
+    outPBRColor = vec4(nativePBR ? outColor.rgb : vec3(0.0), outColor.a);
+    if (nativePBR) outColor.rgb = vec3(0.0);
+}
+#endif

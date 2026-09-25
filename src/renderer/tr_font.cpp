@@ -336,7 +336,7 @@ void R_InitFreeType( void ) {
 R_DoneFreeType
 ============
 */
-void R_DoneFreeType( void ) {
-	R_ShutdownTrueTypeFonts();
+void R_DoneFreeType( bool preserveAtlasImages ) {
+	R_ShutdownTrueTypeFonts( preserveAtlasImages );
 	consoleFontChecked = false;
 }

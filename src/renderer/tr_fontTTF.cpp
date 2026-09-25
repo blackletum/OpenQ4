@@ -419,6 +419,80 @@ public:
 
 static idList<q4TTFAtlasMaterial *> ttfAtlasMaterials;
 
+// An atlas has no file to reload. Keep its one-byte coverage plane until the
+// image manager shuts down; the generated image can then rebuild its RGBA
+// storage after reloadImages or a video restart without rasterizing again.
+class q4TTFAtlasImage {
+public:
+	idStr		name;
+	int			width;
+	int			height;
+	idList<byte>	coverage;
+};
+
+static idList<q4TTFAtlasImage *> ttfAtlasImages;
+
+static void R_TTFGenerateAtlasImage( idImage *image ) {
+	for ( int i = 0; i < ttfAtlasImages.Num(); i++ ) {
+		const q4TTFAtlasImage &atlas = *ttfAtlasImages[i];
+		if ( atlas.name.Icmp( image->GetName() ) != 0 ) {
+			continue;
+		}
+
+		idImageOpts opts;
+		opts.textureType = TT_2D;
+		opts.format = FMT_RGBA8;
+		opts.colorFormat = CFM_DEFAULT;
+		opts.width = atlas.width;
+		opts.height = atlas.height;
+		opts.numLevels = 1;
+		opts.isPersistant = true;
+		image->AllocImage( opts, TF_LINEAR, TR_CLAMP );
+
+		// GUI blending expects white RGB with glyph coverage in alpha.
+		const int texels = atlas.coverage.Num();
+		byte *rgba = (byte *)Mem_Alloc( texels * 4 );
+		for ( int j = 0; j < texels; j++ ) {
+			rgba[j * 4 + 0] = 255;
+			rgba[j * 4 + 1] = 255;
+			rgba[j * 4 + 2] = 255;
+			rgba[j * 4 + 3] = atlas.coverage[j];
+		}
+		image->SubImageUpload( 0, 0, 0, 0, atlas.width, atlas.height, rgba );
+		Mem_Free( rgba );
+		return;
+	}
+	common->Error( "TTF font: no retained atlas for %s", image->GetName() );
+}
+
+static idImage *R_TTFUploadAtlasImage( const char *name, int width, int height, const byte *coverage ) {
+	q4TTFAtlasImage *atlas = NULL;
+	for ( int i = 0; i < ttfAtlasImages.Num(); i++ ) {
+		if ( ttfAtlasImages[i]->name.Icmp( name ) == 0 ) {
+			atlas = ttfAtlasImages[i];
+			break;
+		}
+	}
+	const bool replacingAtlas = ( atlas != NULL );
+	if ( atlas == NULL ) {
+		atlas = new q4TTFAtlasImage();
+		atlas->name = name;
+		ttfAtlasImages.Append( atlas );
+	}
+	atlas->width = width;
+	atlas->height = height;
+	atlas->coverage.SetNum( width * height );
+	memcpy( atlas->coverage.Ptr(), coverage, width * height );
+
+	idImage *image = globalImages->ImageFromFunction( name, R_TTFGenerateAtlasImage );
+	// ImageFromFunction invokes the generator only for a new image. A font
+	// registration at another scale or codepage replaces the existing pixels.
+	if ( replacingAtlas ) {
+		image->Reload( true );
+	}
+	return image;
+}
+
 static idList<q4TTFPageSet *> ttfPageSets;
 
 /*
@@ -573,7 +647,7 @@ the image manager hands the same object to every reference regardless of the
 sampler parameters asked for.  The process-local material deliberately has the
 same name as that image.  An implicit material initially maps an image named
 after itself; sharing the intrinsic atlas identity means that first parse finds
-the scratch image which was uploaded immediately before this call instead of
+the generated image which was uploaded immediately before this call instead of
 probing a nonexistent file and leaving a redundant defaulted image behind.
 
 The material is then installed from source text rather than shipped as a .mtr,
@@ -878,34 +952,11 @@ static bool R_TTFPackAtlas( idTrueTypeFont &face, const char *fontName, int poin
 	}
 	Mem_Free( rasters );
 
-	// Upload.  The retail atlases are white RGB with coverage in alpha, and the
-	// GUI blend path is built around exactly that, so the page is expanded to
-	// the same layout rather than relying on a single-channel swizzle.
-	idImageOpts opts;
-	opts.textureType = TT_2D;
-	opts.format = FMT_RGBA8;
-	opts.colorFormat = CFM_DEFAULT;
-	opts.width = pageWidth;
-	opts.height = pageHeight;
-	opts.numLevels = 1;
-	opts.isPersistant = true;
-
-	idImage *image = globalImages->ScratchImage( imageName, &opts, TF_LINEAR, TR_CLAMP, TD_LOOKUP_TABLE_RGBA );
+	idImage *image = R_TTFUploadAtlasImage( imageName, pageWidth, pageHeight, page );
 	if ( image == NULL ) {
 		Mem_Free( page );
 		return false;
 	}
-
-	const int texels = pageWidth * pageHeight;
-	byte *rgbaPage = (byte *)Mem_Alloc( texels * 4 );
-	for ( int i = 0; i < texels; i++ ) {
-		rgbaPage[i * 4 + 0] = 255;
-		rgbaPage[i * 4 + 1] = 255;
-		rgbaPage[i * 4 + 2] = 255;
-		rgbaPage[i * 4 + 3] = page[i];
-	}
-	image->SubImageUpload( 0, 0, 0, 0, pageWidth, pageHeight, rgbaPage );
-	Mem_Free( rgbaPage );
 
 	if ( r_ttfFontDebug.GetBool() ) {
 		// Dump what was handed to the GPU, so a glyph problem can be told apart
@@ -920,7 +971,7 @@ static bool R_TTFPackAtlas( idTrueTypeFont &face, const char *fontName, int poin
 		R_WriteTGA( va( "ttfatlas/%s.tga", imageName ), rgba, pageWidth, pageHeight, false, "fs_savepath" );
 		Mem_Free( rgba );
 		common->Printf( "TTF font: %s atlas %ix%i, %i glyphs, format=%i levels=%i\n",
-						imageName, pageWidth, pageHeight, rendered, (int)opts.format, opts.numLevels );
+						imageName, pageWidth, pageHeight, rendered, (int)FMT_RGBA8, 1 );
 	}
 
 	Mem_Free( page );
@@ -1315,31 +1366,13 @@ bool R_BuildConsoleFontAtlas( void ) {
 		return false;
 	}
 
-	idImageOpts opts;
-	opts.textureType = TT_2D;
-	opts.format = FMT_RGBA8;
-	opts.colorFormat = CFM_DEFAULT;
-	opts.width = pageSize;
-	opts.height = pageSize;
-	opts.numLevels = 1;
-	opts.isPersistant = true;
-
-	idImage *image = globalImages->ScratchImage( Q4_CONSOLE_ATLAS_IMAGE, &opts, TF_LINEAR, TR_CLAMP, TD_LOOKUP_TABLE_RGBA );
+	idImage *image = R_TTFUploadAtlasImage( Q4_CONSOLE_ATLAS_IMAGE, pageSize, pageSize, page );
 	if ( image == NULL ) {
 		Mem_Free( page );
 		return false;
 	}
 
 	const int texels = pageSize * pageSize;
-	byte *rgbaPage = (byte *)Mem_Alloc( texels * 4 );
-	for ( int i = 0; i < texels; i++ ) {
-		rgbaPage[i * 4 + 0] = 255;
-		rgbaPage[i * 4 + 1] = 255;
-		rgbaPage[i * 4 + 2] = 255;
-		rgbaPage[i * 4 + 3] = page[i];
-	}
-	image->SubImageUpload( 0, 0, 0, 0, pageSize, pageSize, rgbaPage );
-	Mem_Free( rgbaPage );
 
 	if ( r_ttfFontDebug.GetBool() ) {
 		byte *dump = (byte *)Mem_Alloc( texels * 4 );
@@ -1392,7 +1425,7 @@ bool R_BuildConsoleFontAtlas( void ) {
 R_ShutdownTrueTypeFonts
 ============
 */
-void R_ShutdownTrueTypeFonts( void ) {
+void R_ShutdownTrueTypeFonts( bool preserveAtlasImages ) {
 	if ( ttfConsoleMaterial != NULL && ttfConsoleOriginalImage != NULL ) {
 		if ( !ttfConsoleMaterial->OverrideStageImageForRuntime( 0, ttfConsoleOriginalImage ) ) {
 			common->Warning( "TTF font: could not restore the authored console material image" );
@@ -1401,6 +1434,12 @@ void R_ShutdownTrueTypeFonts( void ) {
 	ttfConsoleMaterial = NULL;
 	ttfConsoleOriginalImage = NULL;
 	ttfAtlasMaterials.DeleteContents( true );
+	// A full vid_restart keeps the image objects and invokes their generators
+	// before the UI registers its fonts again. Their pixels must survive that
+	// boundary; final renderer shutdown destroys both the cache and the images.
+	if ( !preserveAtlasImages ) {
+		ttfAtlasImages.DeleteContents( true );
+	}
 	// Nothing may still be drawing by this point: every fontInfo_t that shares a
 	// page set is dead with the renderer, and idDeviceContext re-registers its
 	// fonts from scratch after a restart.

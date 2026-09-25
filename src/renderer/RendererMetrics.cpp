@@ -22,6 +22,7 @@ typedef struct rendererMetricsFrame_s {
 	int		backEndMsec;
 	int		presentMsec;
 	unsigned long long presentPhaseMicroseconds[RENDERER_PRESENT_CPU_PHASE_COUNT];
+	unsigned long long waitPhaseMicroseconds[RENDERER_WAIT_CPU_PHASE_COUNT];
 	unsigned long long uploadRetireMicroseconds;
 	unsigned long long cpuFrameMicroseconds;
 	int		gpuMsec;
@@ -715,12 +716,19 @@ unsigned long long R_RendererMetrics_CpuClock( void ) {
 }
 
 void R_RendererMetrics_EndPresentPhase( rendererPresentCpuPhase_t phase, unsigned long long begin ) {
-	if ( phase < 0 || phase >= RENDERER_PRESENT_CPU_PHASE_COUNT ) { return; }
+	if ( begin == 0 || phase < 0 || phase >= RENDERER_PRESENT_CPU_PHASE_COUNT ) { return; }
 	const unsigned long long end = R_RendererMetrics_CpuClock();
 	if ( end >= begin ) { rg_rendererMetrics.presentPhaseMicroseconds[phase] += end - begin; }
 }
 
+void R_RendererMetrics_EndWaitPhase( rendererWaitCpuPhase_t phase, unsigned long long begin ) {
+	if ( begin == 0 || phase < 0 || phase >= RENDERER_WAIT_CPU_PHASE_COUNT ) { return; }
+	const unsigned long long end = R_RendererMetrics_CpuClock();
+	if ( end >= begin ) { rg_rendererMetrics.waitPhaseMicroseconds[phase] += end - begin; }
+}
+
 void R_RendererMetrics_EndUploadRetirement( unsigned long long begin ) {
+	if ( begin == 0 ) { return; }
 	const unsigned long long end = R_RendererMetrics_CpuClock();
 	if ( end >= begin ) { rg_rendererMetrics.uploadRetireMicroseconds += end - begin; }
 }
@@ -1888,6 +1896,7 @@ static void R_RendererMetrics_RecordBenchmarkCapture( void ) {
 	sample.backEndMsec = rg_rendererMetrics.backEndMsec;
 	sample.presentMsec = rg_rendererMetrics.presentMsec;
 	memcpy( sample.presentPhaseMicroseconds, rg_rendererMetrics.presentPhaseMicroseconds, sizeof( sample.presentPhaseMicroseconds ) );
+	memcpy( sample.waitPhaseMicroseconds, rg_rendererMetrics.waitPhaseMicroseconds, sizeof( sample.waitPhaseMicroseconds ) );
 	sample.uploadRetireMicroseconds = rg_rendererMetrics.uploadRetireMicroseconds;
 	sample.cpuFrameMicroseconds = rg_rendererMetrics.cpuFrameMicroseconds;
 	renderGpuFrameTiming_t gpuFrameTiming;

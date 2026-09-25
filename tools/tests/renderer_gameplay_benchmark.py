@@ -64,7 +64,7 @@ DISPLAY_MODES = ("windowed", "fullscreen")
 POSTINIT_CONNECT_WAIT_FRAMES = 30
 POSTINIT_RECONNECT_WAIT_FRAMES = 30
 MP_SERVER_CLIENT_GRACE_MSEC = 90000
-REPORT_SCHEMA_VERSION = 4
+REPORT_SCHEMA_VERSION = 5
 GIT_PROVENANCE_POLICY = "current-openq4-head-and-dirty-state-v1"
 BUDGET_DISPLAY_CONTRACT_ID = "bordered-window-1280x720-v1"
 BUDGET_WIDTH = 1280
@@ -132,7 +132,12 @@ BENCHMARK_EVIDENCE_MARKERS = (
     "Selected renderer tier:",
     "MODE:",
     "Map:",
+    "OPENQ4_BENCHMARK_VIEW_",
+    "openQ4 map state:",
+    "origin:",
 )
+VIEW_BEGIN = "OPENQ4_BENCHMARK_VIEW_BEGIN"
+VIEW_END = "OPENQ4_BENCHMARK_VIEW_END"
 POST_MAP_CVARS_BEGIN = "// OPENQ4_BENCHMARK_POST_MAP_CVARS_V1_BEGIN"
 POST_MAP_CVARS_END = "// OPENQ4_BENCHMARK_POST_MAP_CVARS_V1_END"
 EXEC_COMMANDS_BEGIN = "// OPENQ4_BENCHMARK_EXEC_COMMANDS_V1_BEGIN"
@@ -154,8 +159,19 @@ REQUIRED_SCENES: dict[str, dict[str, Any]] = {
     "sp-storage1": {
         "mode": "SP",
         "map": "game/storage1",
-        "purpose": "primary renderer performance acceptance scene, dense indoor lighting, and early-game storage visual parity",
+        "purpose": "stock first-entry drop-pod sequence; scripted camera, not a static indoor gameplay reference",
+        "path": "scripted-intro",
+        "entityFilter": "first",
+        "viewPolicy": "record-endpoints",
+    },
+    "sp-storage1-second": {
+        "mode": "SP",
+        "map": "game/storage1",
+        "purpose": "stock second-entry gameplay after the starting lift settles; separate from first-entry timing",
         "path": "spawn-static",
+        "entityFilter": "second",
+        "viewPolicy": "static-endpoints",
+        "minimumSettleFrames": 720,
     },
     "sp-airdefense1": {
         "mode": "SP",
@@ -928,6 +944,10 @@ WARNING_PATTERNS = {
     ),
     "vulkanValidation": re.compile(r"\bVulkan validation:", re.IGNORECASE),
     "vulkanVuid": re.compile(r"\bVUID-[A-Za-z0-9][A-Za-z0-9_.-]*\b"),
+    "vulkanDrawFailure": re.compile(
+        r"WARNING:(?:\^[0-9]|[ \t])*Vulkan\b[^\r\n]{0,192}\b(?:draw skipped|draw refused)\b",
+        re.IGNORECASE,
+    ),
     "vulkanCallFailed": re.compile(
         r"\bVulkan\b[^\r\n]{0,160}\bvk[A-Z][A-Za-z0-9_]*\b[^\r\n]{0,96}\bfailed\b",
         re.IGNORECASE,
@@ -964,6 +984,10 @@ class RunSpec:
     fog_blend_expectation: str = "none"
 
     @property
+    def scene_contract(self) -> dict[str, Any] | None:
+        return scene_view_contract(self.case_id)
+
+    @property
     def fullscreen(self) -> bool:
         return self.display_mode == "fullscreen"
 
@@ -990,6 +1014,35 @@ class RunSpec:
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def scene_view_contract(case_id: str) -> dict[str, Any] | None:
+    """Only scenes with an explicit entry currently have a qualified view policy."""
+    scene = ALL_SCENES.get(case_id, {})
+    if not scene.get("entityFilter"):
+        return None
+    return {
+        "contractId": "stock-entry-view-v1",
+        "map": scene["map"],
+        "entityFilter": scene["entityFilter"],
+        "path": scene["path"],
+        "viewPolicy": scene["viewPolicy"],
+        "minimumSettleFrames": scene.get("minimumSettleFrames", 0),
+        # viewpos rounds each coordinate/angle to one decimal place. Allow
+        # small view bob, but reject an unsettled lift or scripted flight.
+        "maxPositionDelta": 1.0 if scene["viewPolicy"] == "static-endpoints" else None,
+        "maxAngleDelta": 1.0 if scene["viewPolicy"] == "static-endpoints" else None,
+        "expectedOrigin": [-2592.0, 2504.0, 4.2] if case_id == "sp-storage1-second" else None,
+        "expectedAngles": [0.0, 90.0, 0.0] if case_id == "sp-storage1-second" else None,
+    }
+
+
+def scene_snapshot_commands(marker: str, map_name: str, entity_filter: str) -> list[str]:
+    return [
+        f"echo {marker}",
+        f"openq4_assertMapState {map_name} {entity_filter}",
+        "viewpos",
+    ]
 
 
 def host_arch() -> str:
@@ -1363,6 +1416,8 @@ class BenchmarkConfigEvidence:
     role: str
     capture_index: int
     screenshot_request: str
+    scene_map: str
+    entity_filter: str
 
 
 def parse_benchmark_config(text: str) -> BenchmarkConfigEvidence:
@@ -1444,9 +1499,21 @@ def parse_benchmark_config(text: str) -> BenchmarkConfigEvidence:
         raise ValueError("generated benchmark config exec-command block is unterminated") from exc
     commands = parse_exec_commands(lines[cursor:exec_finish])
     cursor = exec_finish + 1
-    if cursor >= len(lines) or lines[cursor] != "viewpos":
+    scene_map = entity_filter = ""
+    if lines[cursor : cursor + 1] == [f"echo {VIEW_BEGIN}"]:
+        assertion = re.fullmatch(
+            r"openq4_assertMapState ([A-Za-z0-9_./-]+) ([A-Za-z0-9_-]+)",
+            lines[cursor + 1] if cursor + 1 < len(lines) else "",
+        )
+        if assertion is None:
+            raise ValueError("generated benchmark config has an invalid scene assertion")
+        scene_map, entity_filter = assertion.groups()
+        start_commands = scene_snapshot_commands(VIEW_BEGIN, scene_map, entity_filter)
+    else:
+        start_commands = ["viewpos"]
+    if lines[cursor : cursor + len(start_commands)] != start_commands:
         raise ValueError("generated benchmark config is missing the post-command viewpos")
-    cursor += 1
+    cursor += len(start_commands)
 
     display_lines = [
         f"{name} {value}" for name, value in budget_display_contract()["cvars"].items()
@@ -1483,7 +1550,9 @@ def parse_benchmark_config(text: str) -> BenchmarkConfigEvidence:
             raise ValueError("generated budget config is missing its benchmark capture")
         cursor += len(budget_tail)
 
-    fixed_tail = ["framePacingSnapshot", "gfxInfo"]
+    fixed_tail = (
+        scene_snapshot_commands(VIEW_END, scene_map, entity_filter) if scene_map else []
+    ) + ["framePacingSnapshot", "gfxInfo"]
     if lines[cursor : cursor + len(fixed_tail)] != fixed_tail:
         raise ValueError("generated benchmark config evidence tail differs")
     cursor += len(fixed_tail)
@@ -1510,6 +1579,8 @@ def parse_benchmark_config(text: str) -> BenchmarkConfigEvidence:
         role=role,
         capture_index=int(capture_index_text),
         screenshot_request=screenshot_request,
+        scene_map=scene_map,
+        entity_filter=entity_filter,
     )
 
 
@@ -1665,6 +1736,9 @@ def build_scripted_capture_lines(
     capture_index: int = 0,
 ) -> tuple[list[str], str]:
     shot_name = f"screenshots/renderer-bench/{role}_{capture_index}.tga"
+    scene_contract = spec.scene_contract
+    if scene_contract:
+        settle_frames = max(settle_frames, scene_contract["minimumSettleFrames"])
     lines: list[str] = [
         "r_rendererSharedGui 0",
         "r_rendererSharedInWorldGui 0",
@@ -1700,7 +1774,10 @@ def build_scripted_capture_lines(
     # Record the pose that is actually sampled.  In particular, profile scene
     # commands may move the player after the initial map settle; getviewpos
     # before those commands described the wrong camera and omitted pitch/roll.
-    lines.append("viewpos")
+    lines.extend(
+        scene_snapshot_commands(VIEW_BEGIN, scene_contract["map"], scene_contract["entityFilter"])
+        if scene_contract else ["viewpos"]
+    )
     if renderer_metrics:
         # A client can reload the game module while connecting and re-exec an
         # archived config after the launch arguments were applied. Reassert
@@ -1725,6 +1802,10 @@ def build_scripted_capture_lines(
             "r_rendererGpuTimers 0",
             sample_wait,
         ]
+    if scene_contract:
+        lines.extend(scene_snapshot_commands(
+            VIEW_END, scene_contract["map"], scene_contract["entityFilter"]
+        ))
     lines += [
         "framePacingSnapshot",
         "gfxInfo",
@@ -3777,6 +3858,77 @@ def compare_screenshot_difference_if_requested(
     }
 
 
+def evaluate_scene_view_evidence(
+    sources: Iterable[tuple[str, str]], contract: dict[str, Any] | None
+) -> tuple[dict[str, Any], list[str]]:
+    """Check retained endpoint poses, not continuous motion or whole-scene parity."""
+    if contract is None:
+        return {"required": False, "status": "not-required"}, []
+    failures: list[str] = []
+    observations: list[dict[str, Any]] = []
+    state_pattern = re.compile(
+        r"openQ4 map state: map=(\S*) entityFilter=(\S*) "
+        r"expectedMap=(\S*) expectedEntityFilter=(\S*)"
+    )
+    pose_pattern = re.compile(r"origin: \(([^()]+)\) angles: \(([^()]+)\)")
+    for source_name, source_text in sources:
+        lines = source_text.splitlines()
+        endpoints = [(i, line.strip()) for i, line in enumerate(lines)
+                     if line.strip() in (VIEW_BEGIN, VIEW_END)]
+        if not endpoints and source_name != "log":
+            continue
+        if [marker for _, marker in endpoints] != [VIEW_BEGIN, VIEW_END]:
+            failures.append(f"{source_name}: missing, repeated or reordered scene endpoints")
+            continue
+        snapshots: list[dict[str, Any]] = []
+        for index, marker in endpoints:
+            state = state_pattern.fullmatch(lines[index + 1].strip()) if index + 1 < len(lines) else None
+            pose = pose_pattern.fullmatch(lines[index + 2].strip()) if index + 2 < len(lines) else None
+            if state is None or pose is None:
+                failures.append(f"{source_name}: {marker} lacks map/filter and camera evidence")
+                continue
+            try:
+                origin, angles = ([float(value) for value in group.split()] for group in pose.groups())
+                if len(origin) != 3 or len(angles) != 3 or not all(map(math.isfinite, origin + angles)):
+                    raise ValueError("invalid pose")
+            except ValueError:
+                failures.append(f"{source_name}: {marker} has an invalid camera pose")
+                continue
+            expected_state = (contract["map"], contract["entityFilter"]) * 2
+            if state.groups() != expected_state:
+                failures.append(f"{source_name}: {marker} map/entity filter differs from the scene")
+            snapshots.append({
+                "map": state.group(1), "entityFilter": state.group(2),
+                "expectedMap": state.group(3), "expectedEntityFilter": state.group(4),
+                "origin": origin, "angles": angles,
+            })
+        if len(snapshots) != 2:
+            continue
+        begin, end = snapshots
+        angle_distance = lambda a, b: max(abs((x - y + 180.0) % 360.0 - 180.0) for x, y in zip(a, b))
+        position_delta = math.dist(begin["origin"], end["origin"])
+        angle_delta = angle_distance(begin["angles"], end["angles"])
+        observation = {"source": source_name, "begin": begin, "end": end,
+                       "positionDelta": round(position_delta, 6), "angleDelta": round(angle_delta, 6)}
+        observations.append(observation)
+        if contract["viewPolicy"] == "static-endpoints":
+            if position_delta > contract["maxPositionDelta"] or angle_delta > contract["maxAngleDelta"]:
+                failures.append(f"{source_name}: static camera moved between sampling endpoints")
+            for snapshot in snapshots:
+                if (math.dist(snapshot["origin"], contract["expectedOrigin"]) > contract["maxPositionDelta"]
+                        or angle_distance(snapshot["angles"], contract["expectedAngles"]) > contract["maxAngleDelta"]):
+                    failures.append(f"{source_name}: camera differs from the settled stock gameplay view")
+                    break
+    log_observations = [item for item in observations if item["source"] == "log"]
+    if len(log_observations) != 1:
+        failures.append("engine log does not prove both scene endpoints")
+    elif any(item[endpoint] != log_observations[0][endpoint]
+             for item in observations for endpoint in ("begin", "end")):
+        failures.append("scene endpoint evidence disagrees between diagnostic streams")
+    return {"required": True, "status": "fail" if failures else "pass",
+            "contract": contract, "observations": observations}, failures
+
+
 def evaluate_role_result(
     spec: RunSpec,
     role: str,
@@ -3821,6 +3973,7 @@ def evaluate_role_result(
     map_evidence, map_evidence_failures = evaluate_controlled_map_evidence(
         diagnostic_sources, pbr_fixture_acceptance_required
     )
+    scene_evidence, scene_failures = evaluate_scene_view_evidence(diagnostic_sources, spec.scene_contract)
     image = compare_screenshot_if_requested(
         screenshot,
         savepath,
@@ -3908,6 +4061,7 @@ def evaluate_role_result(
     missing.extend(evaluate_shared_fog_blend_evidence(spec, summary))
     missing.extend(pbr_fixture_failures)
     missing.extend(map_evidence_failures)
+    missing.extend(f"scene evidence: {failure}" for failure in scene_failures)
     if spec.render_api == "gl" and "Selected renderer tier:" not in text:
         missing.append("selected tier line")
     if pbr_fixture_acceptance_required and not require_benchmark:
@@ -3990,6 +4144,7 @@ def evaluate_role_result(
         "budgetEvidence": budget_evidence,
         "pbrFixtureEvidence": pbr_fixture_evidence,
         "mapEvidence": map_evidence,
+        "sceneEvidence": scene_evidence,
     }
 
 
@@ -4071,12 +4226,16 @@ def run_sp_spec(
     )
     append_set(game_args, "si_gameType", "singleplayer")
     append_command(game_args, "map", spec.map_name)
+    if spec.scene_contract:
+        game_args.append(spec.scene_contract["entityFilter"])
 
     if args.dry_run:
         return {
             "id": spec.id,
             "mode": spec.mode,
             "map": spec.map_name,
+            "caseId": spec.case_id,
+            "sceneContract": spec.scene_contract,
             "budgetMap": spec.budget_map_name,
             "expectedBackend": spec.expected_backend,
             "renderApi": spec.render_api,
@@ -4131,6 +4290,8 @@ def run_sp_spec(
         "id": spec.id,
         "mode": spec.mode,
         "map": spec.map_name,
+        "caseId": spec.case_id,
+        "sceneContract": spec.scene_contract,
         "budgetMap": spec.budget_map_name,
         "expectedBackend": spec.expected_backend,
         "renderApi": spec.render_api,
@@ -4282,6 +4443,8 @@ def run_mp_spec(
             "id": spec.id,
             "mode": spec.mode,
             "map": spec.map_name,
+            "caseId": spec.case_id,
+            "sceneContract": spec.scene_contract,
             "budgetMap": spec.budget_map_name,
             "expectedBackend": spec.expected_backend,
             "renderApi": spec.render_api,
@@ -4429,6 +4592,8 @@ def run_mp_spec(
         "id": spec.id,
         "mode": spec.mode,
         "map": spec.map_name,
+        "caseId": spec.case_id,
+        "sceneContract": spec.scene_contract,
         "budgetMap": spec.budget_map_name,
         "expectedBackend": spec.expected_backend,
         "renderApi": spec.render_api,
@@ -4478,6 +4643,8 @@ def harness_failure_result(spec: RunSpec, exc: Exception) -> dict[str, Any]:
         "id": spec.id,
         "mode": spec.mode,
         "map": spec.map_name,
+        "caseId": spec.case_id,
+        "sceneContract": spec.scene_contract,
         "budgetMap": spec.budget_map_name,
         "expectedBackend": spec.expected_backend,
         "renderApi": spec.render_api,
@@ -4812,6 +4979,27 @@ def write_reports(output_dir: Path, results: list[dict[str, Any]], metadata: dic
                     f"|  | `{role_result['role']}` missing |  |  |  |  |  |  |  | {'; '.join(role_result['missing'])} |  |  |  |  |"
                 )
 
+    scene_roles = [
+        (result, role) for result in results for role in result.get("roles", [])
+        if role.get("sceneEvidence", {}).get("required")
+    ]
+    if scene_roles:
+        lines += [
+            "", "## Stock Entry and Camera Evidence", "",
+            "Endpoint checks do not prove continuous camera stability or visual parity.", "",
+            "| Case / role | Filter | View policy | Status | Position delta | Angle delta |",
+            "|---|---|---|---|---|---|",
+        ]
+        for result, role in scene_roles:
+            evidence = role["sceneEvidence"]
+            contract = evidence["contract"]
+            observed = next((item for item in evidence["observations"] if item["source"] == "log"), {})
+            lines.append(
+                f"| `{result['id']}` / `{role['role']}` | {contract['entityFilter']} | "
+                f"{contract['viewPolicy']} | {evidence['status']} | "
+                f"{observed.get('positionDelta', 'missing')} | {observed.get('angleDelta', 'missing')} |"
+            )
+
     budget_roles = [
         (result, role)
         for result in results
@@ -5125,6 +5313,24 @@ def verify_benchmark_report(
             failures.append("benchmark result is malformed")
             continue
         case_id = str(result.get("id", "unknown"))
+        scene_id = result.get("caseId")
+        scene = ALL_SCENES.get(scene_id) if isinstance(scene_id, str) else None
+        scene_contract = scene_view_contract(scene_id) if scene else None
+        identity = [result.get(field) for field in (
+            "tier", "maxfps", "swapInterval", "display", "shadowPreset", "renderer"
+        )]
+        if scene is None or not all(isinstance(value, str) and value for value in identity):
+            failures.append(f"{case_id}: scene case identity is missing or malformed")
+        else:
+            expected_id = sanitize_case_id("_".join((
+                scene_id, identity[0], f"fps{identity[1]}", f"vsync{identity[2]}", *identity[3:]
+            )))
+            if (case_id != expected_id or result.get("mode") != scene["mode"]
+                    or result.get("map") != scene["map"]
+                    or result.get("budgetMap") != scene.get("budgetMap", scene["map"])):
+                failures.append(f"{case_id}: scene case/map identity differs from the catalog")
+        if "sceneContract" not in result or result["sceneContract"] != scene_contract:
+            failures.append(f"{case_id}: scene contract differs from the catalog")
         if result.get("status") != "pass":
             failures.append(f"{case_id}: result is not a pass")
         if not budget_enforced:
@@ -5259,6 +5465,12 @@ def verify_benchmark_report(
                         f"{case_id}/{role_name}: benchmark config provenance is invalid: {exc}"
                     )
                 else:
+                    expected_scene = (
+                        (scene_contract["map"], scene_contract["entityFilter"])
+                        if scene_contract else ("", "")
+                    )
+                    if (config_evidence.scene_map, config_evidence.entity_filter) != expected_scene:
+                        failures.append(f"{case_id}/{role_name}: benchmark config scene binding differs")
                     config_cvars = config_evidence.cvars
                     config_commands = config_evidence.commands
                     config_effective_cvars = effective_post_map_cvars(config_cvars)
@@ -5314,6 +5526,10 @@ def verify_benchmark_report(
                         if role_name == "server":
                             expected_settle_frames = max(
                                 1, recorded_settle_frames + recorded_mp_delay_frames
+                            )
+                        if scene_contract:
+                            expected_settle_frames = max(
+                                expected_settle_frames, scene_contract["minimumSettleFrames"]
                             )
                         if config_evidence.settle_frames != expected_settle_frames:
                             failures.append(
@@ -5390,6 +5606,10 @@ def verify_benchmark_report(
                 failures.append(
                     f"{case_id}/{role_name}: recorded controlled-map evidence differs"
                 )
+            scene_evidence, scene_failures = evaluate_scene_view_evidence(source_pairs, scene_contract)
+            failures.extend(f"{case_id}/{role_name}: {item}" for item in scene_failures)
+            if role.get("sceneEvidence") != scene_evidence:
+                failures.append(f"{case_id}/{role_name}: recorded scene evidence differs")
             if not budget_enforced and render_api == "gl":
                 selected_tiers = [
                     match.group(1).casefold()

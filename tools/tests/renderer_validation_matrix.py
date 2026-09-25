@@ -467,6 +467,10 @@ WARNING_PATTERNS = {
     ),
     "vulkanValidation": re.compile(r"\bVulkan validation:", re.IGNORECASE),
     "vulkanVuid": re.compile(r"\bVUID-[A-Za-z0-9][A-Za-z0-9_.-]*\b"),
+    "vulkanDrawFailure": re.compile(
+        r"WARNING:(?:\^[0-9]|[ \t])*Vulkan\b[^\r\n]{0,192}\b(?:draw skipped|draw refused)\b",
+        re.IGNORECASE,
+    ),
     "vulkanCallFailed": re.compile(
         r"\bVulkan\b[^\r\n]{0,160}\bvk[A-Z][A-Za-z0-9_]*\b[^\r\n]{0,96}\bfailed\b",
         re.IGNORECASE,
@@ -606,6 +610,16 @@ def common_args(
         ]
     if basepath:
         args += ["+set", "fs_basepath", basepath]
+    if case_id in ("renderer-modern-visible-selftest", "renderer-low-overhead-selftest"):
+        # The visible-composition fixture uses a fixed 640x480 viewport. Its
+        # depth handoff must not rescale into a desktop-sized MSAA framebuffer.
+        # Use window dimensions: r_customWidth/Height only select fullscreen.
+        for name, value in (
+            ("r_windowWidth", "640"), ("r_windowHeight", "480"),
+            ("r_multiSamples", "4"), ("r_hiddenWindow", "1"),
+            ("in_mouse", "0"), ("in_joystick", "0"),
+        ):
+            args += ["+set", name, value]
     return args
 
 
@@ -1535,8 +1549,13 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"],
                 ["Vulkan render-target self-test passed (66 face captures, color/depth and depth-only draws, resolve, resize, retirement and invalid-face checks)"],
                 ["Vulkan MRT self-test passed (draws, mixed formats, blend masks, load, cube faces, MSAA resolves, resize and rejection)"],
+                ["Vulkan RGBA8 resolve: samples=4 fractional coverage, partial extents and repeated resolve passed"],
                 ["Vulkan PBR emission storage: samples=0 finite=65504 unclippedRed=4096 passed"],
                 ["Vulkan PBR emission storage: samples=4 finite=65504 unclippedRed=4096 passed"],
+                ["Vulkan scratch reload: samples=0 adopted storage, regeneration and readback passed"],
+                ["Vulkan scratch reload: samples=4 adopted storage, regeneration and readback passed"],
+                ["Vulkan descriptor retirement self-test passed"],
+                ["Vulkan probe source self-test passed (GPU cube readback, face orientation, sRGB/HDR, upload/reload generations and rejection)"],
                 ["Vulkan renderer initialized"],
                 ["RendererContracts self-test passed"],
                 ["RendererGpuSkinning self-test passed"],
@@ -1551,9 +1570,57 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "renderer-vk-probe-source-lifecycle",
+            "category": "vulkan",
+            "description": "Real immutable-cubemap reads, source changes and rejection across partial/full video restart and MSAA changes.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "args": ["+set", "r_renderApi", "vulkan", "+set", "r_vkValidation", "1",
+                     "+set", "r_multiSamples", "0", "+rendererVulkanRenderTargetsSelfTest",
+                     "+set", "r_multiSamples", "4", "+vid_restart", "partial", "windowed",
+                     "+rendererVulkanRenderTargetsSelfTest", "+vid_restart", "windowed",
+                     "+rendererVulkanRenderTargetsSelfTest", "+gfxInfo"],
+            "checks": [
+                ["Renderer API: requested=vulkan active=vulkan disposition=module"],
+                ["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"],
+                ["Vulkan probe source self-test passed (GPU cube readback, face orientation, sRGB/HDR, upload/reload generations and rejection)"],
+            ],
+            "absent": ["Vulkan probe source self-test FAILED", "Vulkan probe source mismatch:",
+                       "Vulkan render-target self-test failed", "vid_restart partial failed"],
+            "orderedLogChecks": [
+                "Vulkan probe source self-test passed (GPU cube readback, face orientation, sRGB/HDR, upload/reload generations and rejection)",
+                "Vulkan: created swapchain",
+                "Vulkan probe source self-test passed (GPU cube readback, face orientation, sRGB/HDR, upload/reload generations and rejection)",
+                "----- VK_InitRenderDevice -----",
+                "Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)",
+                "Vulkan probe source self-test passed (GPU cube readback, face orientation, sRGB/HDR, upload/reload generations and rejection)",
+            ],
+        },
+        {
+            "id": "renderer-vk-linear-capture-rejection",
+            "category": "vulkan",
+            "description": "Linear screenshots reject startup before any completed scene, with HDR requested.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "args": ["+set", "r_renderApi", "vulkan", "+set", "r_vkValidation", "1",
+                     "+set", "r_fullscreen", "0", "+set", "r_hiddenWindow", "1",
+                     "+set", "in_mouse", "0", "+set", "in_joystick", "0",
+                     "+set", "r_rendererModernQuality", "1", "+set", "r_pbrMaterials", "1",
+                     "+set", "r_hdrToneMap", "1", "+set", "r_hdrSceneTarget", "1",
+                     "+screenshot", "linear", "screenshots/linear-before-scene.pfm", "+gfxInfo"],
+            "checks": [
+                ["Renderer API: requested=vulkan active=vulkan disposition=module"],
+                ["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"],
+                ["screenshot linear: no completed modern HDR scene"],
+            ],
+            "absent": ["Wrote screenshots/linear-before-scene.pfm", "screenshot linear: HDR readback failed"],
+        },
+        {
             "id": "renderer-vk-hdr-selftest",
             "category": "vulkan",
-            "description": "Unclamped FP16 scene/MSAA capture and exposure before and after a full Vulkan device restart.",
+            "description": "Unclamped FP16/MSAA capture, per-sample classic/PBR composition, exposure, stock/linear output, bloom/grade/alpha and portal-sky composition before/after a Vulkan restart.",
             "assetless": True,
             "requiresVulkanModule": True,
             "preservesConfig": True,
@@ -1563,12 +1630,49 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["Renderer API: requested=vulkan active=vulkan disposition=module"],
                 ["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"],
                 ["Vulkan HDR self-test passed (24 FP16/MSAA luminance fixtures, synchronous/asynchronous exposure, resize and stale-sample rejection)"],
+                ["Vulkan HDR tone-map self-test passed (112 production shader fixtures, 20 portal-sky masks)"],
+                ["Vulkan HDR linear-output self-test passed (320 linear fixtures, 32 composition fixtures, actual 0x/4x MSAA)"],
+                ["Vulkan HDR prepared-post self-test passed (32 exposure/bloom fixtures, 6 unchanged-scene rejections, 4 domain resets, actual 0x/4x MSAA)"],
+                ["Vulkan HDR scene-boundary self-test passed (24 per-sample composition fixtures, actual 0x/4x MSAA)"],
+                ["Vulkan PBR preview self-test passed (24 clamp/resolve fixtures, actual 0x/4x MSAA)"],
             ],
             "absent": ["Vulkan HDR self-test failed", "Vulkan: HDR luminance sample unavailable"],
             "orderedLogChecks": [
+                "Vulkan HDR tone-map self-test passed (112 production shader fixtures, 20 portal-sky masks)",
+                "Vulkan HDR linear-output self-test passed (320 linear fixtures, 32 composition fixtures, actual 0x/4x MSAA)",
+                "Vulkan HDR prepared-post self-test passed (32 exposure/bloom fixtures, 6 unchanged-scene rejections, 4 domain resets, actual 0x/4x MSAA)",
+                "Vulkan HDR scene-boundary self-test passed (24 per-sample composition fixtures, actual 0x/4x MSAA)",
+                "Vulkan PBR preview self-test passed (24 clamp/resolve fixtures, actual 0x/4x MSAA)",
                 "Vulkan HDR self-test passed (24 FP16/MSAA luminance fixtures, synchronous/asynchronous exposure, resize and stale-sample rejection)",
                 "----- VK_InitRenderDevice -----",
+                "Vulkan HDR tone-map self-test passed (112 production shader fixtures, 20 portal-sky masks)",
+                "Vulkan HDR linear-output self-test passed (320 linear fixtures, 32 composition fixtures, actual 0x/4x MSAA)",
+                "Vulkan HDR prepared-post self-test passed (32 exposure/bloom fixtures, 6 unchanged-scene rejections, 4 domain resets, actual 0x/4x MSAA)",
+                "Vulkan HDR scene-boundary self-test passed (24 per-sample composition fixtures, actual 0x/4x MSAA)",
+                "Vulkan PBR preview self-test passed (24 clamp/resolve fixtures, actual 0x/4x MSAA)",
                 "Vulkan HDR self-test passed (24 FP16/MSAA luminance fixtures, synchronous/asynchronous exposure, resize and stale-sample rejection)",
+            ],
+        },
+        {
+            "id": "renderer-vk-temporal-motion-selftest",
+            "category": "vulkan",
+            "description": "Numerical rigid velocity, temporal resolve and stale-history rejection before/after a Vulkan restart.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "args": ["+set", "r_renderApi", "vulkan", "+set", "r_vkValidation", "1",
+                     "+rendererVulkanTemporalMotionSelfTest", "+vid_restart", "+rendererVulkanTemporalMotionSelfTest", "+gfxInfo"],
+            "checks": [
+                ["Renderer API: requested=vulkan active=vulkan disposition=module"],
+                ["Vulkan: validation enabled (VK_LAYER_KHRONOS_validation, debug messenger active)"],
+                ["Vulkan temporal motion self-test passed (36 rigid GPU fixtures, both image origins, resolve scaling, depth rejection and history invalidation)"],
+            ],
+            "absent": ["Vulkan temporal motion self-test failed", "Vulkan temporal motion mismatch",
+                       "Vulkan temporal resolve motion mismatch"],
+            "orderedLogChecks": [
+                "Vulkan temporal motion self-test passed (36 rigid GPU fixtures, both image origins, resolve scaling, depth rejection and history invalidation)",
+                "----- VK_InitRenderDevice -----",
+                "Vulkan temporal motion self-test passed (36 rigid GPU fixtures, both image origins, resolve scaling, depth rejection and history invalidation)",
             ],
         },
         {

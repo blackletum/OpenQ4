@@ -158,6 +158,7 @@ const int MODERN_GL_GBUFFER_ATTACHMENT_COUNT = 4;
 
 typedef struct modernGLFramebufferAttachmentCache_s {
 	bool	valid;
+	unsigned int allocationRevision;
 	GLuint	framebuffer;
 	GLuint	colorTextures[MODERN_GL_GBUFFER_ATTACHMENT_COUNT];
 	GLuint	depthTexture;
@@ -2281,7 +2282,10 @@ static void R_ModernGLExecutor_PrepareBakedGrid( const idScenePacketFrame &packe
 static void R_ModernGLExecutor_PrepareLinearFogBlend( const idScenePacketFrame &packetFrame, const modernGLExecutorStats_t &stats ) {
 	rg_modernGLLinearFogBlendView = NULL;
 	rg_modernGLLinearFogBlendExecuted = false;
-	if ( !R_ModernGLExecutor_PBRLinearSceneRequested() || stats.pipelineGBufferCommands != 0
+	// The authored phase needs floating-point scene storage, not tone mapping.
+	// Previews must preserve the same opaque -> fog/blend -> transparency order
+	// before resolve, including frustum caps and PBR diagnostic colors.
+	if ( !r_rendererModernQuality.GetBool() || !r_pbrMaterials.GetBool() || stats.pipelineGBufferCommands != 0
 			|| rg_modernGLLinearFogBlendProgram == 0 || rg_modernGLLinearFogBlendMVP < 0 || rg_modernGLLinearFogBlendMode < 0
 			|| !R_ModernGLExecutor_MaterialLightingProven( packetFrame ) ) {
 		return;
@@ -3036,9 +3040,12 @@ static void R_ModernGLExecutor_UpdateFrameUBO( modernGLExecutorStats_t &stats ) 
 
 	modernGLFrameConstants_t constants;
 	memset( &constants, 0, sizeof( constants ) );
-	constants.viewport[0] = static_cast<float>( glConfig.vidWidth );
-	constants.viewport[1] = static_cast<float>( glConfig.vidHeight );
-	constants.viewport[2] = glConfig.vidHeight > 0 ? static_cast<float>( glConfig.vidWidth ) / static_cast<float>( glConfig.vidHeight ) : 1.0f;
+	const renderGraphResourceHandle_t *scene = R_RenderGraphResources_FindHandle( "sceneColor" );
+	const int width = scene != NULL ? scene->width : glConfig.vidWidth;
+	const int height = scene != NULL ? scene->height : glConfig.vidHeight;
+	constants.viewport[0] = static_cast<float>( width );
+	constants.viewport[1] = static_cast<float>( height );
+	constants.viewport[2] = height > 0 ? static_cast<float>( width ) / static_cast<float>( height ) : 1.0f;
 	constants.viewport[3] = 1.0f;
 	constants.frame[0] = static_cast<float>( tr.frameCount );
 	constants.frame[1] = static_cast<float>( stats.preparedPasses );
@@ -3704,11 +3711,14 @@ static void R_ModernGLExecutor_SetPBRIBL( int location, bool useMemo = false ) {
 	}
 	// IBL is global lighting state. The third component declares the scene's
 	// transfer contract, including classic surfaces in the opt-in PBR scene:
-	// 0 = encoded preview, 1 = linear, 2 = linear with the exact shared fog phase.
+	// 0 = encoded preview, 1 = linear, 2 = linear with the exact shared fog phase,
+	// -2 = encoded preview with that same exact phase. A negative value keeps
+	// classic preview colors encoded while disabling clustered fog evaluation.
 	const float value[4] = {
 		r_pbrIBL.GetBool() ? 1.0f : 0.0f,
 		idMath::ClampFloat( 0.0f, 4.0f, r_pbrIBLIntensity.GetFloat() ),
-		R_ModernGLExecutor_PBRLinearSceneRequested() ? ( rg_modernGLLinearFogBlendView != NULL ? 2.0f : 1.0f ) : 0.0f,
+		R_ModernGLExecutor_PBRLinearSceneRequested() ? ( rg_modernGLLinearFogBlendView != NULL ? 2.0f : 1.0f )
+			: ( rg_modernGLLinearFogBlendView != NULL ? -2.0f : 0.0f ),
 		R_ModernGLExecutor_AlphaToCoverageRequested() ? 1.0f : 0.0f };
 	if ( useMemo && !R_ModernGLExecutor_SubmitUniform4fChanged( rg_modernGLSubmitUniformMemo.pbrIBLValid, rg_modernGLSubmitUniformMemo.pbrIBL, value ) ) {
 		return;
@@ -4639,10 +4649,14 @@ static bool R_ModernGLExecutor_BindMaterialTextureTable( modernGLExecutorStats_t
 	}
 	GLuint textures[MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY];
 	const int clampedCount = Min( textureCount, MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY );
-	for ( int i = 0; i < clampedCount; ++i ) {
-		textures[i] = static_cast<GLuint>( textureTable[i] );
+	for ( int i = 0; i < MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY; ++i ) {
+		// The GLSL sampler array remains active at its declared size even
+		// when this view uses fewer images. A prior shadow pass may have left
+		// a comparison-enabled depth image in an unused tail slot, which is
+		// invalid for sampler2D. Give every table slot a valid material image.
+		textures[i] = static_cast<GLuint>( textureTable[i < clampedCount ? i : 0] );
 	}
-	R_ModernGLExecutor_BindTextureGroup( 0, static_cast<GLsizei>( clampedCount ), textures, stats, true );
+	R_ModernGLExecutor_BindTextureGroup( 0, MATERIAL_RESOURCE_TABLE_TEXTURE_ARRAY_CAPACITY, textures, stats, true );
 	return true;
 }
 
@@ -5769,7 +5783,8 @@ static bool R_ModernGLExecutor_GBufferAttachmentCacheMatches(
 	const renderGraphResourceHandle_t *const colorHandles[MODERN_GL_GBUFFER_ATTACHMENT_COUNT],
 	const renderGraphResourceHandle_t &depthHandle,
 	GLenum depthAttachment ) {
-	if ( !cache.valid || cache.framebuffer != rg_modernGLExecutorGBufferFBO || cache.depthTexture != depthHandle.texture || cache.depthTarget != depthHandle.target || cache.depthAttachment != depthAttachment ) {
+	if ( !cache.valid || cache.allocationRevision != R_RenderGraphResources_AllocationRevision()
+			|| cache.framebuffer != rg_modernGLExecutorGBufferFBO || cache.depthTexture != depthHandle.texture || cache.depthTarget != depthHandle.target || cache.depthAttachment != depthAttachment ) {
 		return false;
 	}
 	for ( int i = 0; i < MODERN_GL_GBUFFER_ATTACHMENT_COUNT; ++i ) {
@@ -5788,6 +5803,7 @@ static void R_ModernGLExecutor_RecordGBufferAttachmentCache(
 	memset( &cache, 0, sizeof( cache ) );
 	cache.valid = true;
 	cache.framebuffer = rg_modernGLExecutorGBufferFBO;
+	cache.allocationRevision = R_RenderGraphResources_AllocationRevision();
 	cache.depthTexture = depthHandle.texture;
 	cache.depthTarget = depthHandle.target;
 	cache.depthAttachment = depthAttachment;
@@ -5804,6 +5820,7 @@ static bool R_ModernGLExecutor_ForwardAttachmentCacheMatches(
 	const renderGraphResourceHandle_t &sceneDepth,
 	GLenum depthAttachment ) {
 	return cache.valid
+		&& cache.allocationRevision == R_RenderGraphResources_AllocationRevision()
 		&& cache.framebuffer == sceneColor.framebuffer
 		&& cache.colorTextures[0] == sceneColor.texture
 		&& cache.depthTexture == sceneDepth.texture
@@ -5821,6 +5838,7 @@ static void R_ModernGLExecutor_RecordForwardAttachmentCache(
 	memset( &cache, 0, sizeof( cache ) );
 	cache.valid = true;
 	cache.framebuffer = sceneColor.framebuffer;
+	cache.allocationRevision = R_RenderGraphResources_AllocationRevision();
 	cache.colorTextures[0] = sceneColor.texture;
 	cache.depthTexture = sceneDepth.texture;
 	cache.depthTarget = sceneDepth.target;
@@ -6473,13 +6491,13 @@ static bool R_ModernGLExecutor_BindModernShadowTextures( GLuint program, modernG
 		}
 	}
 
-	// An incomplete binding would invalidate the whole program even though the
-	// shader's record checks choose analytic indirect. Bind the real atlas only
-	// after its whole-frame transaction is ready; otherwise bind a complete 2D
-	// placeholder whose dimensions deliberately fail the shader's atlas check.
+	// The analytic cells and BRDF remain valid when an authored set is rejected.
+	// Its zero publication generation already prevents any authored sampling.
+	// Retain the filtered analytic fallback instead of silently substituting the
+	// older unfiltered shader approximation on atlas exhaustion. A missing atlas
+	// still requires a complete placeholder to keep the sampler binding valid.
 	{
 		const GLuint atlasTexture = R_ModernSpecularProbeAtlas_Ready()
-			&& R_ModernSpecularProbeAtlas_FrameReady()
 			? static_cast<GLuint>( R_ModernSpecularProbeAtlas_Texture() )
 			: R_ModernGLExecutor_ShadowSlotPlaceholderTexture( GL_TEXTURE_2D );
 		if ( atlasTexture != 0 ) {

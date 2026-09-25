@@ -284,7 +284,8 @@ static void VK_Debug_SetScissor( VkCommandBuffer cmd ) {
 	VkRect2D rect;
 	if ( vkDbg.state.scissorTest ) {
 		const int x = Max( 0, vkDbg.state.scissor[ 0 ] );
-		const int top = vkDbg.fbHeight - ( vkDbg.state.scissor[ 1 ] + vkDbg.state.scissor[ 3 ] );
+		const int top = VK_Exec_ActiveLowerOrigin() ? vkDbg.state.scissor[ 1 ]
+			: vkDbg.fbHeight - ( vkDbg.state.scissor[ 1 ] + vkDbg.state.scissor[ 3 ] );
 		const int y = Max( 0, top );
 		const int x2 = Min( vkDbg.fbWidth, vkDbg.state.scissor[ 0 ] + vkDbg.state.scissor[ 2 ] );
 		const int y2 = Min( vkDbg.fbHeight, top + vkDbg.state.scissor[ 3 ] );
@@ -523,7 +524,7 @@ static void VK_Debug_Draw( const idList<vkDebugVert_t> &verts, int topologyFlags
 	VK_Exec_SetViewViewport( cmd, vkDbg.viewDef, idMath::ClampFloat( 0.0f, 1.0f, s.depthFar ) );
 	VK_Debug_SetScissor( cmd );
 	VK_Debug_SetCull( cmd );
-	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( cmd, VK_Exec_CanonicalFrontFace() );
 
 	VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 	if ( s.stateBits & GLS_DEPTHFUNC_ALWAYS ) {
@@ -991,9 +992,12 @@ void VK_DebugGL_Clear( GLbitfield mask ) {
 	rect.layerCount = 1;
 	if ( vkDbg.state.scissorTest ) {
 		const int x = Max( 0, vkDbg.state.scissor[ 0 ] );
-		const int top = Max( 0, vkDbg.fbHeight - ( vkDbg.state.scissor[ 1 ] + vkDbg.state.scissor[ 3 ] ) );
+		const int top = Max( 0, VK_Exec_ActiveLowerOrigin() ? vkDbg.state.scissor[ 1 ]
+			: vkDbg.fbHeight - ( vkDbg.state.scissor[ 1 ] + vkDbg.state.scissor[ 3 ] ) );
 		const int x2 = Min( vkDbg.fbWidth, vkDbg.state.scissor[ 0 ] + vkDbg.state.scissor[ 2 ] );
-		const int y2 = Min( vkDbg.fbHeight, vkDbg.fbHeight - vkDbg.state.scissor[ 1 ] );
+		const int y2 = Min( vkDbg.fbHeight, VK_Exec_ActiveLowerOrigin()
+			? vkDbg.state.scissor[ 1 ] + vkDbg.state.scissor[ 3 ]
+			: vkDbg.fbHeight - vkDbg.state.scissor[ 1 ] );
 		if ( x2 <= x || y2 <= top ) {
 			return;
 		}

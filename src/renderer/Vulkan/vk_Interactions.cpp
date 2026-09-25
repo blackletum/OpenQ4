@@ -64,9 +64,20 @@
 #include "../ClassicInteractionDomain.h"
 #include "../ClassicFogBlendDomain.h"
 #include "../MaterialResourceTable.h"
+#include "../ModernSpecularProbeAtlas.h"
+#include "../PBREnvironment.h"
 
 extern idCVar r_vkShadowFallbackTest;
 extern idCVar r_vkPBRSpecularAA;
+
+static idCVar r_vkPBRPrepareFailure( "r_vkPBRPrepareFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
+	"diagnostic PBR preparation failure: 0=off, 1-4=coverage pipeline/descriptor/uniform/geometry, 5-8=direct, 9-12=environment, 13=environment image", 0, 13 );
+static idCVar r_vkPBRPrepareFailureAfter( "r_vkPBRPrepareFailureAfter", "0", CVAR_RENDERER | CVAR_INTEGER,
+	"successful matching PBR preparation steps before the diagnostic failure in each view", 0, 256 );
+static idCVar r_vkPBRBakedFailure( "r_vkPBRBakedFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
+	"baked view admission test: 1 grid, 2 descriptor, 3 uniform, 4 geometry, 5 pipeline", 0, 5 );
+static idCVar r_vkPBRBakedFailureAfter( "r_vkPBRBakedFailureAfter", "0", CVAR_RENDERER | CVAR_INTEGER,
+	"successfully prepared baked receivers before a diagnostic failure", 0, 4096 );
 
 #undef snprintf
 #undef vsnprintf
@@ -84,9 +95,29 @@ extern idCVar r_vkPBRSpecularAA;
 #include "volk.h"
 
 #include "VulkanDevice.h"
+#include "vk_Image.h"
+#include "vk_PBRProbes.h"
+#include "vk_HDRScene.h"
+#include "vk_MaterialPrograms.h"
+#include "../RenderWorld_local.h"
+#include <unordered_map>
+bool VK_LightGrid_PrepareModern( const viewDef_t *view, const drawSurf_t *surf,
+    idImage *images[3], float params[7][4] );
+void VK_PBR_PrepareBakedView( const viewDef_t *view );
+bool VK_PBR_BakedViewReady( const viewDef_t *view );
+bool VK_PBR_RetargetBakedView( const viewDef_t *view );
+bool VK_PBR_BakedSurfaceOwned( const viewDef_t *view, const drawSurf_t *surf );
+VkPipeline VK_Exec_BakedEnvironmentPipeline( bool probes );
+VkPipelineLayout VK_Exec_BakedEnvironmentPipelineLayout();
+VkDescriptorSet VK_Exec_BakedDescriptor( idImage * const images[3], VkDescriptorSet probes );
+void VK_LightGrid_PrepareModernView( const viewDef_t *view );
+
+
 #include "vk_ShadowMap.h"
 
 // vk_GuiExecutor.cpp narrow accessors (vkExec stays file-static there)
+bool VK_Exec_ActiveLowerOrigin();
+VkFrontFace VK_Exec_CanonicalFrontFace();
 VkCommandBuffer VK_Exec_ActiveCmd( void );
 int VK_Exec_ActiveFrameSlot( void );
 bool VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri );
@@ -107,6 +138,8 @@ void VK_Exec_SetSurfScissor( VkCommandBuffer cmd, const viewDef_t *viewDef, cons
 void VK_BuildSurfMVP( const viewDef_t *viewDef, const drawSurf_t *drawSurf, float outMvp[ 16 ] );
 VkPipeline VK_Exec_InteractionPipeline( void );
 VkPipelineLayout VK_Exec_InteractionPipelineLayout( void );
+VkPipeline VK_Exec_ProbeEnvironmentPipeline( bool transparent );
+VkPipelineLayout VK_Exec_ProbeEnvironmentPipelineLayout();
 VkPipeline VK_Exec_ShadowInteractionPipeline( void );
 VkPipeline VK_Exec_PointShadowInteractionPipeline( void );
 VkPipelineLayout VK_Exec_ShadowInteractionPipelineLayout( void );
@@ -123,12 +156,16 @@ VkDescriptorSet VK_Exec_InteractionUniformSet( void );
 int VK_Exec_InteractionUniformAlloc( const void *data, int bytes );
 int VK_Exec_InteractionUniformCheckpoint( void );
 void VK_Exec_InteractionUniformRestore( int checkpoint );
+bool VK_Exec_PBRDescriptorCheckpoint();
+int VK_Exec_PBRDescriptorRestore();
+void VK_Exec_PBRDescriptorCommit();
 int VK_Exec_ShadowUniformAlloc( const void *data, int bytes );
 int VK_Exec_ActiveFramebufferWidth( void );
 int VK_Exec_ActiveFramebufferHeight( void );
 bool VK_Exec_ActiveTargetHasStencil( void );
 bool VK_Exec_SharedInteractionTargetReady( void );
 void VK_FixupClipSpaceZ( float dst[ 16 ], const float src[ 16 ] );
+bool VK_LightGrid_SurfaceRequestsBakedDiffuse( const viewDef_t *viewDef, const drawSurf_t *surf );
 
 /*
 ====================
@@ -260,10 +297,6 @@ typedef struct vkInterPass_s {
 	VkDescriptorSet		lastImageSets[ 6 ];	// sets 0-5 as last bound by VK_DrawSingleInteractionMode
 	bool				imageSetsValid;		// lastImageSets mirror live bindings on cmd
 
-	// Native ordered PBR transparency owns a translucent surface for the whole
-	// view or not at all; see VK_PBRTransparentViewAdmits.
-	bool				transparentAdmitted;
-
 	// Phase F2a/F2b shadow-map receivers
 	bool				shadowPassPrepared;	// shadow maps rendered for this view
 	VkPipeline			pipelineUnshadowed;
@@ -285,6 +318,7 @@ typedef struct vkInterPass_s {
 	VkPipeline			pipelineStencilShadow;	// vec4 volume stream, color writes off
 	VkPipelineLayout	layoutStencilShadow;	// the base 128B-push layout
 	int					stencilLightCount;		// lights that took the stencil path
+	int					authoredStencilChains;	// mapped receiver chains with deferred authored draws
 	int					volumeDrawCount;		// volume draws (preload + z-pass)
 	int					volumePreloadCount;		// z-fail preload draws (internal volumes)
 	int					volumeSkipCount;		// prim-batch / cache-less shadow surfs skipped
@@ -305,6 +339,38 @@ typedef struct vkInterPass_s {
 } vkInterPass_t;
 
 static vkInterPass_t interPass;
+
+// This decision belongs to the whole view, including the post-fog material
+// walk. interPass is reset when the fog/blend pass borrows its draw state.
+static struct {
+	const viewDef_t *viewDef;
+	bool admitted;
+	bool preparing;
+	bool ready;
+	bool failed;
+	int requiredAtLeast;
+	int faultVisits;
+	int preparedRecords;
+	int restoredUniformBytes;
+	int restoredDescriptors;
+	const char *reason;
+} vkPBRTransparentView;
+
+static void VK_PBRTransparentResetView( const viewDef_t *viewDef );
+static bool VK_PBRTransparentMaterialAdmitted( const drawSurf_t *surf );
+
+static bool VK_PBRPrepareFailed( const char *reason ) {
+	if ( vkPBRTransparentView.preparing && !vkPBRTransparentView.failed ) {
+		vkPBRTransparentView.failed = true;
+		vkPBRTransparentView.reason = reason;
+	}
+	return false;
+}
+
+static bool VK_PBRPrepareFault( int step ) {
+	return vkPBRTransparentView.preparing && r_vkPBRPrepareFailure.GetInteger() == step
+		&& vkPBRTransparentView.faultVisits++ >= r_vkPBRPrepareFailureAfter.GetInteger();
+}
 
 /*
 ===============================================================================
@@ -496,7 +562,7 @@ static bool VK_ClassicInteraction_BuildScissorBounds(
 	}
 
 	scissor.offset.x = x0;
-	scissor.offset.y = framebufferHeight - y1GL;
+	scissor.offset.y = VK_Exec_ActiveLowerOrigin() ? y0GL : framebufferHeight - y1GL;
 	scissor.extent.width = static_cast<uint32_t>( x1 - x0 );
 	scissor.extent.height = static_cast<uint32_t>( y1GL - y0GL );
 	return true;
@@ -1132,9 +1198,9 @@ bool VK_ClassicInteraction_Preflight( const viewDef_t *viewDef ) {
 	}
 	prepared.viewport.x = static_cast<float>( view->viewportX1 );
 	prepared.viewport.y = static_cast<float>(
-		prepared.framebufferHeight - view->viewportY1 );
+		VK_Exec_ActiveLowerOrigin() ? view->viewportY1 : prepared.framebufferHeight - view->viewportY1 );
 	prepared.viewport.width = static_cast<float>( viewportWidth );
-	prepared.viewport.height = -static_cast<float>( viewportHeight );
+	prepared.viewport.height = ( VK_Exec_ActiveLowerOrigin() ? 1.0f : -1.0f ) * viewportHeight;
 	prepared.viewport.minDepth = 0.0f;
 	prepared.viewport.maxDepth = 1.0f;
 
@@ -1725,6 +1791,7 @@ static void VK_ClassicInteraction_DrawShadowRange(
 }
 
 void VK_ClassicInteraction_DrawOwnedView( const viewDef_t *viewDef ) {
+	VK_PBRTransparentResetView( NULL );
 	vkClassicInteractionPreparedView_t &prepared =
 		vkClassicInteractionPrepared;
 	if ( !prepared.ready || prepared.committed || prepared.view == NULL
@@ -1743,7 +1810,7 @@ void VK_ClassicInteraction_DrawOwnedView( const viewDef_t *viewDef ) {
 	vkCmdSetDepthWriteEnable( prepared.cmd, VK_FALSE );
 	vkCmdSetDepthBiasEnable( prepared.cmd, VK_FALSE );
 	vkCmdSetStencilTestEnable( prepared.cmd, VK_FALSE );
-	vkCmdSetFrontFace( prepared.cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( prepared.cmd, VK_Exec_CanonicalFrontFace() );
 
 	for ( int lightIndex = 0; lightIndex < prepared.lightPlanCount;
 			++lightIndex ) {
@@ -2330,7 +2397,7 @@ static bool VK_PBRHasMatchingDepthCoverage( const drawSurf_t *surf ) {
 		// draws composite in the material walk rather than adding here. A view
 		// that cannot own that composite must not take the BRDF either, or the
 		// surface would be lit natively and composited classically.
-		return interPass.transparentAdmitted
+		return VK_PBRTransparentMaterialAdmitted( surf )
 			&& VK_PBRTransparentStage( surf, NULL, NULL );
 	}
 	if ( material->Coverage() != MC_PERFORATED ) {
@@ -2429,7 +2496,354 @@ static bool VK_PBRDirectMaterial( const drawSurf_t *surf,
 
 static bool VK_PBRDirectInteraction( const drawInteraction_t *din,
 		vkPBRDirectInteraction_t &out ) {
-	return din != NULL && !din->ambientLight && VK_PBRDirectMaterial( din->surf, out );
+	return din != NULL && VK_PBRDirectMaterial( din->surf, out );
+}
+
+bool VK_PBR_DepthCoverage( const drawSurf_t *surf ) {
+	vkPBRDirectInteraction_t material;
+	return surf != NULL && surf->material != NULL
+		&& surf->material->Coverage() == MC_PERFORATED
+		&& VK_PBRDirectMaterial( surf, material );
+}
+
+struct vkPBRBakedInput_t {
+	idImage *images[3];
+	float params[7][4];
+	int failure;
+};
+
+// Initial classic admission is deliberately narrow: a single static diffuse
+// receiver with a flat normal and no ambient replacement or material trick.
+// Its encoded contribution joins the classic HDR attachment before decoding.
+static bool VK_PBR_BakedClassicMaterial( const drawSurf_t *surf, vkPBRDirectInteraction_t &out ) {
+	memset( &out, 0, sizeof( out ) );
+	const idMaterial *m = surf->material;
+	if ( m->HasPBR() || m->GetNumStages() != 3 || m->Coverage() != MC_OPAQUE ) { return false; }
+	const stageLighting_t lights[3] = { SL_BUMP, SL_DIFFUSE, SL_SPECULAR };
+	for ( int i = 0; i < 3; ++i ) {
+		const shaderStage_t *stage = m->GetStage( i );
+		if ( stage->lighting != lights[i] || surf->shaderRegisters[stage->conditionRegister] == 0
+				|| stage->newStage != NULL || stage->texture.texgen != TG_EXPLICIT
+				|| stage->texture.dynamic != DI_STATIC || stage->texture.cinematic != NULL
+				|| stage->vertexColor != SVC_IGNORE || stage->hasAlphaTest ) { return false; }
+	}
+	if ( m->GetStage( 0 )->texture.image != globalImages->flatNormalMap ) { return false; }
+	idVec4 flat;
+	RB_GetFlatDiffuseParams( surf, flat );
+	if ( flat.x != 0.0f || flat.y != 0.0f || flat.z != 0.0f || flat.w != 0.0f ) { return false; }
+	out.normalImage = globalImages->flatNormalMap;
+	out.albedoImage = m->GetStage( 1 )->texture.image;
+	out.dataImage = globalImages->whiteImage;
+	out.roughness = 0.5f;
+	return out.albedoImage != NULL && out.albedoImage->IsLoaded() && !out.albedoImage->IsDefaulted();
+}
+
+struct vkPBRPreparedDraw_t {
+	bool bakedProbes;
+	const srfTriangles_t *geo;
+	VkPipeline pipeline;
+	VkPipelineLayout layout;
+	VkDescriptorSet sets[8];
+	int setCount;
+	uint32_t dynamicOffsets[2];
+	int dynamicCount;
+	int vertexOffset;
+	int indexOffset;
+	vkInteractionPush_t push;
+};
+
+static bool VK_PBR_EnvironmentEnabled( const viewDef_t *viewDef, const drawSurf_t *surf,
+		float alphaScale, bool composite ) {
+	return !( alphaScale > 0.0f && composite )
+		&& r_pbrIBL.GetBool() && r_pbrIBLIntensity.GetFloat() > 0.0f
+		&& r_pbrDebug.GetInteger() == 0 && !VK_LightGrid_SurfaceRequestsBakedDiffuse( viewDef, surf );
+}
+
+static bool VK_PBR_PrepareEnvironment( VkCommandBuffer cmd, const viewDef_t *viewDef,
+		const drawSurf_t *surf, const srfTriangles_t *tri, const float mvp[16],
+		float alphaScale, bool composite, vkPBRPreparedDraw_t &prepared, const vkPBRBakedInput_t *baked = NULL ) {
+	memset( &prepared, 0, sizeof( prepared ) );
+	// A sealed baked receiver replaces environment diffuse while retaining
+	// environment specular. Only complete HDR/preview views consume that draw.
+	// Transparent coverage writes only black/ownership. Its lighting resources
+	// are prepared separately, in the same all-or-nothing view transaction.
+	const bool classicBaked = baked != NULL && !surf->material->HasPBR();
+	const bool illuminated = baked != NULL
+		? !classicBaked && r_pbrIBL.GetBool() && r_pbrIBLIntensity.GetFloat() > 0.0f
+		: VK_PBR_EnvironmentEnabled( viewDef, surf, alphaScale, composite );
+	const int debugMode = r_pbrDebug.GetInteger();
+	// Emission (mode 6) retains its authored ambient stage. The other material
+	// views must draw the full receiver once, even with no direct lights or IBL.
+	const bool diagnostic = ( debugMode >= 1 && debugMode <= 5 ) || debugMode == 7;
+	if ( cmd == VK_NULL_HANDLE || viewDef == NULL || surf == NULL || surf->space == NULL
+			|| tri == NULL || tri->numIndexes <= 0 || globalImages == NULL
+			|| ( baked == NULL && !illuminated && !diagnostic && !( alphaScale > 0.0f && composite ) ) ) {
+		return false;
+	}
+	vkPBRDirectInteraction_t material;
+	if ( !( classicBaked ? VK_PBR_BakedClassicMaterial( surf, material ) : VK_PBRDirectMaterial( surf, material ) ) ) {
+		return VK_PBRPrepareFailed( "material" );
+	}
+	const pbrMaterialInfo_t &info = surf->material->GetPBRInfo();
+	if ( ( illuminated || diagnostic || baked != NULL ) && info.ao.present && !VK_PBRImageReady( info.ao.image, TD_MATERIAL_DATA ) ) {
+		return VK_PBRPrepareFailed( "environment-image" );
+	}
+	const bool transparent = surf->material->Coverage() == MC_TRANSLUCENT;
+	if ( transparent && alphaScale <= 0.0f ) {
+		return false;
+	}
+	VkDescriptorSet probeSet = VK_NULL_HANDLE;
+	if ( illuminated && !VK_PBRProbes_ForView( viewDef, probeSet ) ) {
+		return VK_PBRPrepareFailed( "environment-probe-resource" );
+	}
+	const bool authored = illuminated && probeSet != VK_NULL_HANDLE;
+	const VkPipeline pipeline = baked != NULL ? VK_NULL_HANDLE : authored ? VK_Exec_ProbeEnvironmentPipeline( transparent )
+		: transparent ? VK_Exec_TransparentInteractionPipeline( 0, composite ) : VK_Exec_InteractionPipeline();
+	const VkPipelineLayout layout = baked != NULL ? VK_Exec_BakedEnvironmentPipelineLayout() : authored ? VK_Exec_ProbeEnvironmentPipelineLayout() : VK_Exec_InteractionPipelineLayout();
+	if ( VK_PBRPrepareFault( composite ? 1 : 9 ) || ( baked == NULL && pipeline == VK_NULL_HANDLE ) || layout == VK_NULL_HANDLE ) {
+		return VK_PBRPrepareFailed( composite ? "coverage-pipeline" : "environment-pipeline" );
+	}
+	// An admitted unlit translucent surface still owes the destination its
+	// coverage. Composite black (or the ownership diagnostic) without creating
+	// an environment atlas; its authored emission remains a later stage.
+	idImage *atlas = illuminated ? VK_PBRProbes_Atlas()
+		: globalImages->whiteImage;
+	if ( ( illuminated && VK_PBRPrepareFault( 13 ) ) || atlas == NULL || !atlas->IsLoaded() ) {
+		return VK_PBRPrepareFailed( "environment-image" );
+	}
+	idImage *images[6] = { material.metallicImage != NULL ? material.metallicImage : globalImages->whiteImage,
+		material.normalImage, atlas, ( illuminated || diagnostic || baked != NULL ) && info.ao.present ? info.ao.image : globalImages->whiteImage,
+		material.albedoImage, material.dataImage };
+	VkDescriptorSet *sets = prepared.sets;
+	for ( int i = 0; i < 6; ++i ) {
+		sets[i] = images[i] != NULL ? VK_Exec_ImageDescriptor( images[i]->GetDeviceHandle(), true ) : VK_NULL_HANDLE;
+		if ( VK_PBRPrepareFault( composite ? 2 : 10 ) || sets[i] == VK_NULL_HANDLE ) {
+			return VK_PBRPrepareFailed( composite ? "coverage-descriptor" : "environment-descriptor" );
+		}
+	}
+	if ( baked != NULL && baked->failure == 2 ) { return VK_PBRPrepareFailed( "baked-descriptor" ); }
+	sets[6] = VK_Exec_InteractionUniformSet();
+	if ( sets[6] == VK_NULL_HANDLE ) {
+		return VK_PBRPrepareFailed( composite ? "coverage-uniform" : "environment-uniform" );
+	}
+
+	vkInteractionBlock_t block = {};
+	idVec3 localView;
+	R_GlobalPointToLocal( surf->space->modelMatrix, viewDef->renderView.vieworg, localView );
+	memcpy( block.localViewOrigin, localView.ToFloatPtr(), sizeof( float ) * 3 );
+	block.localViewOrigin[3] = 1.0f;
+	float *worldRows[3] = { block.lightProjectionS, block.lightProjectionT, block.lightProjectionQ };
+	for ( int row = 0; row < 3; ++row ) {
+		for ( int column = 0; column < 3; ++column ) {
+			worldRows[row][column] = diagnostic
+				? surf->space->modelViewMatrix[column * 4 + row] * ( row == 1 ? 1.0f : -1.0f )
+				: surf->space->modelMatrix[column * 4 + row];
+		}
+		worldRows[row][3] = ( authored || baked != NULL ) ? surf->space->modelMatrix[12 + row] : 0.0f;
+	}
+	stageVertexColor_t vertexColor = SVC_IGNORE;
+	for ( int i = 0; i < surf->material->GetNumStages(); ++i ) {
+		const shaderStage_t *stage = surf->material->GetStage( i );
+		float *s = NULL, *t = NULL;
+		float *color = NULL;
+		if ( stage->lighting == SL_BUMP ) { s = block.bumpMatrixS; t = block.bumpMatrixT; }
+		if ( stage->lighting == SL_DIFFUSE ) {
+			s = block.diffuseMatrixS; t = block.diffuseMatrixT;
+			color = block.diffuseColor;
+			vertexColor = stage->vertexColor;
+		}
+		if ( stage->lighting == SL_SPECULAR ) { s = block.specularMatrixS; t = block.specularMatrixT; }
+		if ( s == NULL ) { continue; }
+		idImage *unused;
+		idVec4 matrix[2];
+		VK_SetDrawInteraction( stage, surf->shaderRegisters, &unused, matrix, color );
+		memcpy( s, matrix[0].ToFloatPtr(), sizeof( float ) * 4 );
+		memcpy( t, matrix[1].ToFloatPtr(), sizeof( float ) * 4 );
+	}
+	const int offset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	if ( VK_PBRPrepareFault( composite ? 3 : 11 ) || offset < 0 || ( baked != NULL && baked->failure == 3 ) ) {
+		return VK_PBRPrepareFailed( composite ? "coverage-uniform" : "environment-uniform" );
+	}
+	if ( VK_PBRPrepareFault( composite ? 4 : 12 )
+			|| !VK_Exec_PrepareTriGeometry( cmd, VK_Exec_ActiveFrameSlot(), tri,
+				prepared.vertexOffset, prepared.indexOffset ) ) {
+		return VK_PBRPrepareFailed( composite ? "coverage-geometry" : "environment-geometry" );
+	}
+	if ( baked != NULL && baked->failure == 4 ) { return VK_PBRPrepareFailed( "baked-geometry" ); }
+	vkInteractionPush_t &push = prepared.push;
+	memcpy( push.mvp, mvp, sizeof( push.mvp ) );
+	push.a[0] = vertexColor == SVC_MODULATE ? 1.0f : vertexColor == SVC_INVERSE_MODULATE ? -1.0f : 0.0f;
+	push.a[1] = vertexColor == SVC_MODULATE ? 0.0f : 1.0f;
+	push.a[3] = alphaScale;
+	push.b[0] = idMath::ClampFloat( 0.0f, 1.0f, VK_PBRRegisterValue( surf, info.aoRegister, 1.0f ) );
+	push.c[0] = float( material.dataFlags | ( info.ao.present ? 8 : 0 ) );
+	push.c[1] = float( material.normalFormat );
+	push.c[2] = diagnostic ? float( debugMode )
+		: baked != NULL && !illuminated ? 0.0f : idMath::ClampFloat( 0.0f, 4.0f, r_pbrIBLIntensity.GetFloat() );
+	push.c[3] = r_vkPBRSpecularAA.GetBool() ? 1.0f : 0.0f;
+	push.b[2] = r_hdrToneMap.GetBool() ? 1.0f : 0.0f;
+	push.d[0] = classicBaked ? 6.0f : diagnostic ? 5.0f : illuminated ? 4.0f : 3.0f;
+	push.d[1] = material.metallic;
+	push.d[2] = material.roughness;
+	push.d[3] = material.normalScale;
+	prepared.geo = tri;
+	prepared.pipeline = pipeline;
+	prepared.layout = layout;
+	prepared.setCount = authored ? 8 : 7;
+	prepared.sets[7] = probeSet;
+	prepared.dynamicCount = 1;
+	prepared.dynamicOffsets[0] = uint32_t( offset );
+	if ( baked != NULL ) {
+		prepared.bakedProbes = authored;
+		prepared.sets[7] = VK_Exec_BakedDescriptor( baked->images, probeSet );
+		const int gridOffset = VK_Exec_InteractionUniformAlloc( baked->params, sizeof( baked->params ) );
+		if ( prepared.sets[7] == VK_NULL_HANDLE || gridOffset < 0 ) { return VK_PBRPrepareFailed( "baked-resources" ); }
+		prepared.setCount = 8;
+		prepared.dynamicCount = 2;
+		prepared.dynamicOffsets[1] = uint32_t( gridOffset );
+	}
+	return true;
+}
+
+struct vkPBRBakedView_t {
+	const viewDef_t *view;
+	bool ready, retargeted;
+	int requested, submitted;
+	int rejectedPrepared, restoredUniformBytes, restoredDescriptors;
+	const char *reason;
+	std::unordered_map<const drawSurf_t *, vkPBRPreparedDraw_t> draws;
+};
+static vkPBRBakedView_t vkPBRBakedView;
+
+bool VK_PBR_BakedViewReady( const viewDef_t *view ) {
+	return view != NULL && vkPBRBakedView.view == view && vkPBRBakedView.ready;
+}
+
+bool VK_PBR_BakedSurfaceOwned( const viewDef_t *view, const drawSurf_t *surf ) {
+	return VK_HDRScene_Accumulating() && VK_PBR_BakedViewReady( view ) && vkPBRBakedView.retargeted
+		&& vkPBRBakedView.draws.find( surf ) != vkPBRBakedView.draws.end();
+}
+
+void VK_PBR_PrepareBakedView( const viewDef_t *view ) {
+	vkPBRBakedView.view = view;
+	vkPBRBakedView.ready = false;
+	vkPBRBakedView.retargeted = false;
+	vkPBRBakedView.requested = vkPBRBakedView.submitted = 0;
+	vkPBRBakedView.rejectedPrepared = vkPBRBakedView.restoredUniformBytes = vkPBRBakedView.restoredDescriptors = 0;
+	vkPBRBakedView.reason = "disabled";
+	vkPBRBakedView.draws.clear();
+	if ( view == NULL ) { return; }
+	if ( view->isSubview || view->superView != NULL || view->subviewSurface != NULL
+			|| view->isXraySubview || view->renderView.viewID < 0 || ( view->renderFlags & RF_PORTAL_SKY ) != 0 ) {
+		vkPBRBakedView.reason = "scope";
+		return;
+	}
+	if ( !r_useLightGrid.GetBool() || r_skipDiffuse.GetBool() || view->renderWorld == NULL
+			|| !view->renderWorld->AnyLightGridAvailable() ) {
+		vkPBRBakedView.ready = true;
+		return;
+	}
+	// The established modern baked contract requires linear HDR. HDR-off
+	// views retain their existing complete fallback until separately qualified.
+	if ( !r_hdrToneMap.GetBool() ) {
+		vkPBRBakedView.reason = "hdr-required";
+		return;
+	}
+	if ( r_skipAmbient.GetBool() || r_pbrDebug.GetInteger() != 0 ) {
+		vkPBRBakedView.reason = "ambient-or-diagnostic";
+		return;
+	}
+	VK_LightGrid_PrepareModernView( view );
+	const int uniformCheckpoint = VK_Exec_InteractionUniformCheckpoint();
+	const bool geometryCheckpoint = uniformCheckpoint >= 0 && VK_Exec_SharedInteractionGeometryCheckpoint();
+	const bool descriptors = geometryCheckpoint && VK_Exec_PBRDescriptorCheckpoint();
+	bool ready = descriptors;
+	vkPBRBakedView.reason = "resources";
+	for ( int i = 0; ready && i < view->numDrawSurfs; ++i ) {
+		const drawSurf_t *surf = view->drawSurfs[i];
+		if ( !VK_LightGrid_SurfaceRequestsBakedDiffuse( view, surf ) ) { continue; }
+		if ( surf->material->SuppressInSubview() || surf->geo->numIndexes <= 0 ) { continue; }
+		++vkPBRBakedView.requested;
+		vkPBRBakedInput_t baked = {};
+		baked.failure = vkPBRBakedView.requested > r_vkPBRBakedFailureAfter.GetInteger() ? r_vkPBRBakedFailure.GetInteger() : 0;
+		ready = baked.failure != 1 && VK_LightGrid_PrepareModern( view, surf, baked.images, baked.params );
+		if ( !ready ) { vkPBRBakedView.reason = "grid-contract"; break; }
+		float mvp[16];
+		VK_BuildSurfMVP( view, surf, mvp );
+		vkPBRPreparedDraw_t draw;
+		ready = VK_PBR_PrepareEnvironment( VK_Exec_ActiveCmd(), view, surf, surf->geo,
+			mvp, 0.0f, false, draw, &baked );
+		if ( ready ) { vkPBRBakedView.draws[surf] = draw; }
+	}
+	if ( ready ) {
+		VK_Exec_PBRDescriptorCommit();
+		VK_Exec_SharedInteractionGeometryCommit();
+		vkPBRBakedView.ready = true;
+		vkPBRBakedView.reason = "prepared";
+	} else {
+		vkPBRBakedView.rejectedPrepared = int( vkPBRBakedView.draws.size() );
+		vkPBRBakedView.restoredUniformBytes = uniformCheckpoint >= 0 ? VK_Exec_InteractionUniformCheckpoint() - uniformCheckpoint : 0;
+		if ( descriptors ) { vkPBRBakedView.restoredDescriptors = VK_Exec_PBRDescriptorRestore(); }
+		if ( geometryCheckpoint ) { VK_Exec_SharedInteractionGeometryRestore(); }
+		if ( uniformCheckpoint >= 0 ) { VK_Exec_InteractionUniformRestore( uniformCheckpoint ); }
+		vkPBRBakedView.draws.clear();
+	}
+}
+
+bool VK_PBR_RetargetBakedView( const viewDef_t *view ) {
+	if ( !VK_PBR_BakedViewReady( view ) ) { return false; }
+	if ( r_vkPBRBakedFailure.GetInteger() == 5 && vkPBRBakedView.requested > r_vkPBRBakedFailureAfter.GetInteger() ) {
+		vkPBRBakedView.reason = "pipeline";
+		return false;
+	}
+	VkPipeline pipelines[2] = {};
+	for ( const auto &item : vkPBRBakedView.draws ) {
+		const int variant = item.second.bakedProbes ? 1 : 0;
+		if ( pipelines[variant] == VK_NULL_HANDLE ) { pipelines[variant] = VK_Exec_BakedEnvironmentPipeline( variant != 0 ); }
+		if ( pipelines[variant] == VK_NULL_HANDLE ) { vkPBRBakedView.reason = "pipeline"; return false; }
+	}
+	for ( auto &item : vkPBRBakedView.draws ) { item.second.pipeline = pipelines[item.second.bakedProbes ? 1 : 0]; }
+	vkPBRBakedView.retargeted = true;
+	return true;
+}
+
+
+// Every handle and buffer range is retained before framebuffer ownership.
+static void VK_PBR_SubmitPrepared( VkCommandBuffer cmd, const vkPBRPreparedDraw_t &prepared,
+		const float mvp[16], float alphaScale, bool transparent ) {
+	VK_Exec_BindPreparedTriGeometry( cmd, VK_Exec_ActiveFrameSlot(),
+		prepared.vertexOffset, prepared.indexOffset );
+	vkInteractionPush_t push = prepared.push;
+	memcpy( push.mvp, mvp, sizeof( push.mvp ) );
+	push.a[3] = alphaScale;
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prepared.pipeline );
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prepared.layout,
+		0, uint32_t( prepared.setCount ), prepared.sets,
+		uint32_t( prepared.dynamicCount ), prepared.dynamicOffsets );
+	vkCmdPushConstants( cmd, prepared.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		0, sizeof( push ), &push );
+	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+	vkCmdSetDepthCompareOp( cmd, transparent ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_EQUAL );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+	VK_Device_CountDrawIndexed( prepared.geo->numIndexes, prepared.geo->numVerts );
+	vkCmdDrawIndexed( cmd, uint32_t( prepared.geo->numIndexes ), 1, 0, 0, 0 );
+}
+
+bool VK_PBR_DrawEnvironment( VkCommandBuffer cmd, const viewDef_t *viewDef,
+		const drawSurf_t *surf, const srfTriangles_t *tri, const float mvp[16],
+		float alphaScale, bool composite ) {
+	if ( VK_PBR_BakedSurfaceOwned( viewDef, surf ) ) {
+		VK_PBR_SubmitPrepared( cmd, vkPBRBakedView.draws.find( surf )->second, mvp, 0.0f, false );
+		++vkPBRBakedView.submitted;
+		return true;
+	}
+	vkPBRPreparedDraw_t prepared;
+	if ( !VK_PBR_PrepareEnvironment( cmd, viewDef, surf, tri, mvp, alphaScale, composite, prepared ) ) {
+		return false;
+	}
+	VK_PBR_SubmitPrepared( cmd, prepared, mvp, alphaScale, surf->material->Coverage() == MC_TRANSLUCENT );
+	return true;
 }
 
 bool VK_PBR_EmissionForStage( const drawSurf_t *surf, int stageIndex,
@@ -2485,9 +2899,10 @@ set, pushes the 128B block, and draws the bound light-tris geometry.
 //
 // So the light pass records the admitted draws instead of adding them, and the
 // material walk replays them where the classic stage would have drawn: the
-// first replay composites with ( SRC_ALPHA, ONE_MINUS_SRC_ALPHA ) and the rest
-// add with ( SRC_ALPHA, ONE ), giving dst * ( 1 - a ) + a * sum( Li ) -- the
-// classic composite of the summed radiance.
+// full ambient mesh composites black with
+// ( SRC_ALPHA, ONE_MINUS_SRC_ALPHA ), then every light adds with
+// ( SRC_ALPHA, ONE ). A light may own only a triangle subset or a smaller
+// scissor: neither can define the coverage of the transparent material.
 //
 // Every recorded draw has to be reproducible once its light is gone. Stencil
 // shadow coverage is not: it is written and reset per light. The view-level
@@ -2499,21 +2914,26 @@ static const int VK_PBR_TRANSPARENT_MAX_DRAWS = 256;
 typedef struct vkPBRTransparentDraw_s {
 	const viewDef_t *		viewDef;	// the view that recorded it
 	const srfTriangles_t *	ambientGeo;	// identity shared with the material walk
-	const srfTriangles_t *	geo;		// the light's own, possibly clipped, triangles
-	VkDescriptorSet			sets[ 8 ];
-	int					setCount;
-	uint32_t				dynamicOffsets[ 2 ];
-	int					dynamicCount;
-	vkInteractionPush_t		push;
-	int					shadowMode;
-	bool					rejected;	// replayed additively; the classic stage owns it
+	const drawSurf_t *		surf;		// retains the light scissor and entity identity
+	vkPBRPreparedDraw_t		prepared;
 } vkPBRTransparentDraw_t;
+
+struct vkPBRTransparentSurface_t {
+	const drawSurf_t *surf;
+	int stageIndex;
+	float alphaScale;
+	bool environmentEnabled;
+	bool replayDirect;
+	vkPBRPreparedDraw_t coverage;
+	vkPBRPreparedDraw_t environment;
+};
+
+static idList<vkPBRTransparentSurface_t> vkPBRTransparentSurfaces;
 
 static vkPBRTransparentDraw_t	vkPBRTransparentDraws[ VK_PBR_TRANSPARENT_MAX_DRAWS ];
 static int						vkPBRTransparentDrawCount;
 static int						vkPBRTransparentCompositeCount;
 static int						vkPBRTransparentSurfaceCount;
-static int						vkPBRTransparentRejectCount;
 
 // R_CreateLightTris can hand a light a clipped copy of the surface; both it
 // and the ambient surface the material walk draws name the same original.
@@ -2522,6 +2942,52 @@ static const srfTriangles_t *VK_PBRTransparentIdentity( const drawSurf_t *surf )
 		return NULL;
 	}
 	return surf->geo->ambientSurface != NULL ? surf->geo->ambientSurface : surf->geo;
+}
+
+static bool VK_PBRTransparentMatches( const vkPBRTransparentDraw_t &draw,
+		const viewDef_t *viewDef, const drawSurf_t *surf ) {
+	// Several entities can instance the same model's ambient triangles. Their
+	// lighting and local-space uniforms must never be replayed for one another.
+	return draw.viewDef == viewDef && draw.ambientGeo == VK_PBRTransparentIdentity( surf )
+		&& draw.surf->space == surf->space;
+}
+
+static const vkPBRTransparentSurface_t *VK_PBRTransparentFindSurface( const drawSurf_t *surf ) {
+	if ( surf == NULL ) {
+		return NULL;
+	}
+	for ( int i = 0; i < vkPBRTransparentSurfaces.Num(); ++i ) {
+		const vkPBRTransparentSurface_t &prepared = vkPBRTransparentSurfaces[i];
+		if ( prepared.surf->space == surf->space
+				&& prepared.surf->material == surf->material
+				&& VK_PBRTransparentIdentity( prepared.surf ) == VK_PBRTransparentIdentity( surf ) ) {
+			return &prepared;
+		}
+	}
+	return NULL;
+}
+
+static bool VK_PBRTransparentMaterialAdmitted( const drawSurf_t *surf ) {
+	return vkPBRTransparentView.admitted && vkPBRTransparentView.viewDef == backEnd.viewDef
+		&& ( vkPBRTransparentView.preparing
+			|| ( vkPBRTransparentView.ready && VK_PBRTransparentFindSurface( surf ) != NULL ) );
+}
+
+// The ambient walk normally uploads/binds before visiting its stages. Reuse
+// the sealed range here too, so a memo collision cannot introduce a late
+// allocation failure after native lighting has taken ownership.
+bool VK_PBR_BindTransparentGeometry( VkCommandBuffer cmd, const viewDef_t *viewDef,
+		const drawSurf_t *surf ) {
+	if ( vkPBRTransparentView.viewDef != viewDef || !vkPBRTransparentView.ready ) {
+		return false;
+	}
+	const vkPBRTransparentSurface_t *surface = VK_PBRTransparentFindSurface( surf );
+	if ( surface == NULL ) {
+		return false;
+	}
+	VK_Exec_BindPreparedTriGeometry( cmd, VK_Exec_ActiveFrameSlot(),
+		surface->coverage.vertexOffset, surface->coverage.indexOffset );
+	return true;
 }
 
 /*
@@ -2533,10 +2999,21 @@ shadowing light over a translucent receiver takes the stencil path whenever
 shadow maps are off or incomplete, and stencil coverage cannot be replayed
 after its light is finished -- so the view declines rather than owning a
 surface for one light and returning it for the next.
+
+The canonical bump/diffuse/specular topology emits at most one native record
+per active light stage. Count that upper bound before any light draws, so a
+full table returns the entire translucent view to classic ownership. Counting
+only material topology (before device/resource admission) is conservative.
 ====================
 */
 static bool VK_PBRTransparentViewAdmits( const viewDef_t *viewDef ) {
 	if ( viewDef == NULL ) {
+		vkPBRTransparentView.reason = "no-view";
+		return false;
+	}
+	if ( !r_rendererModernQuality.GetBool() || !r_pbrMaterials.GetBool()
+			|| r_skipBump.GetBool() || r_skipDiffuse.GetBool() || r_skipSpecular.GetBool() ) {
+		vkPBRTransparentView.reason = "disabled";
 		return false;
 	}
 	for ( const viewLight_t *vLight = viewDef->viewLights ; vLight != NULL ; vLight = vLight->next ) {
@@ -2548,13 +3025,45 @@ static bool VK_PBRTransparentViewAdmits( const viewDef_t *viewDef ) {
 				|| vLight->globalShadowMapDynamicCasters != NULL
 				|| vLight->localShadows != NULL
 				|| vLight->localShadowMapCasters != NULL
-				|| vLight->localShadowMapDynamicCasters != NULL;
+				|| vLight->localShadowMapDynamicCasters != NULL
+				|| vLight->shadowMapIncompleteMapMask != 0
+				|| vLight->shadowMapPrelightMapMissingMask != 0;
 		if ( r_shadows.GetBool() && vLight->lightShader->LightCastsShadows()
 				&& ( vLight->lightDef == NULL || !vLight->lightDef->parms.noShadows )
 				&& hasCasters ) {
+			vkPBRTransparentView.reason = "shadows";
 			return false;
 		}
+		const idMaterial *lightShader = vLight->lightShader;
+		if ( r_skipInteractions.GetBool() || lightShader->IsFogLight()
+				|| lightShader->IsBlendLight() ) {
+			continue;
+		}
+		int activeStages = 0;
+		for ( int stageIndex = 0; stageIndex < lightShader->GetNumStages(); ++stageIndex ) {
+			const shaderStage_t *stage = lightShader->GetStage( stageIndex );
+			if ( vLight->shaderRegisters[ stage->conditionRegister ] != 0.0f ) {
+				++activeStages;
+			}
+		}
+		for ( const drawSurf_t *surf = vLight->translucentInteractions;
+				surf != NULL; surf = surf->nextOnLight ) {
+			if ( activeStages == 0 || surf->material == NULL || !surf->material->HasPBR()
+					|| !VK_PBRTransparentStage( surf, NULL, NULL )
+					|| !VK_PBRHasSingleClassicInteractionTopology( surf ) ) {
+				continue;
+			}
+			if ( activeStages > VK_PBR_TRANSPARENT_MAX_DRAWS - vkPBRTransparentView.requiredAtLeast ) {
+				// Saturation avoids overflow and does not pretend we scanned the
+				// rest of the view after proving that it cannot fit.
+				vkPBRTransparentView.requiredAtLeast = VK_PBR_TRANSPARENT_MAX_DRAWS + 1;
+				vkPBRTransparentView.reason = "capacity";
+				return false;
+			}
+			vkPBRTransparentView.requiredAtLeast += activeStages;
+		}
 	}
+	vkPBRTransparentView.reason = "ready";
 	return true;
 }
 
@@ -2563,121 +3072,64 @@ static void VK_PBRTransparentResetView( const viewDef_t *viewDef ) {
 	vkPBRTransparentDrawCount = 0;
 	vkPBRTransparentCompositeCount = 0;
 	vkPBRTransparentSurfaceCount = 0;
-	vkPBRTransparentRejectCount = 0;
-	interPass.transparentAdmitted = VK_PBRTransparentViewAdmits( viewDef );
+	vkPBRTransparentSurfaces.SetNum( 0, false );
+	memset( &vkPBRTransparentView, 0, sizeof( vkPBRTransparentView ) );
+	vkPBRTransparentView.viewDef = viewDef;
+	vkPBRTransparentView.requiredAtLeast = 0;
+	vkPBRTransparentView.admitted = VK_PBRTransparentViewAdmits( viewDef );
 }
 
-// Replays one recorded draw. An alpha scale of zero restores the additive
-// contract the light pass would have used.
-static void VK_PBRTransparentReplay( VkCommandBuffer cmd,
-		const vkPBRTransparentDraw_t &draw, VkPipeline pipeline, VkPipelineLayout layout,
-		const float mvp[ 16 ], float alphaScale ) {
-	if ( cmd == VK_NULL_HANDLE || pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE
-			|| draw.geo == NULL ) {
-		return;
-	}
-	if ( !VK_Exec_BindTriGeometry( cmd, VK_Exec_ActiveFrameSlot(), draw.geo ) ) {
-		return;
-	}
-	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
-	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
-			0, 6, draw.sets, 0, NULL );
-	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
-			6, (uint32_t)( draw.setCount - 6 ), draw.sets + 6,
-			(uint32_t)draw.dynamicCount, draw.dynamicOffsets );
-
-	vkInteractionPush_t push = draw.push;
-	if ( mvp != NULL ) {
-		memcpy( push.mvp, mvp, sizeof( push.mvp ) );
-	}
-	push.a[ 3 ] = alphaScale;
-	vkCmdPushConstants( cmd, layout,
-			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
-	// The walk owns cull, scissor and viewport for this same surface, but its
-	// depth state belongs to whichever stage drew last. A translucent surface
-	// is absent from the depth fill, so EQUAL -- the opaque stage contract --
-	// would reject every fragment. This is the same LESS_OR_EQUAL, no-write
-	// state the light pass used for its translucent chain.
-	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
-	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
-	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
-	VK_Device_CountDrawIndexed( draw.geo->numIndexes, draw.geo->numVerts );
-	vkCmdDrawIndexed( cmd, (uint32_t)draw.geo->numIndexes, 1, 0, 0, 0 );
+void VK_PBR_PrintGfxInfo() {
+	common->Printf( "Vulkan baked lighting: requested=%d ready=%d prepared=%d submitted=%d rejectedPrepared=%d restoredUniform=%d restoredDescriptors=%d reason='%s'\n",
+		vkPBRBakedView.requested, vkPBRBakedView.ready ? 1 : 0, int( vkPBRBakedView.draws.size() ),
+		vkPBRBakedView.submitted, vkPBRBakedView.rejectedPrepared, vkPBRBakedView.restoredUniformBytes,
+		vkPBRBakedView.restoredDescriptors, vkPBRBakedView.reason != NULL ? vkPBRBakedView.reason : "none" );
+	common->Printf( "Vulkan: native PBR transparency: admitted=%d reason=%s requiredAtLeast=%d capacity=%d recorded=%d composites=%d surfaces=%d ready=%d preparedRecords=%d restoredUniformBytes=%d restoredDescriptors=%d faultVisits=%d\n",
+		vkPBRTransparentView.admitted ? 1 : 0,
+		vkPBRTransparentView.reason != NULL ? vkPBRTransparentView.reason : "no-view",
+		vkPBRTransparentView.requiredAtLeast, VK_PBR_TRANSPARENT_MAX_DRAWS,
+		vkPBRTransparentDrawCount, vkPBRTransparentCompositeCount, vkPBRTransparentSurfaceCount,
+		vkPBRTransparentView.ready ? 1 : 0, vkPBRTransparentView.preparedRecords,
+		vkPBRTransparentView.restoredUniformBytes, vkPBRTransparentView.restoredDescriptors,
+		vkPBRTransparentView.faultVisits );
 }
 
-/*
-====================
-VK_PBRTransparentRejectSurface
-
-The record table is bounded, so a surface can run out of room mid-view. Its
-already recorded draws still have to reach the frame: they replay additively
-right here, where the light pass would have added them, and the surface is
-marked so the material walk keeps the authored classic stage.
-====================
-*/
-static void VK_PBRTransparentRejectSurface( const srfTriangles_t *identity ) {
-	bool replayed = false;
-	for ( int i = 0 ; i < vkPBRTransparentDrawCount ; i++ ) {
-		vkPBRTransparentDraw_t &draw = vkPBRTransparentDraws[ i ];
-		if ( draw.ambientGeo != identity || draw.rejected ) {
-			continue;
-		}
-		draw.rejected = true;
-		const VkPipeline pipeline = draw.shadowMode == 1 ? interPass.pipelineShadowed
-				: draw.shadowMode == 2 ? interPass.pipelinePointShadowed
-				: interPass.pipelineUnshadowed;
-		const VkPipelineLayout layout = draw.shadowMode != 0
-				? interPass.layoutShadowed : interPass.layout;
-		VK_PBRTransparentReplay( interPass.cmd, draw, pipeline, layout, NULL, 0.0f );
-		replayed = true;
-	}
-	if ( !replayed ) {
-		return;
-	}
-	vkPBRTransparentRejectCount++;
-	// The replay bound its own pipeline and image sets mid-chain; put the pass
-	// back on the pipeline its selector believes is live.
-	const VkPipeline restore = interPass.shadowMode == 1 ? interPass.pipelineShadowed
-			: interPass.shadowMode == 2 ? interPass.pipelinePointShadowed
-			: interPass.pipelineUnshadowed;
-	if ( restore != VK_NULL_HANDLE ) {
-		vkCmdBindPipeline( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, restore );
-	}
-	interPass.imageSetsValid = false;
-}
-
-// Returns false when the draw must proceed additively after all.
-static bool VK_PBRTransparentRecord( const drawSurf_t *surf, const VkDescriptorSet *sets,
+// Capacity is decided before drawing. A broken bound is a programming error,
+// not a reason to mix native BRDF data with the classic source-alpha stage.
+static bool VK_PBRTransparentRecord( const drawSurf_t *surf, const srfTriangles_t *geo, const VkDescriptorSet *sets,
 		int setCount, const uint32_t *dynamicOffsets, int dynamicCount,
 		const vkInteractionPush_t &push ) {
 	const srfTriangles_t *identity = VK_PBRTransparentIdentity( surf );
-	if ( identity == NULL || surf->geo == NULL || setCount < 7 || setCount > 8 ) {
-		return false;
-	}
-	for ( int i = 0 ; i < vkPBRTransparentDrawCount ; i++ ) {
-		if ( vkPBRTransparentDraws[ i ].ambientGeo == identity
-				&& vkPBRTransparentDraws[ i ].rejected ) {
-			return false;	// this surface already returned to the classic stage
-		}
-	}
-	if ( vkPBRTransparentDrawCount >= VK_PBR_TRANSPARENT_MAX_DRAWS ) {
-		VK_PBRTransparentRejectSurface( identity );
+	if ( !vkPBRTransparentView.preparing || identity == NULL || setCount != 7
+			|| dynamicCount != 1 || interPass.shadowActive
+			|| vkPBRTransparentDrawCount >= vkPBRTransparentView.requiredAtLeast
+			|| vkPBRTransparentDrawCount >= VK_PBR_TRANSPARENT_MAX_DRAWS ) {
+		common->Error( "Vulkan PBR transparency record violates its view preflight" );
 		return false;
 	}
 
-	vkPBRTransparentDraw_t &draw = vkPBRTransparentDraws[ vkPBRTransparentDrawCount++ ];
+	vkPBRTransparentDraw_t &draw = vkPBRTransparentDraws[ vkPBRTransparentDrawCount ];
 	memset( &draw, 0, sizeof( draw ) );
+	vkPBRPreparedDraw_t &prepared = draw.prepared;
+	prepared.pipeline = VK_Exec_TransparentInteractionPipeline( 0, false );
+	prepared.layout = VK_Exec_InteractionPipelineLayout();
+	if ( VK_PBRPrepareFault( 5 ) || prepared.pipeline == VK_NULL_HANDLE || prepared.layout == VK_NULL_HANDLE ) {
+		return VK_PBRPrepareFailed( "direct-pipeline" );
+	}
+	if ( VK_PBRPrepareFault( 8 ) || !VK_Exec_PrepareTriGeometry( interPass.cmd, interPass.slot,
+			geo, prepared.vertexOffset, prepared.indexOffset ) ) {
+		return VK_PBRPrepareFailed( "direct-geometry" );
+	}
 	draw.viewDef = interPass.viewDef;
 	draw.ambientGeo = identity;
-	draw.geo = surf->geo;
-	memcpy( draw.sets, sets, sizeof( VkDescriptorSet ) * (size_t)setCount );
-	draw.setCount = setCount;
-	draw.dynamicCount = dynamicCount;
-	for ( int i = 0 ; i < dynamicCount && i < 2 ; i++ ) {
-		draw.dynamicOffsets[ i ] = dynamicOffsets[ i ];
-	}
-	draw.push = push;
-	draw.shadowMode = interPass.shadowActive ? interPass.shadowMode : 0;
+	draw.surf = surf;
+	prepared.geo = geo;
+	memcpy( prepared.sets, sets, sizeof( VkDescriptorSet ) * (size_t)setCount );
+	prepared.setCount = setCount;
+	prepared.dynamicCount = dynamicCount;
+	memcpy( prepared.dynamicOffsets, dynamicOffsets, sizeof( uint32_t ) * (size_t)dynamicCount );
+	prepared.push = push;
+	++vkPBRTransparentDrawCount;
 	return true;
 }
 
@@ -2685,10 +3137,9 @@ static bool VK_PBRTransparentRecord( const drawSurf_t *surf, const VkDescriptorS
 ====================
 VK_PBR_DrawTransparentStage
 
-The material walk's side of the contract: composite the lights this surface
-recorded, in the authored stage's sort position, and report that the stage is
-owned. A surface with no records -- an unadmitted view, a light that never
-reached it, or a rejected surface -- keeps the classic stage.
+The material walk's side of the contract: composite the complete surface once,
+then add its recorded lights in the authored stage's sort position. An admitted
+surface still owns its coverage and environment when no direct light reaches it.
 ====================
 */
 bool VK_PBR_DrawTransparentStage( VkCommandBuffer cmd, const viewDef_t *viewDef,
@@ -2696,59 +3147,45 @@ bool VK_PBR_DrawTransparentStage( VkCommandBuffer cmd, const viewDef_t *viewDef,
 		int stageIndex, float alphaScale ) {
 	// Every world stage asks; keep the material scan behind the one test that
 	// rejects all but the surfaces this can possibly own.
-	if ( cmd == VK_NULL_HANDLE || vkPBRTransparentDrawCount == 0 || drawSurf == NULL
+	if ( cmd == VK_NULL_HANDLE || drawSurf == NULL
 			|| drawSurf->material == NULL
 			|| drawSurf->material->Coverage() != MC_TRANSLUCENT
 			|| !( alphaScale > 0.0f ) ) {
 		return false;
 	}
-	int ownedStage = -1;
-	const bool ownedMaterial = VK_PBRTransparentStage( drawSurf, &ownedStage, NULL );
-	const srfTriangles_t *identity = VK_PBRTransparentIdentity( drawSurf );
-	if ( !ownedMaterial || ownedStage != stageIndex || identity == NULL ) {
+	if ( vkPBRTransparentView.viewDef != viewDef || !vkPBRTransparentView.ready ) {
 		return false;
+	}
+	const vkPBRTransparentSurface_t *surface = VK_PBRTransparentFindSurface( drawSurf );
+	if ( surface == NULL || surface->stageIndex != stageIndex ) {
+		return false;
+	}
+	if ( surface->coverage.geo != tri || surface->alphaScale != alphaScale ) {
+		common->Error( "Vulkan PBR transparency stage changed after preparation" );
+		return true;
 	}
 
-	bool composited = false;
-	for ( int i = 0 ; i < vkPBRTransparentDrawCount ; i++ ) {
+	// Opacity belongs to the full ambient mesh, independent of which light is
+	// first or how much of the mesh its receiver triangles/scissor cover.
+	VK_PBR_SubmitPrepared( cmd, surface->coverage, mvp, alphaScale, true );
+	for ( int i = 0 ; surface->replayDirect && i < vkPBRTransparentDrawCount ; i++ ) {
 		const vkPBRTransparentDraw_t &draw = vkPBRTransparentDraws[ i ];
-		if ( draw.ambientGeo != identity || draw.viewDef != viewDef ) {
+		if ( !VK_PBRTransparentMatches( draw, viewDef, drawSurf ) ) {
 			continue;
 		}
-		if ( draw.rejected ) {
-			return false;
-		}
-		const VkPipeline pipeline =
-				VK_Exec_TransparentInteractionPipeline( draw.shadowMode, !composited );
-		const VkPipelineLayout layout = draw.shadowMode != 0
-				? VK_Exec_ShadowInteractionPipelineLayout()
-				: VK_Exec_InteractionPipelineLayout();
-		if ( pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE ) {
-			// A pipeline that cannot be built drops its own light. The composite
-			// itself stays well formed: whichever light draws first replaces the
-			// destination through the alpha, and the rest add through it.
-			continue;
-		}
-		VK_PBRTransparentReplay( cmd, draw, pipeline, layout, mvp, alphaScale );
-		vkPBRTransparentCompositeCount++;
-		composited = true;
-		if ( r_pbrDebug.GetInteger() == 7 ) {
-			// The ownership marker is a constant, not a radiance: adding it
-			// once per light would saturate the surface and hide the authored
-			// coverage the composite is there to prove. One draw states it,
-			// exactly as the emission marker does in the ambient walk.
-			break;
-		}
-	}
-	if ( !composited ) {
-		return false;
+		VK_Exec_SetSurfScissor( cmd, viewDef, draw.surf, VK_Exec_ActiveFramebufferHeight() );
+		VK_PBR_SubmitPrepared( cmd, draw.prepared, mvp, alphaScale, true );
+		++vkPBRTransparentCompositeCount;
 	}
 	vkPBRTransparentSurfaceCount++;
 	// The walk keeps drawing this surface's remaining stages with its own
-	// geometry binding.
-	if ( tri != NULL ) {
-		(void)VK_Exec_BindTriGeometry( cmd, VK_Exec_ActiveFrameSlot(), tri );
+	// geometry binding and ambient scissor, not the last light's subset.
+	VK_Exec_SetSurfScissor( cmd, viewDef, drawSurf, VK_Exec_ActiveFramebufferHeight() );
+	if ( surface->environmentEnabled ) {
+		VK_PBR_SubmitPrepared( cmd, surface->environment, mvp, alphaScale, true );
 	}
+	VK_Exec_BindPreparedTriGeometry( cmd, VK_Exec_ActiveFrameSlot(),
+		surface->coverage.vertexOffset, surface->coverage.indexOffset );
 	return true;
 }
 
@@ -2757,8 +3194,12 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 									  float parallaxScale,
 									  float parallaxBias,
 									  bool allowNativePBR ) {
+	if ( vkPBRTransparentView.preparing && vkPBRTransparentView.failed ) {
+		return;
+	}
 	if ( din->bumpImage == NULL || din->lightFalloffImage == NULL || din->lightImage == NULL
 			|| din->diffuseImage == NULL || din->specularImage == NULL ) {
+		VK_PBRPrepareFailed( "direct-image" );
 		return;
 	}
 
@@ -2773,6 +3214,17 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	const VkPipelineLayout layout = shadowDraw ? interPass.layoutShadowed : interPass.layout;
 	vkPBRDirectInteraction_t pbr;
 	const bool nativePBR = allowNativePBR && VK_PBRDirectInteraction( din, pbr );
+	if ( vkPBRTransparentView.preparing && !nativePBR ) {
+		VK_PBRPrepareFailed( "direct-material" );
+		return;
+	}
+	const srfTriangles_t *geo = nativePBR && din->surf->pbrLightGeo != NULL
+		? din->surf->pbrLightGeo : din->surf->geo;
+	if ( geo == NULL || geo->numIndexes <= 0 ) {
+		// A geometric back face can have a lit interpolated PBR normal while
+		// the classic interaction legitimately contains no triangles at all.
+		return;
+	}
 
 	VkDescriptorSet sets[ 8 ];
 	sets[ 0 ] = interPass.specTableSet;
@@ -2787,7 +3239,8 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	sets[ 6 ] = VK_Exec_InteractionUniformSet();
 	sets[ 7 ] = interPass.shadowSet;
 	for ( int i = 0 ; i < setCount ; i++ ) {
-		if ( sets[ i ] == VK_NULL_HANDLE ) {
+		if ( VK_PBRPrepareFault( 6 ) || sets[ i ] == VK_NULL_HANDLE ) {
+			VK_PBRPrepareFailed( "direct-descriptor" );
 			return;
 		}
 	}
@@ -2817,7 +3270,8 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	block.celParams[ 3 ] = celBanded ? R_CelBandSoftness() : 0.0f;
 
 	const int uboOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
-	if ( uboOffset < 0 ) {
+	if ( VK_PBRPrepareFault( 7 ) || uboOffset < 0 ) {
+		VK_PBRPrepareFailed( "direct-uniform" );
 		return;
 	}
 
@@ -2851,8 +3305,9 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 		push.c[ 1 ] = (float)pbr.normalFormat;
 		push.c[ 3 ] = r_vkPBRSpecularAA.GetBool() ? 1.0f : 0.0f;
 	}
-	push.d[ 0 ] = nativePBR ? ( r_pbrDebug.GetInteger() == 7 ? 2.0f
-		: r_pbrDebug.GetInteger() == 6 ? 3.0f : 1.0f ) : 0.0f;
+	// Diagnostics and emission have one ambient/coverage owner. A light must
+	// never add its own copy, including when multiple lights touch the surface.
+	push.d[ 0 ] = nativePBR ? ( r_pbrDebug.GetInteger() != 0 ? 3.0f : 1.0f ) : 0.0f;
 	push.d[ 1 ] = nativePBR ? pbr.metallic : 0.0f;
 	push.d[ 2 ] = nativePBR ? pbr.roughness : 0.0f;
 	push.d[ 3 ] = nativePBR ? pbr.normalScale : 1.0f;
@@ -2866,11 +3321,14 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	// Native ordered transparency: record the admitted draw instead of adding
 	// it. The material walk composites the recorded lights through the authored
 	// source alpha, in that stage's own sort position.
-	if ( nativePBR && interPass.transparentAdmitted
-			&& VK_PBRTransparentStage( din->surf, NULL, NULL )
-			&& VK_PBRTransparentRecord( din->surf, sets, setCount, dynamicOffsets,
+	if ( vkPBRTransparentView.preparing ) {
+		if ( VK_PBRTransparentRecord( din->surf, geo, sets, setCount, dynamicOffsets,
 				shadowDraw ? 2 : 1, push ) ) {
-		interPass.nativePBRDrawCount++;
+			interPass.nativePBRDrawCount++;
+		}
+		return;
+	}
+	if ( geo != din->surf->geo && !VK_Exec_BindTriGeometry( interPass.cmd, interPass.slot, geo ) ) {
 		return;
 	}
 
@@ -2901,8 +3359,12 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	interPass.imageSetsValid = true;
 	vkCmdPushConstants( interPass.cmd, layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
-	VK_Device_CountDrawIndexed( (int)( din->surf->geo->numIndexes ), (int)( din->surf->geo->numVerts ) );
-	vkCmdDrawIndexed( interPass.cmd, (uint32_t)din->surf->geo->numIndexes, 1, 0, 0, 0 );
+	VK_Device_CountDrawIndexed( geo->numIndexes, geo->numVerts );
+	vkCmdDrawIndexed( interPass.cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0 );
+	if ( geo != din->surf->geo && din->surf->geo->numIndexes > 0 ) {
+		// Subsequent classic/material-program stages retain their own subset.
+		VK_Exec_BindTriGeometry( interPass.cmd, interPass.slot, din->surf->geo );
+	}
 	interPass.drawCount++;
 	if ( nativePBR ) {
 		interPass.nativePBRDrawCount++;
@@ -3003,28 +3465,29 @@ static void VK_DrawCustomLightingStage( const shaderStage_t *surfaceStage,
 
 	const vkGLSLProgramFamily_t family =
 		R_GetGLSLProgramFamily( newStage->glslProgramName );
-	if ( family != VK_GLSL_PROGRAM_FAMILY_CUSTOM_LIT
-			&& family != VK_GLSL_PROGRAM_FAMILY_PARALLAX_BUMP ) {
-		return;
-	}
+	const bool native = family == VK_GLSL_PROGRAM_FAMILY_CUSTOM_LIT
+		|| family == VK_GLSL_PROGRAM_FAMILY_PARALLAX_BUMP;
+	if ( !native && !R_ValidateGLSLProgram( const_cast<newShaderStage_t *>( newStage ) ) ) { return; }
 
 	drawInteraction_t customInter = *lightInter;
-	customInter.bumpImage =
-		VK_ResolveCustomLightingTexture( newStage, "NormalMap", &customInter );
-	customInter.diffuseImage =
-		VK_ResolveCustomLightingTexture( newStage, "DiffuseMap", &customInter );
-	customInter.specularImage =
-		VK_ResolveCustomLightingTexture( newStage, "SpecularMap", &customInter );
+	if ( native ) {
+		customInter.bumpImage =
+			VK_ResolveCustomLightingTexture( newStage, "NormalMap", &customInter );
+		customInter.diffuseImage =
+			VK_ResolveCustomLightingTexture( newStage, "DiffuseMap", &customInter );
+		customInter.specularImage =
+			VK_ResolveCustomLightingTexture( newStage, "SpecularMap", &customInter );
 
-	idImage *semanticFalloff =
-		VK_ResolveCustomLightingTexture( newStage, "LightFalloffImage", &customInter );
-	if ( semanticFalloff != NULL ) {
-		customInter.lightFalloffImage = semanticFalloff;
-	}
-	idImage *semanticLight =
-		VK_ResolveCustomLightingTexture( newStage, "LightImage", &customInter );
-	if ( semanticLight != NULL ) {
-		customInter.lightImage = semanticLight;
+		idImage *semanticFalloff =
+			VK_ResolveCustomLightingTexture( newStage, "LightFalloffImage", &customInter );
+		if ( semanticFalloff != NULL ) {
+			customInter.lightFalloffImage = semanticFalloff;
+		}
+		idImage *semanticLight =
+			VK_ResolveCustomLightingTexture( newStage, "LightImage", &customInter );
+		if ( semanticLight != NULL ) {
+			customInter.lightImage = semanticLight;
+		}
 	}
 
 	idImage *unusedImage = NULL;
@@ -3045,8 +3508,33 @@ static void VK_DrawCustomLightingStage( const shaderStage_t *surfaceStage,
 			surfaceColor[ component ] * lightColor[ component ];
 	}
 	customInter.vertexColor = surfaceStage->vertexColor;
-	RB_ApplyFlatDiffuseStage( customInter.surf, &customInter.diffuseImage,
+	idImage *flatImage = native ? customInter.diffuseImage : globalImages->whiteImage;
+	RB_ApplyFlatDiffuseStage( customInter.surf, &flatImage,
 		customInter.diffuseColor.ToFloatPtr(), customInter.flatDiffuseParams );
+	if ( native ) { customInter.diffuseImage = flatImage; }
+
+	if ( !native ) {
+		// The chain admission below selects stencil for authored receivers.
+		// Keep its depth, culling, bias and stencil state while changing only
+		// the program/descriptors; customLighting always accumulates ONE/ONE.
+		oq4material::UniformBlock uniforms = {};
+		if ( !VK_Exec_BuildAuthoredMaterialUniforms( interPass.viewDef, customInter.surf,
+				surfaceStage, &customInter, uniforms )
+				|| !VK_MaterialPrograms_Bind( newStage, uniforms,
+					GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK, false, &customInter ) ) { return; }
+		const srfTriangles_t *geo = customInter.surf->geo;
+		VK_Device_CountDrawIndexed( geo->numIndexes, geo->numVerts );
+		vkCmdDrawIndexed( interPass.cmd, geo->numIndexes, 1, 0, 0, 0 );
+		++interPass.drawCount;
+		// The stock descriptor prefix is incompatible with authored programs.
+		// The following stage may reuse this same light and space, so restore
+		// its pipeline now and force all image sets to be rebound on its draw.
+		interPass.imageSetsValid = false;
+		vkCmdBindPipeline( interPass.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+			interPass.shadowMode == 2 ? interPass.pipelinePointShadowed
+			: interPass.shadowMode == 1 ? interPass.pipelineShadowed : interPass.pipelineUnshadowed );
+		return;
+	}
 
 	const bool parallax = family == VK_GLSL_PROGRAM_FAMILY_PARALLAX_BUMP;
 	float scaleBias[ 2 ];
@@ -3267,7 +3755,7 @@ static void VK_Inter_StencilClear( const viewLight_t *vLight ) {
 	const int scH = rect.y2 - rect.y1 + 1;
 
 	int x0 = scX > 0 ? scX : 0;
-	int y0 = interPass.fbHeight - scYGL - scH;
+	int y0 = VK_Exec_ActiveLowerOrigin() ? scYGL : interPass.fbHeight - scYGL - scH;
 	if ( y0 < 0 ) {
 		y0 = 0;
 	}
@@ -3275,7 +3763,7 @@ static void VK_Inter_StencilClear( const viewLight_t *vLight ) {
 	if ( x1 > interPass.fbWidth ) {
 		x1 = interPass.fbWidth;
 	}
-	int y1 = interPass.fbHeight - scYGL;
+	int y1 = VK_Exec_ActiveLowerOrigin() ? scYGL + scH : interPass.fbHeight - scYGL;
 	if ( y1 > interPass.fbHeight ) {
 		y1 = interPass.fbHeight;
 	}
@@ -3888,18 +4376,28 @@ static void VK_CreateSingleDrawInteractions( const drawSurf_t *surf ) {
 	const float			*lightRegs = vLight->shaderRegisters;
 	drawInteraction_t	inter;
 
-	if ( r_skipInteractions.GetBool() || surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+	const bool preparing = vkPBRTransparentView.preparing;
+	if ( !preparing && vkPBRTransparentView.ready
+			&& VK_PBRTransparentFindSurface( surf ) != NULL ) {
+		// The whole native contribution was sealed before the light loop.
 		return;
 	}
-	if ( surf->geo->numIndexes <= 0
-			|| ( surf->geo->indexes == NULL && surf->geo->indexCache == NULL ) ) {
+	if ( r_skipInteractions.GetBool() || surf->geo == NULL || surf->geo->ambientCache == NULL ) {
+		VK_PBRPrepareFailed( "direct-geometry" );
+		return;
+	}
+	if ( surf->pbrLightGeo == NULL && ( surf->geo->numIndexes <= 0
+			|| ( surf->geo->indexes == NULL && surf->geo->indexCache == NULL ) ) ) {
+		VK_PBRPrepareFailed( "direct-geometry" );
 		return;
 	}
 
-	if ( !VK_Exec_BindTriGeometry( interPass.cmd, interPass.slot, surf->geo ) ) {
-		return;
+	if ( !preparing ) {
+		if ( surf->geo->numIndexes > 0 && !VK_Exec_BindTriGeometry( interPass.cmd, interPass.slot, surf->geo ) ) {
+			return;
+		}
+		VK_Exec_SetSurfScissor( interPass.cmd, interPass.viewDef, surf, interPass.fbHeight );
 	}
-	VK_Exec_SetSurfScissor( interPass.cmd, interPass.viewDef, surf, interPass.fbHeight );
 
 	// space change: rebuild the MVP (depth hacks included), the weapon
 	// depth-range window, and the shadowed lights' per-space shadow slice,
@@ -3908,33 +4406,35 @@ static void VK_CreateSingleDrawInteractions( const drawSurf_t *surf ) {
 		interPass.currentSpace = surf->space;
 		VK_BuildSurfMVP( interPass.viewDef, surf, interPass.mvp );
 		const bool wantWeaponRange = surf->space->weaponDepthHack;
-		if ( wantWeaponRange != interPass.weaponDepthRange ) {
+		if ( !preparing && wantWeaponRange != interPass.weaponDepthRange ) {
 			interPass.weaponDepthRange = wantWeaponRange;
 			interPass.viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
 			vkCmdSetViewport( interPass.cmd, 0, 1, &interPass.viewport );
 		}
-		if ( interPass.shadowActive ) {
+		if ( !preparing && interPass.shadowActive ) {
 			interPass.shadowSliceOffset = VK_Inter_WriteShadowSlice( surf->space );
 		}
 	}
 
 	// material cull with the mirror swap (GL_Cull contract)
-	switch ( surfaceShader->GetCullType() ) {
-		case CT_TWO_SIDED:
-			vkCmdSetCullMode( interPass.cmd, VK_CULL_MODE_NONE );
-			break;
-		case CT_BACK_SIDED:
-			vkCmdSetCullMode( interPass.cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT );
-			break;
-		default:
-			vkCmdSetCullMode( interPass.cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
-			break;
+	if ( !preparing ) {
+		switch ( surfaceShader->GetCullType() ) {
+			case CT_TWO_SIDED:
+				vkCmdSetCullMode( interPass.cmd, VK_CULL_MODE_NONE );
+				break;
+			case CT_BACK_SIDED:
+				vkCmdSetCullMode( interPass.cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT );
+				break;
+			default:
+				vkCmdSetCullMode( interPass.cmd, interPass.viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
+				break;
+		}
 	}
 
 	// Quake 4 applies decal polygon offset in interaction passes as well
 	// (RB_ARB2_DrawInteraction does this per draw; the material is shared
 	// by every primitive interaction of the surface)
-	const bool polygonOffset = surfaceShader->TestMaterialFlag( MF_POLYGONOFFSET );
+	const bool polygonOffset = !preparing && surfaceShader->TestMaterialFlag( MF_POLYGONOFFSET );
 	if ( polygonOffset ) {
 		vkCmdSetDepthBiasEnable( interPass.cmd, VK_TRUE );
 		vkCmdSetDepthBias( interPass.cmd, r_offsetUnits.GetFloat() * surfaceShader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
@@ -3963,6 +4463,9 @@ static void VK_CreateSingleDrawInteractions( const drawSurf_t *surf ) {
 	// admitted material; false admission leaves every classic draw untouched.
 	const bool pbrOwnerEligible = VK_PBRHasSingleClassicInteractionTopology( surf );
 	for ( int lightStageNum = 0 ; lightStageNum < lightStageCount ; lightStageNum++ ) {
+		if ( preparing && vkPBRTransparentView.failed ) {
+			break;
+		}
 		const shaderStage_t	*lightStage = lightShader->GetStage( lightStageNum );
 
 		// ignore stages that fail the condition
@@ -4063,9 +4566,11 @@ static void VK_CreateSingleDrawInteractions( const drawSurf_t *surf ) {
 		// They use their own named surface images but the same origins,
 		// projection planes, light color, shadows, and additive state as the
 		// standard interaction decomposition above.
-		for ( int surfaceStageNum = 0 ; surfaceStageNum < surfaceStageCount ; surfaceStageNum++ ) {
-			VK_DrawCustomLightingStage( surfaceShader->GetStage( surfaceStageNum ),
-				surfaceRegs, lightColor, &inter );
+		if ( !preparing ) {
+			for ( int surfaceStageNum = 0 ; surfaceStageNum < surfaceStageCount ; surfaceStageNum++ ) {
+				VK_DrawCustomLightingStage( surfaceShader->GetStage( surfaceStageNum ),
+					surfaceRegs, lightColor, &inter );
+			}
 		}
 	}
 
@@ -4079,10 +4584,166 @@ static void VK_CreateSingleDrawInteractions( const drawSurf_t *surf ) {
 VK_DrawInteractionChain
 ====================
 */
-static void VK_DrawInteractionChain( const drawSurf_t *surf ) {
+static void VK_DrawInteractionChain( const drawSurf_t *surf, bool authoredOnly = false ) {
+	const drawSurf_t *chain = surf;
 	for ( ; surf ; surf = surf->nextOnLight ) {
+		const bool authored = VK_MaterialPrograms_NeedsStencil( surf->material, surf->shaderRegisters );
+		if ( authoredOnly && !authored ) { continue; }
+		if ( !authoredOnly && interPass.shadowActive && authored ) {
+			// Only these receivers need a second, stencil-filtered walk. Keep
+			// every stock receiver on its original filtered map and never add
+			// both mapped and fallback contributions to an authored surface.
+			interPass.authoredStencilChains |= chain == backEnd.vLight->localInteractions ? 1
+				: chain == backEnd.vLight->globalInteractions ? 2 : 4;
+			continue;
+		}
 		VK_CreateSingleDrawInteractions( surf );
 	}
+}
+
+static void VK_DrawAuthoredStencilReceivers( const viewLight_t *light, const drawSurf_t *chain,
+		bool global, bool translucent, bool stencilReady ) {
+	const VkCommandBuffer cmd = interPass.cmd;
+	VK_Inter_SelectShadowMode( NULL, NULL );
+	// Match GL's custom-receiver fallback: its caster contract is the retail
+	// stencil chain, not the expanded shadow-map-only caster set. The front
+	// end retains that complete chain before submitting any interaction.
+	bool complete = stencilReady;
+	if ( complete ) {
+		VK_Inter_StencilClear( light );
+		vkCmdSetStencilTestEnable( cmd, VK_TRUE );
+		vkCmdSetStencilCompareMask( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 255 );
+		vkCmdSetStencilWriteMask( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 255 );
+		vkCmdSetStencilReference( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 128 );
+		complete = VK_StencilShadowPass( light->globalShadows );
+		if ( global ) { complete = VK_StencilShadowPass( light->localShadows ) && complete; }
+	}
+	if ( !complete ) {
+		static bool warnedIncompleteAuthoredStencil = false;
+		if ( !warnedIncompleteAuthoredStencil ) {
+			common->Warning( "Vulkan: authored lighting stencil ownership unavailable; affected receivers fall back unshadowed" );
+			warnedIncompleteAuthoredStencil = true;
+		}
+	}
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, interPass.pipelineUnshadowed );
+	vkCmdSetStencilTestEnable( cmd, complete ? VK_TRUE : VK_FALSE );
+	vkCmdSetStencilOp( cmd, VK_STENCIL_FACE_FRONT_AND_BACK, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
+		VK_STENCIL_OP_KEEP, VK_COMPARE_OP_GREATER_OR_EQUAL );
+	vkCmdSetDepthCompareOp( cmd, translucent ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_EQUAL );
+	// A shadow volume may have changed the current space and vertex streams.
+	interPass.currentSpace = NULL;
+	VK_DrawInteractionChain( chain, true );
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+	if ( r_shadowMapReport.GetInteger() >= 2 ) {
+		common->Printf( "Vulkan: authored lighting stencil receivers light=%d type=%s ownership=%s complete=%d\n",
+			light->lightDef != NULL ? light->lightDef->index : -1,
+			light->pointLight && !light->parallel ? "point" : "projected", global ? "global" : "local", complete );
+	}
+}
+
+// Seal every transparent resource before the first light writes color. Only
+// uploads and durable cache creation are allowed here; no draw or binding can
+// refer to the speculative descriptor sets or ring ranges before commit.
+static void VK_PBRTransparentPrepareView( const viewDef_t *viewDef ) {
+	if ( !vkPBRTransparentView.admitted ) {
+		return;
+	}
+	vkPBRTransparentView.preparing = true;
+	for ( int i = 0; i < viewDef->numDrawSurfs; ++i ) {
+		const drawSurf_t *surf = viewDef->drawSurfs[i];
+		vkPBRTransparentSurface_t surface = {};
+		vkPBRDirectInteraction_t material;
+		if ( !VK_PBRTransparentStage( surf, &surface.stageIndex, &surface.alphaScale )
+				|| !VK_PBRDirectMaterial( surf, material ) ) {
+			continue;
+		}
+		surface.surf = surf;
+		surface.environmentEnabled = VK_PBR_EnvironmentEnabled( viewDef, surf, surface.alphaScale, false );
+		surface.replayDirect = r_pbrDebug.GetInteger() == 0;
+		vkPBRTransparentSurfaces.Append( surface );
+	}
+	if ( vkPBRTransparentSurfaces.Num() == 0 ) {
+		vkPBRTransparentView.preparing = false;
+		vkPBRTransparentView.ready = true;
+		return;
+	}
+
+	const vkInterPass_t savedPass = interPass;
+	viewLight_t *savedLight = backEnd.vLight;
+	float savedLightTextureMatrix[16];
+	memcpy( savedLightTextureMatrix, backEnd.lightTextureMatrix, sizeof( savedLightTextureMatrix ) );
+	memset( &interPass, 0, sizeof( interPass ) );
+	interPass.viewDef = viewDef;
+	interPass.cmd = VK_Exec_ActiveCmd();
+	interPass.slot = VK_Exec_ActiveFrameSlot();
+	interPass.fbWidth = VK_Exec_ActiveFramebufferWidth();
+	interPass.fbHeight = VK_Exec_ActiveFramebufferHeight();
+	interPass.layout = VK_Exec_InteractionPipelineLayout();
+	interPass.shadowSliceOffset = -1;
+	interPass.ambientDir[0] = 1.0f;
+	interPass.ambientDir[1] = ( (float)(byte)( 255 * tr.ambientLightVector[1] ) / 255.0f ) * 2.0f - 1.0f;
+	interPass.ambientDir[2] = ( (float)(byte)( 255 * tr.ambientLightVector[2] ) / 255.0f ) * 2.0f - 1.0f;
+	const int uniformCheckpoint = VK_Exec_InteractionUniformCheckpoint();
+	const bool geometryCheckpoint = VK_Exec_SharedInteractionGeometryCheckpoint();
+	const bool descriptorCheckpoint = geometryCheckpoint && VK_Exec_PBRDescriptorCheckpoint();
+	if ( interPass.cmd == VK_NULL_HANDLE || !descriptorCheckpoint ) {
+		VK_PBRPrepareFailed( "checkpoint" );
+	}
+
+	for ( int i = 0; !vkPBRTransparentView.failed && i < vkPBRTransparentSurfaces.Num(); ++i ) {
+		vkPBRTransparentSurface_t &surface = vkPBRTransparentSurfaces[i];
+		float mvp[16];
+		VK_BuildSurfMVP( viewDef, surface.surf, mvp );
+		if ( !VK_PBR_PrepareEnvironment( interPass.cmd, viewDef, surface.surf, surface.surf->geo,
+				mvp, surface.alphaScale, true, surface.coverage ) ) {
+			VK_PBRPrepareFailed( "coverage" );
+			break;
+		}
+		if ( surface.environmentEnabled && !VK_PBR_PrepareEnvironment( interPass.cmd, viewDef,
+				surface.surf, surface.surf->geo, mvp, surface.alphaScale, false, surface.environment ) ) {
+			VK_PBRPrepareFailed( "environment" );
+			break;
+		}
+	}
+	if ( !vkPBRTransparentView.failed && !r_skipInteractions.GetBool() && !r_skipTranslucent.GetBool() ) {
+		VK_DetermineLightScale();
+		interPass.specTableSet = VK_Exec_ImageDescriptor( globalImages->specularTableImage->GetDeviceHandle(), true );
+		for ( viewLight_t *light = viewDef->viewLights; light != NULL && !vkPBRTransparentView.failed; light = light->next ) {
+			if ( light->lightShader == NULL || light->lightShader->IsFogLight()
+					|| light->lightShader->IsBlendLight() ) {
+				continue;
+			}
+			backEnd.vLight = light;
+			for ( const drawSurf_t *surf = light->translucentInteractions;
+					surf != NULL && !vkPBRTransparentView.failed; surf = surf->nextOnLight ) {
+				if ( VK_PBRTransparentFindSurface( surf ) != NULL ) {
+					VK_CreateSingleDrawInteractions( surf );
+				}
+			}
+		}
+	}
+	vkPBRTransparentView.preparedRecords = vkPBRTransparentDrawCount;
+	if ( vkPBRTransparentView.failed ) {
+		vkPBRTransparentView.restoredUniformBytes = VK_Exec_InteractionUniformCheckpoint() - uniformCheckpoint;
+		VK_Exec_InteractionUniformRestore( uniformCheckpoint );
+		if ( geometryCheckpoint ) {
+			VK_Exec_SharedInteractionGeometryRestore();
+		}
+		if ( descriptorCheckpoint ) {
+			vkPBRTransparentView.restoredDescriptors = VK_Exec_PBRDescriptorRestore();
+		}
+		vkPBRTransparentDrawCount = 0;
+		vkPBRTransparentSurfaces.SetNum( 0, false );
+		vkPBRTransparentView.admitted = false;
+	} else {
+		VK_Exec_SharedInteractionGeometryCommit();
+		VK_Exec_PBRDescriptorCommit();
+		vkPBRTransparentView.ready = true;
+	}
+	vkPBRTransparentView.preparing = false;
+	interPass = savedPass;
+	backEnd.vLight = savedLight;
+	memcpy( backEnd.lightTextureMatrix, savedLightTextureMatrix, sizeof( savedLightTextureMatrix ) );
 }
 
 /*
@@ -4101,10 +4762,54 @@ ambient walks; exits with depth bias off and the depth-range baseline
 (maxDepth 1.0) restored.
 ====================
 */
-void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
+void VK_PBR_PrepareTransparentView( const viewDef_t *viewDef ) {
 	// Before any early return: a view that draws no lights must not leave the
 	// previous view's recorded transparency for its own material walk to find.
-	VK_PBRTransparentResetView( NULL );
+	// Environment-only views still owe admitted translucent surfaces their
+	// ordered composite, even when the last direct light has been switched off.
+	VK_PBRTransparentResetView( viewDef );
+	VK_PBRTransparentPrepareView( viewDef );
+}
+
+bool VK_PBR_TransparentSurfaceReady( const viewDef_t *viewDef, const drawSurf_t *surf ) {
+	return vkPBRTransparentView.viewDef == viewDef && vkPBRTransparentView.ready
+		&& VK_PBRTransparentFindSurface( surf ) != NULL;
+}
+
+bool VK_PBR_RetargetTransparentView( const viewDef_t *view ) {
+	if ( vkPBRTransparentView.viewDef != view ) { return false; }
+	if ( vkPBRTransparentSurfaces.Num() == 0 && vkPBRTransparentDrawCount == 0 ) { return true; }
+	if ( !vkPBRTransparentView.ready ) { return false; }
+	bool needDirect = vkPBRTransparentDrawCount != 0;
+	bool needProbes = false;
+	for ( int i = 0; i < vkPBRTransparentSurfaces.Num(); ++i ) {
+		const vkPBRTransparentSurface_t &surface = vkPBRTransparentSurfaces[i];
+		if ( surface.environmentEnabled ) {
+			needProbes |= surface.environment.setCount == 8;
+			needDirect |= surface.environment.setCount != 8;
+		}
+	}
+	const VkPipeline coverage = VK_Exec_TransparentInteractionPipeline( 0, true );
+	const VkPipeline direct = needDirect ? VK_Exec_TransparentInteractionPipeline( 0, false ) : VK_NULL_HANDLE;
+	const VkPipeline probes = needProbes ? VK_Exec_ProbeEnvironmentPipeline( true ) : VK_NULL_HANDLE;
+	if ( coverage == VK_NULL_HANDLE || ( needDirect && direct == VK_NULL_HANDLE )
+			|| ( needProbes && probes == VK_NULL_HANDLE ) ) { return false; }
+	// The geometry, descriptors, uniforms and their rollback accounting stay
+	// sealed. Only the attachment-compatible pipeline handles change together.
+	for ( int i = 0; i < vkPBRTransparentSurfaces.Num(); ++i ) {
+		vkPBRTransparentSurface_t &surface = vkPBRTransparentSurfaces[i];
+		surface.coverage.pipeline = coverage;
+		if ( surface.environmentEnabled ) {
+			surface.environment.pipeline = surface.environment.setCount == 8 ? probes : direct;
+		}
+	}
+	for ( int i = 0; i < vkPBRTransparentDrawCount; ++i ) {
+		vkPBRTransparentDraws[i].prepared.pipeline = direct;
+	}
+	return true;
+}
+
+void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	if ( viewDef == NULL || viewDef->viewLights == NULL ) {
 		return;
 	}
@@ -4129,8 +4834,8 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	interPass.fbHeight = VK_Exec_ActiveFramebufferHeight();
 	interPass.layout = VK_Exec_InteractionPipelineLayout();
 	interPass.pipelineUnshadowed = pipeline;
-	VK_PBRTransparentResetView( viewDef );
 	interPass.shadowSliceOffset = -1;
+	interPass.nativePBRDrawCount = vkPBRTransparentDrawCount;
 
 	// Phase G1: the stencil volume pipeline serves every shadow-casting
 	// light the shadow-map path does not admit. Never create or use it for
@@ -4192,9 +4897,9 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	const int vpW = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
 	const int vpH = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
 	interPass.viewport.x = (float)vpX;
-	interPass.viewport.y = (float)( interPass.fbHeight - vpYGL );
+	interPass.viewport.y = (float)( VK_Exec_ActiveLowerOrigin() ? vpYGL : interPass.fbHeight - vpYGL );
 	interPass.viewport.width = (float)vpW;
-	interPass.viewport.height = -(float)vpH;
+	interPass.viewport.height = VK_Exec_ActiveLowerOrigin() ? (float)vpH : -(float)vpH;
 	interPass.viewport.minDepth = 0.0f;
 	interPass.viewport.maxDepth = 1.0f;
 
@@ -4208,10 +4913,11 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
 	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
 	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
-	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( cmd, VK_Exec_CanonicalFrontFace() );
 
 	for ( viewLight_t *vLight = viewDef->viewLights ; vLight ; vLight = vLight->next ) {
 		backEnd.vLight = vLight;
+		interPass.authoredStencilChains = 0;
 
 		// do fogging later
 		if ( vLight->lightShader->IsFogLight() ) {
@@ -4670,6 +5376,26 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 			}
 		}
 
+		// Draw only the authored receivers skipped by a mapped chain. Doing
+		// this after translucent submission preserves any full/hybrid stencil
+		// ownership that those earlier passes still needed.
+		if ( interPass.authoredStencilChains != 0 ) {
+			VK_ShadowMap_MarkStencilFallbackSticky( vLight );
+			if ( !anyStencilFallback ) { ++interPass.stencilLightCount; }
+			if ( ( interPass.authoredStencilChains & 1 ) != 0 ) {
+				VK_DrawAuthoredStencilReceivers( vLight, vLight->localInteractions, false, false,
+					stencilResourcesReady );
+			}
+			if ( ( interPass.authoredStencilChains & 2 ) != 0 ) {
+				VK_DrawAuthoredStencilReceivers( vLight, vLight->globalInteractions, true, false,
+					stencilResourcesReady );
+			}
+			if ( ( interPass.authoredStencilChains & 4 ) != 0 ) {
+				VK_DrawAuthoredStencilReceivers( vLight, vLight->translucentInteractions, true, true,
+					stencilResourcesReady );
+			}
+		}
+
 		// stencil reset: the next light (and the ambient walks) start
 		// stencil-free
 		if ( anyStencilFallback ) {
@@ -4704,8 +5430,8 @@ void VK_Interactions_DrawLights( const viewDef_t *viewDef ) {
 	static bool loggedFirstTransparentPass = false;
 	if ( !loggedFirstTransparentPass && vkPBRTransparentDrawCount > 0 ) {
 		loggedFirstTransparentPass = true;
-		common->Printf( "Vulkan: native PBR ordered transparency recorded %d draws (%d rejected)\n",
-				vkPBRTransparentDrawCount, vkPBRTransparentRejectCount );
+		common->Printf( "Vulkan: native PBR ordered transparency recorded %d draws\n",
+				vkPBRTransparentDrawCount );
 	}
 
 	// one-shot bring-up evidence that shadow-receiving interactions drew
@@ -5007,7 +5733,7 @@ static bool VK_ClassicFogBlend_BuildScissor(
 		return false;
 	}
 	scissor.offset.x = x0;
-	scissor.offset.y = framebufferHeight - y1GL;
+	scissor.offset.y = VK_Exec_ActiveLowerOrigin() ? y0GL : framebufferHeight - y1GL;
 	scissor.extent.width = static_cast<std::uint32_t>( x1 - x0 );
 	scissor.extent.height = static_cast<std::uint32_t>( y1GL - y0GL );
 	return true;
@@ -5512,9 +6238,9 @@ bool VK_ClassicFogBlend_Preflight( const viewDef_t *viewDef ) {
 	}
 	prepared.viewport.x = static_cast<float>( view->viewportX1 );
 	prepared.viewport.y = static_cast<float>(
-		prepared.framebufferHeight - view->viewportY1 );
+		VK_Exec_ActiveLowerOrigin() ? view->viewportY1 : prepared.framebufferHeight - view->viewportY1 );
 	prepared.viewport.width = static_cast<float>( viewportWidth );
-	prepared.viewport.height = -static_cast<float>( viewportHeight );
+	prepared.viewport.height = ( VK_Exec_ActiveLowerOrigin() ? 1.0f : -1.0f ) * viewportHeight;
 	prepared.viewport.minDepth = 0.0f;
 	prepared.viewport.maxDepth = 1.0f;
 
@@ -5707,7 +6433,7 @@ void VK_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef ) {
 		vkCmdSetDepthBiasEnable( prepared.cmd, VK_FALSE );
 		vkCmdSetStencilTestEnable( prepared.cmd, VK_FALSE );
 		vkCmdSetFrontFace( prepared.cmd,
-			VK_FRONT_FACE_COUNTER_CLOCKWISE );
+			VK_Exec_CanonicalFrontFace() );
 	}
 
 	for ( int drawIndex = 0; drawIndex < prepared.drawPlanCount; ++drawIndex ) {
@@ -6243,9 +6969,9 @@ void VK_Fog_DrawAllLights( const viewDef_t *viewDef ) {
 	const int vpW = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
 	const int vpH = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
 	interPass.viewport.x = (float)vpX;
-	interPass.viewport.y = (float)( interPass.fbHeight - vpYGL );
+	interPass.viewport.y = (float)( VK_Exec_ActiveLowerOrigin() ? vpYGL : interPass.fbHeight - vpYGL );
 	interPass.viewport.width = (float)vpW;
-	interPass.viewport.height = -(float)vpH;
+	interPass.viewport.height = VK_Exec_ActiveLowerOrigin() ? (float)vpH : -(float)vpH;
 	interPass.viewport.minDepth = 0.0f;
 	interPass.viewport.maxDepth = 1.0f;
 	vkCmdSetViewport( cmd, 0, 1, &interPass.viewport );
@@ -6256,7 +6982,7 @@ void VK_Fog_DrawAllLights( const viewDef_t *viewDef ) {
 	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
 	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
-	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( cmd, VK_Exec_CanonicalFrontFace() );
 
 	for ( vLight = viewDef->viewLights ; vLight ; vLight = vLight->next ) {
 		backEnd.vLight = vLight;

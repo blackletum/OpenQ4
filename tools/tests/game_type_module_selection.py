@@ -134,7 +134,7 @@ def validate_font_resource_reset_contract(font_source: str, font_header: str) ->
         "bool idRenderSystemLocal::RegisterFont",
         "renderer font registration",
     )
-    done = function_body(font_source, "void R_DoneFreeType( void )", "renderer font shutdown")
+    done = function_body(font_source, "void R_DoneFreeType( bool preserveAtlasImages )", "renderer font shutdown")
     refresh = function_body(
         font_source,
         "void R_RefreshConsoleFontAtlas( void )",
@@ -169,9 +169,9 @@ def validate_font_resource_reset_contract(font_source: str, font_header: str) ->
     ):
         raise AssertionError("RegisterFont must arm and rebuild the console atlas exactly once per font lifecycle")
 
-    require(done, "R_ShutdownTrueTypeFonts();", "TrueType renderer shutdown")
+    require(done, "R_ShutdownTrueTypeFonts( preserveAtlasImages );", "TrueType renderer shutdown")
     require(done, "consoleFontChecked = false;", "console font lifecycle reset")
-    if done.index("R_ShutdownTrueTypeFonts();") > done.index("consoleFontChecked = false;"):
+    if done.index("R_ShutdownTrueTypeFonts( preserveAtlasImages );") > done.index("consoleFontChecked = false;"):
         raise AssertionError("console atlas guard resets before cached TrueType fonts shut down")
     require(font_header, "void R_RefreshConsoleFontAtlas( void );", "console font refresh declaration")
 
@@ -183,7 +183,7 @@ def validate_full_vid_restart_font_contract(renderer_source: str) -> None:
         "full video restart",
     )
     for token in (
-        "R_DoneFreeType();",
+        "R_DoneFreeType( true );",
         "globalImages->PurgeAllImages();",
         "R_InitOpenGL();",
         "globalImages->ReloadImages( true );",
@@ -192,7 +192,7 @@ def validate_full_vid_restart_font_contract(renderer_source: str) -> None:
     ):
         require(restart, token, "full video restart font lifecycle")
     if not (
-        restart.index("R_DoneFreeType();")
+        restart.index("R_DoneFreeType( true );")
         < restart.index("globalImages->PurgeAllImages();")
         < restart.index("R_InitOpenGL();")
         < restart.index("globalImages->ReloadImages( true );")
@@ -366,17 +366,19 @@ def validate_ttf_persistent_atlas_contract(ttf_source: str) -> None:
     slot = function_body(ttf_source, "static bool R_TTFPackAtlas", "GUI TrueType atlas")
     console = function_body(ttf_source, "bool R_BuildConsoleFontAtlas", "console TrueType atlas")
     for body, context in ((slot, "GUI TrueType atlas"), (console, "console TrueType atlas")):
-        require(body, "opts.isPersistant = true;", context)
-        require(body, "globalImages->ScratchImage(", context)
-        if body.index("opts.isPersistant = true;") > body.index("globalImages->ScratchImage("):
-            raise AssertionError(f"{context} marks persistence after allocating the scratch image")
+        require(body, "R_TTFUploadAtlasImage(", context)
+    upload = function_body(ttf_source, "static idImage *R_TTFUploadAtlasImage", "TrueType atlas registration")
+    require(upload, "globalImages->ImageFromFunction( name, R_TTFGenerateAtlasImage )", "reloadable TrueType atlas")
+    generate = function_body(ttf_source, "static void R_TTFGenerateAtlasImage", "TrueType atlas regeneration")
+    require(generate, "opts.isPersistant = true;", "TrueType atlas residency")
+    require(generate, "image->SubImageUpload(", "TrueType atlas pixel restoration")
 
     for token in (
         "static idMaterial *ttfConsoleMaterial = NULL;",
         "static idImage *ttfConsoleOriginalImage = NULL;",
     ):
         require(ttf_source, token, "authored console image preservation")
-    shutdown = function_body(ttf_source, "void R_ShutdownTrueTypeFonts( void )", "TrueType font shutdown")
+    shutdown = function_body(ttf_source, "void R_ShutdownTrueTypeFonts( bool preserveAtlasImages )", "TrueType font shutdown")
     for token in (
         "ttfConsoleMaterial->OverrideStageImageForRuntime( 0, ttfConsoleOriginalImage )",
         "ttfConsoleMaterial = NULL;",
@@ -436,7 +438,7 @@ def validate_ttf_persistent_atlas_contract(ttf_source: str) -> None:
     require(restore, "FindDeclWithoutParsing(", "TrueType atlas material restore")
     require(restore, "R_TTFInstallAtlasStage(", "TrueType atlas material restore")
     require(
-        function_body(ttf_source, "void R_ShutdownTrueTypeFonts( void )", "TrueType font shutdown"),
+        function_body(ttf_source, "void R_ShutdownTrueTypeFonts( bool preserveAtlasImages )", "TrueType font shutdown"),
         "ttfAtlasMaterials.DeleteContents( true );",
         "TrueType atlas material registry release",
     )
@@ -664,7 +666,7 @@ def validate_two_phase_game_api_contract() -> None:
         return
 
     game_api = read(game_api_path)
-    require(game_api, "const int GAME_API_VERSION\t\t= 46;", "current game API version")
+    require(game_api, "const int GAME_API_VERSION\t\t= 48;", "current game API version")
     require(
         game_api,
         "virtual void\t\t\t\tShutdownAfterDecls( void ) = 0;",
@@ -967,23 +969,23 @@ def validate_lifecycle_mutation_sensitivity() -> None:
 
     font_source = read(ROOT / "src" / "renderer" / "tr_font.cpp")
     font_header = read(ROOT / "src" / "renderer" / "tr_local.h")
-    if font_source.count("R_ShutdownTrueTypeFonts();") != 1:
+    if font_source.count("R_ShutdownTrueTypeFonts( preserveAtlasImages );") != 1:
         raise AssertionError("TrueType shutdown mutation anchor is not unique")
     expect_contract_rejection(
         lambda candidate: validate_font_resource_reset_contract(candidate, font_header),
-        font_source.replace("R_ShutdownTrueTypeFonts();", "", 1),
+        font_source.replace("R_ShutdownTrueTypeFonts( preserveAtlasImages );", "", 1),
         "renderer shutdown keeps stale TrueType faces and console guard state",
     )
 
     renderer = read(ROOT / "src" / "renderer" / "RenderSystem_init.cpp")
-    if renderer.count("\tR_DoneFreeType();") != 1:
+    if renderer.count("\tR_DoneFreeType( true );") != 1:
         raise AssertionError("Full vid_restart font-release mutation anchor is not unique")
     expect_contract_rejection(
         validate_full_vid_restart_font_contract,
-        renderer.replace("\tR_DoneFreeType();", "", 1),
+        renderer.replace("\tR_DoneFreeType( true );", "", 1),
         "full vid_restart purges images without releasing font state",
     )
-    reload_images = "\tglobalImages->ReloadImages( true );\n\n\tR_InitFreeType();"
+    reload_images = "#endif\n\n\tR_InitFreeType();"
     if renderer.count(reload_images) != 1:
         raise AssertionError("Full vid_restart image-reload mutation anchor is not unique")
     expect_contract_rejection(
@@ -1031,7 +1033,7 @@ def validate_lifecycle_mutation_sensitivity() -> None:
     )
 
     ttf_source = read(ROOT / "src" / "renderer" / "tr_fontTTF.cpp")
-    if ttf_source.count("opts.isPersistant = true;") != 2:
+    if ttf_source.count("opts.isPersistant = true;") != 1:
         raise AssertionError("TrueType persistent-atlas mutation anchors are not exact")
     expect_contract_rejection(
         validate_ttf_persistent_atlas_contract,

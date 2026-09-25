@@ -48,6 +48,7 @@
 #include "../CelShading.h"
 #include "../ScenePackets.h"
 #include "../HDRExposureCore.h"
+#include "../ModernGLExecutor.h"
 
 #undef snprintf
 #undef vsnprintf
@@ -57,6 +58,8 @@
 
 #include "VulkanDevice.h"
 #include "vk_ExecutorHooks.h"
+#include "vk_HDRScene.h"
+#include "vk_Image.h"
 #include "shaders/post_shaders_spv.h"
 #include "shaders/hdr_luminance_spv.h"
 
@@ -103,6 +106,8 @@ extern idCVar r_hdrMinExposure;
 extern idCVar r_hdrMaxExposure;
 extern idCVar r_hdrAdaptUpSpeed;
 extern idCVar r_hdrAdaptDownSpeed;
+static idCVar r_vkHDRPrepareFailure( "r_vkHDRPrepareFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
+	"diagnostic linear HDR preparation failure: 0=off, 1=exposure, 2=bloom, 3=output", 0, 3 );
 extern idCVar r_motionBlur;
 extern idCVar r_motionBlurStrength;
 extern idCVar r_motionBlurMaxPixels;
@@ -205,6 +210,7 @@ typedef struct vkPostMotionViewState_s {
 
 typedef struct vkPostMotionEntityHistory_s {
 	int							entityIndex;
+	const idRenderModel *		model;
 	float						modelMatrix[ 16 ];
 } vkPostMotionEntityHistory_t;
 
@@ -256,6 +262,8 @@ struct vkHDRExposure_t {
 	float fovY;
 	bool cameraValid;
 	bool sceneFloat;
+	bool sceneLinear;
+	bool skyPreserved;
 	int sceneSamples;
 	int width;
 	int height;
@@ -269,6 +277,11 @@ struct vkHDRExposure_t {
 };
 static vkHDRExposure_t vkHDR;
 static idStr vkHDRMapName;
+static int vkPortalSkyFrame = -1;
+static idScreenRect vkPortalSkyViewport;
+static const idRenderWorldLocal *vkPortalSkyWorld = NULL;
+static idRenderTexture *vkPortalSkyTarget = NULL;
+static const viewDef_t *vkPortalSkyOwner = NULL;
 
 bool VK_PostProcess_HDRSceneRequested( void ) {
 	return !r_skipPostProcess.GetBool() && r_hdrSceneTarget.GetBool()
@@ -302,18 +315,38 @@ int VK_PostProcess_SceneSamples( void ) {
 
 void R_RendererVulkanHDRInfo_f( const idCmdArgs &args ) {
 	(void)args;
-	common->Printf( "Vulkan HDR: sceneRequested=%d sceneFormat=%s samples=%d autoExposure=%d initialized=%d generation=%u queued=%u completed=%u average=%g target=%g exposure=%g extent=%dx%d async=%d\n",
+	common->Printf( "Vulkan HDR: sceneRequested=%d sceneFormat=%s samples=%d autoExposure=%d initialized=%d generation=%u queued=%u completed=%u average=%g target=%g exposure=%g extent=%dx%d async=%d skyPreserved=%d linearScene=%d\n",
 		(int)VK_PostProcess_HDRSceneRequested(), vkHDR.sceneFloat ? "RGBA16F" : "LDR", vkHDR.sceneSamples,
 		(int)vkHDR.enabled, (int)vkHDR.adaptation.initialized,
 		vkHDR.generation, vkHDR.queuedSamples, vkHDR.completedSamples, vkHDR.adaptation.averageLuminance,
 		vkHDR.adaptation.targetExposure, vkHDR.adaptation.exposure, vkHDR.width, vkHDR.height,
-		(int)r_hdrAutoExposureAsync.GetBool() );
+		(int)r_hdrAutoExposureAsync.GetBool(), (int)vkHDR.skyPreserved, int( vkHDR.sceneLinear ) );
+	VK_HDRScene_PrintInfo();
 }
 // why the last scene pass gave up, for the one-time warning
 static const char *vkPostFailReason = NULL;
 static vkPostMotionViewState_t vkPostMotionHistory;
 static idList<vkPostMotionEntityHistory_t> vkPostMotionEntityHistory;
 static idList<vkPostMotionEntityHistory_t> vkPostMotionNextEntityHistory;
+
+static vkPostMotionViewState_t vkTemporalMotionViewHistory;
+static idList<vkPostMotionEntityHistory_t> vkTemporalMotionEntityHistory;
+static idList<vkPostMotionEntityHistory_t> vkTemporalMotionNextEntityHistory;
+static idImage *vkTemporalMotionImage = NULL;
+static idRenderTexture *vkTemporalMotionTarget = NULL;
+static unsigned int vkTemporalMotionGeneration = 0;
+static unsigned long long vkTemporalMotionViewIdentity = 0;
+static int vkTemporalMotionFrame = -1;
+static int vkTemporalMotionEligible = 0;
+static int vkTemporalMotionDrawn = 0;
+static bool vkTemporalMotionComplete = false;
+static unsigned long long vkTemporalMotionCompletedViews = 0;
+
+void VK_PostProcess_PrintTemporalMotion( void ) {
+	common->Printf( "Vulkan temporal motion: frame=%d generation=%u eligible=%d drawn=%d complete=%d completedViews=%llu\n",
+		vkTemporalMotionFrame, vkTemporalMotionGeneration, vkTemporalMotionEligible,
+		vkTemporalMotionDrawn, (int)vkTemporalMotionComplete, vkTemporalMotionCompletedViews );
+}
 
 typedef struct vkPostState_s {
 	VkShaderModule	fullscreenVert;
@@ -324,6 +357,21 @@ typedef struct vkPostState_s {
 } vkPostState_t;
 
 static vkPostState_t vkPost;
+
+// This is the completed pre-post scene, distinct from scratch reused by later
+// effects. Reuse the linear output's existing capture; no extra per-frame copy.
+static struct vkLinearCapture_t {
+	idImage *image;
+	unsigned int handle;
+	unsigned int generation;
+	int frame;
+	int videoRestart;
+	bool valid;
+} vkLinearCapture;
+
+void VK_PostProcess_ResetLinearCapture() {
+	vkLinearCapture.valid = false;
+}
 
 // std140 layout of ColorMappingBlock in post_color_mapping.frag
 typedef struct vkPostColorMappingBlock_s {
@@ -397,6 +445,16 @@ static void VK_Post_ResetMotionBlurHistory( void ) {
 	vkPostMotionNextEntityHistory.Clear();
 }
 
+void VK_PostProcess_ResetTemporalMotion( void ) {
+	vkTemporalMotionEntityHistory.Clear();
+	vkTemporalMotionNextEntityHistory.Clear();
+	vkTemporalMotionGeneration = 0;
+	vkTemporalMotionViewIdentity = 0;
+	vkTemporalMotionFrame = -1;
+	vkTemporalMotionEligible = vkTemporalMotionDrawn = 0;
+	vkTemporalMotionComplete = false;
+}
+
 /*
 ====================
 VK_PostProcess_Shutdown
@@ -406,6 +464,7 @@ image manager, which frees them on its own; the render textures are ours.
 ====================
 */
 void VK_PostProcess_Shutdown( void ) {
+	memset( &vkLinearCapture, 0, sizeof( vkLinearCapture ) );
 	VK_SceneEffects_Shutdown();
 	VK_DebugTools_Shutdown();
 	for ( int i = 0; i < VK_HDR_MAX_LEVELS; ++i ) {
@@ -413,6 +472,10 @@ void VK_PostProcess_Shutdown( void ) {
 	}
 	memset( &vkHDR, 0, sizeof( vkHDR ) );
 	vkHDRMapName.Clear();
+	vkPortalSkyFrame = -1;
+	vkPortalSkyOwner = NULL;
+	vkPortalSkyWorld = NULL;
+	vkPortalSkyTarget = NULL;
 	VK_Post_ResetHDRExposure();
 	VK_Post_DestroyModule( vkPost.fullscreenVert );
 	VK_Post_DestroyModule( vkPost.colorMappingFrag );
@@ -428,6 +491,11 @@ void VK_PostProcess_Shutdown( void ) {
 		}
 	}
 	delete vkPostScene.motionVectorTarget;
+	delete vkTemporalMotionTarget;
+	vkTemporalMotionTarget = NULL;
+	vkTemporalMotionImage = NULL;
+	VK_PostProcess_ResetTemporalMotion();
+	vkTemporalMotionCompletedViews = 0;
 	memset( &vkPostScene, 0, sizeof( vkPostScene ) );
 	vkPostScene.finalDepthFrame = -1;
 	vkPostScene.ssaoWorldDepthFrame = -1;
@@ -494,7 +562,7 @@ static bool VK_Post_DrawFullscreen( VkPipeline pipeline, const VkDescriptorSet *
 	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
 	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_ALWAYS );
 	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
-	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( cmd, VK_Exec_CanonicalFrontFace() );
 	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
 	if ( vkCtx.depthBoundsSupported ) {
@@ -660,6 +728,31 @@ static bool VK_Post_IsMainSceneView( const viewDef_t *viewDef ) {
 	return !viewDef->isXraySubview;
 }
 
+void VK_PostProcess_BeginView( const viewDef_t *viewDef ) {
+	vkPortalSkyOwner = NULL;
+	if ( viewDef == NULL ) { return; }
+	if ( ( viewDef->renderFlags & RF_PORTAL_SKY ) != 0 ) {
+		vkPortalSkyFrame = backEnd.frameCount;
+		vkPortalSkyViewport = viewDef->viewport;
+		vkPortalSkyWorld = viewDef->renderWorld;
+		vkPortalSkyTarget = VK_Exec_ActiveRenderTexture();
+		return;
+	}
+	if ( VK_Post_IsMainSceneView( viewDef ) ) {
+		VK_PostProcess_ResetLinearCapture();
+		if ( vkPortalSkyFrame == backEnd.frameCount
+				&& vkPortalSkyWorld == viewDef->renderWorld
+				&& vkPortalSkyViewport.Equals( viewDef->viewport )
+				&& vkPortalSkyTarget == VK_Exec_ActiveRenderTexture() ) {
+			vkPortalSkyOwner = viewDef;
+		}
+		// A backdrop belongs to the next matching main view, not a later root
+		// or capture which happens to use the same dimensions and render world.
+		vkPortalSkyFrame = -1;
+		vkHDR.skyPreserved = false;
+	}
+}
+
 static int VK_Post_ViewWidth( const viewDef_t *viewDef ) {
 	return viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
 }
@@ -668,7 +761,7 @@ static int VK_Post_ViewHeight( const viewDef_t *viewDef ) {
 	return viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
 }
 
-static void VK_Post_SynchronizeHDRExposure( const viewDef_t *viewDef ) {
+static void VK_Post_SynchronizeHDRExposure( const viewDef_t *viewDef, bool sceneLinear = false ) {
 	if ( !VK_Post_IsMainSceneView( viewDef ) || tr.takingScreenshot || viewDef->temporalCaptureFrame ) {
 		return;
 	}
@@ -687,13 +780,14 @@ static void VK_Post_SynchronizeHDRExposure( const viewDef_t *viewDef ) {
 		|| idMath::Fabs( viewDef->renderView.fov_x - vkHDR.fovX ) > 1.0f
 		|| idMath::Fabs( viewDef->renderView.fov_y - vkHDR.fovY ) > 1.0f );
 	if ( requested != vkHDR.enabled || width != vkHDR.width || height != vkHDR.height
-			|| sceneFloat != vkHDR.sceneFloat || sceneSamples != vkHDR.sceneSamples
+			|| sceneFloat != vkHDR.sceneFloat || sceneSamples != vkHDR.sceneSamples || sceneLinear != vkHDR.sceneLinear
 			|| vkHDR.renderWorld != viewDef->renderWorld || vkHDRMapName != mapName
 			|| vkHDR.videoRestartCount != tr.GetVideoRestartCount() || cameraCut ) {
 		VK_Post_ResetHDRExposure();
 	}
 	vkHDR.enabled = requested;
 	vkHDR.sceneFloat = sceneFloat;
+	vkHDR.sceneLinear = sceneLinear;
 	vkHDR.sceneSamples = sceneSamples;
 	vkHDR.width = width;
 	vkHDR.height = height;
@@ -833,6 +927,61 @@ static idImage *VK_Post_CaptureScene( const viewDef_t *viewDef ) {
 	return image;
 }
 
+static idImage *VK_Post_CaptureLinearScene( const viewDef_t *viewDef ) {
+	idImage *image = VK_Post_EnsureImage( vkLinearCapture.image, "_vkLinearScene", VK_Post_FloatColorImage );
+	if ( image == NULL || !VK_Exec_CopyRender( image, viewDef->viewport.x1, viewDef->viewport.y1,
+			VK_Post_ViewWidth( viewDef ), VK_Post_ViewHeight( viewDef ), 0, false ) ) {
+		return NULL;
+	}
+	return image;
+}
+
+bool VK_PostProcess_LinearScreenshot( const char *fileName ) {
+	idStr path( fileName );
+	if ( path.Icmpn( "screenshots/", 12 ) != 0 || path.Find( ".." ) >= 0
+			|| path.Find( ':' ) >= 0 || path.Find( '\\' ) >= 0 || !path.CheckExtension( ".pfm" ) ) {
+		common->Printf( "screenshot linear: use screenshots/<name>.pfm\n" );
+		return false;
+	}
+	vkImageEntry_t *entry = vkLinearCapture.image != NULL
+		? VK_Image_GetEntry( vkLinearCapture.image->GetDeviceHandle() ) : NULL;
+	if ( !vkLinearCapture.valid || !VK_HDRScene_Requested()
+			|| vkLinearCapture.frame != backEnd.frameCount
+			|| vkLinearCapture.videoRestart != tr.GetVideoRestartCount()
+			|| entry == NULL || entry->generation != vkLinearCapture.generation
+			|| vkLinearCapture.image->GetDeviceHandle() != vkLinearCapture.handle
+			|| entry->format != VK_FORMAT_R16G16B16A16_SFLOAT || entry->materialSampleFlipY
+			|| entry->width < 1 || entry->height < 1 || entry->width > 8192 || entry->height > 8192 ) {
+		common->Printf( "screenshot linear: no completed modern HDR scene\n" );
+		return false;
+	}
+	const int width = entry->width, height = entry->height;
+	idList<float> rgba;
+	if ( !VK_Exec_ReadLinearScreenshot( vkLinearCapture.image, rgba )
+			|| rgba.Num() != width * height * 4 ) {
+		common->Printf( "screenshot linear: HDR readback failed\n" );
+		return false;
+	}
+	const int values = width * height * 3;
+	idTempArray<float> rgb( values );
+	for ( int pixel = 0; pixel < width * height; ++pixel ) {
+		for ( int channel = 0; channel < 3; ++channel ) {
+			rgb[pixel * 3 + channel] = LittleFloat( rgba[pixel * 4 + channel] );
+		}
+	}
+	// CopyRender's bottom-up RGB is PFM's row order. Preserve overbright values
+	// without exposure, tone mapping, output transfer, alpha or an extra flip.
+	idFile *file = fileSystem->OpenFileWrite( path.c_str() );
+	if ( file == NULL ) { return false; }
+	const idStr header = va( "PF\n%d %d\n-1.0\n", width, height );
+	const bool headerWritten = file->Write( header.c_str(), header.Length() ) == header.Length();
+	const int written = headerWritten ? file->Write( rgb.Ptr(), values * sizeof( float ) ) : 0;
+	fileSystem->CloseFile( file );
+	if ( !headerWritten || written != values * sizeof( float ) ) { return false; }
+	common->Printf( "Wrote %s (linear HDR scene, %dx%d RGB float)\n", path.c_str(), width, height );
+	return true;
+}
+
 static bool VK_Post_CaptureDepth( idImage *image, const viewDef_t *viewDef ) {
 	return image != NULL && VK_Exec_CopyRender( image, viewDef->viewport.x1, viewDef->viewport.y1,
 			VK_Post_ViewWidth( viewDef ), VK_Post_ViewHeight( viewDef ), 0, true );
@@ -865,7 +1014,7 @@ static void VK_Post_ResetDrawState( VkCommandBuffer cmd ) {
 	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
 	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_ALWAYS );
 	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
-	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetFrontFace( cmd, VK_Exec_CanonicalFrontFace() );
 	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
 	if ( vkCtx.depthBoundsSupported ) {
@@ -907,12 +1056,12 @@ VK_Post_DrawSceneRect
 
 Draws the covering triangle over the view rectangle of the scene target,
 scissored to the view scissor (RB_BeginFullscreenPostProcessPass). The
-negative-height viewport puts fragUV (0,0) at the bottom-left, OpenGL's
-texture origin.
+canonical viewport puts fragUV (0,0) at the bottom-left of the visible
+scene, regardless of the attachment's stored row order.
 ====================
 */
 static bool VK_Post_DrawSceneRect( const viewDef_t *viewDef, VkPipeline pipeline,
-		const VkDescriptorSet *imageSets, int numSets, int uniformOffset ) {
+		const VkDescriptorSet *imageSets, int numSets, int uniformOffset, bool preserveFarDepth = false ) {
 	VkCommandBuffer cmd = VK_Exec_ActiveCmd();
 	if ( cmd == VK_NULL_HANDLE || !VK_Post_SetsReady( pipeline, imageSets, numSets, uniformOffset ) ) {
 		return false;
@@ -921,14 +1070,28 @@ static bool VK_Post_DrawSceneRect( const viewDef_t *viewDef, VkPipeline pipeline
 	VkViewport viewport;
 	memset( &viewport, 0, sizeof( viewport ) );
 	viewport.x = (float)viewDef->viewport.x1;
-	viewport.y = (float)( fbHeight - viewDef->viewport.y1 );
+	viewport.y = (float)( VK_Exec_ActiveLowerOrigin() ? viewDef->viewport.y1 : fbHeight - viewDef->viewport.y1 );
 	viewport.width = (float)VK_Post_ViewWidth( viewDef );
-	viewport.height = -(float)VK_Post_ViewHeight( viewDef );
+	viewport.height = ( VK_Exec_ActiveLowerOrigin() ? 1.0f : -1.0f ) * VK_Post_ViewHeight( viewDef );
 	viewport.maxDepth = 1.0f;
+	if ( preserveFarDepth ) {
+		viewport.minDepth = viewport.maxDepth = 0.99999f;
+	}
 	vkCmdSetViewport( cmd, 0, 1, &viewport );
 	VK_Exec_SetViewScissor( cmd, viewDef, fbHeight );
 	VK_Post_ResetDrawState( cmd );
+	if ( preserveFarDepth ) {
+		vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+		vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_GREATER );
+	}
 	VK_Post_BindAndDraw( cmd, pipeline, imageSets, numSets, uniformOffset );
+	VK_Exec_MarkCanonicalWrites();
+	if ( preserveFarDepth ) {
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport( cmd, 0, 1, &viewport );
+		VK_Post_ResetDrawState( cmd );
+	}
 	return true;
 }
 
@@ -936,7 +1099,9 @@ static bool VK_Post_DrawSceneRect( const viewDef_t *viewDef, VkPipeline pipeline
 // come out bottom-up like the captures.
 static bool VK_Post_DrawTarget( VkPipeline pipeline, const VkDescriptorSet *imageSets,
 		int numSets, int uniformOffset ) {
-	return VK_Post_DrawFullscreen( pipeline, imageSets, numSets, uniformOffset );
+	const bool drawn = VK_Post_DrawFullscreen( pipeline, imageSets, numSets, uniformOffset );
+	if ( drawn ) { VK_Exec_MarkColorOrigin( false ); }
+	return drawn;
 }
 
 static bool VK_Post_ProjectionUsable( const viewDef_t *viewDef ) {
@@ -1183,10 +1348,11 @@ static bool VK_Post_MotionHistoryUsable( const vkPostMotionViewState_t &current,
 	return !VK_Post_MotionProjectionChanged( current, previous );
 }
 
-static bool VK_Post_FindMotionEntityHistory( int entityIndex, float previousModelMatrix[ 16 ] ) {
-	for ( int i = 0; i < vkPostMotionEntityHistory.Num(); i++ ) {
-		if ( vkPostMotionEntityHistory[ i ].entityIndex == entityIndex ) {
-			memcpy( previousModelMatrix, vkPostMotionEntityHistory[ i ].modelMatrix, sizeof( float ) * 16 );
+static bool VK_Post_FindMotionEntityHistory( const idList<vkPostMotionEntityHistory_t> &history,
+		const idRenderEntityLocal *entity, float previousModelMatrix[ 16 ] ) {
+	for ( int i = 0; i < history.Num(); i++ ) {
+		if ( history[ i ].entityIndex == entity->index && history[ i ].model == entity->parms.hModel ) {
+			memcpy( previousModelMatrix, history[ i ].modelMatrix, sizeof( float ) * 16 );
 			return true;
 		}
 	}
@@ -1194,8 +1360,9 @@ static bool VK_Post_FindMotionEntityHistory( int entityIndex, float previousMode
 }
 
 // RB_UpdateMotionBlurEntityHistory: the first eligible surface of each entity
-static void VK_Post_UpdateMotionEntityHistory( const viewDef_t *viewDef ) {
-	vkPostMotionNextEntityHistory.Clear();
+static void VK_Post_UpdateMotionEntityHistory( const viewDef_t *viewDef,
+		idList<vkPostMotionEntityHistory_t> &history, idList<vkPostMotionEntityHistory_t> &nextHistory ) {
+	nextHistory.Clear();
 	for ( int i = 0; i < viewDef->numDrawSurfs; i++ ) {
 		const drawSurf_t *surf = viewDef->drawSurfs[ i ];
 		if ( !R_ScenePackets_TemporalRigidMotionEligible( surf ) ) {
@@ -1203,8 +1370,8 @@ static void VK_Post_UpdateMotionEntityHistory( const viewDef_t *viewDef ) {
 		}
 		const int entityIndex = surf->space->entityDef->index;
 		bool known = false;
-		for ( int j = 0; j < vkPostMotionNextEntityHistory.Num(); j++ ) {
-			if ( vkPostMotionNextEntityHistory[ j ].entityIndex == entityIndex ) {
+		for ( int j = 0; j < nextHistory.Num(); j++ ) {
+			if ( nextHistory[ j ].entityIndex == entityIndex ) {
 				known = true;
 				break;
 			}
@@ -1212,12 +1379,17 @@ static void VK_Post_UpdateMotionEntityHistory( const viewDef_t *viewDef ) {
 		if ( known ) {
 			continue;
 		}
-		vkPostMotionEntityHistory_t &entry = vkPostMotionNextEntityHistory.Alloc();
+		vkPostMotionEntityHistory_t &entry = nextHistory.Alloc();
 		entry.entityIndex = entityIndex;
+		entry.model = surf->space->entityDef->parms.hModel;
 		memcpy( entry.modelMatrix, surf->space->modelMatrix, sizeof( entry.modelMatrix ) );
 	}
-	vkPostMotionEntityHistory.Swap( vkPostMotionNextEntityHistory );
-	vkPostMotionNextEntityHistory.Clear();
+	history.Swap( nextHistory );
+	nextHistory.Clear();
+}
+
+static void VK_Post_UpdateMotionEntityHistory( const viewDef_t *viewDef ) {
+	VK_Post_UpdateMotionEntityHistory( viewDef, vkPostMotionEntityHistory, vkPostMotionNextEntityHistory );
 }
 
 static bool VK_Post_EnsureColorTarget( idImage *&image, idRenderTexture *&target, const char *name,
@@ -1271,19 +1443,22 @@ to keep the material cull.
 ====================
 */
 static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostMotionViewState_t &previous,
-		idImage *depthImage, idRenderTexture *sceneTarget ) {
+		idImage *depthImage, idRenderTexture *sceneTarget,
+		const idList<vkPostMotionEntityHistory_t> &entityHistory,
+		idImage *&vectorImage, idRenderTexture *&vectorTarget,
+		int width, int height, bool temporal, bool &complete ) {
+	complete = false;
 	const int sceneCubeFace = VK_Exec_ActiveCubeFace();
-	const int width = VK_Post_ViewWidth( viewDef );
-	const int height = VK_Post_ViewHeight( viewDef );
 	const VkShaderModule vertModule = VK_Post_SceneModule( VK_POST_MODULE_MOTION_VECTORS_VERT );
 	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_MOTION_VECTORS_FRAG );
 	const VkDescriptorSet depthSet = VK_Post_Descriptor( depthImage );
 	if ( vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE || depthSet == VK_NULL_HANDLE
-			|| !VK_Post_EnsureColorTarget( vkPostScene.motionVectorImage, vkPostScene.motionVectorTarget,
-				"_vkMotionVector", width, height, TF_NEAREST, "Vulkan motion vectors" ) ) {
+			|| !VK_Post_EnsureColorTarget( vectorImage, vectorTarget,
+				temporal ? "_vkTemporalMotionVector" : "_vkMotionVector",
+				width, height, TF_NEAREST, "Vulkan motion vectors" ) ) {
 		return false;
 	}
-	if ( !VK_Exec_SetRenderTarget( vkPostScene.motionVectorTarget ) ) {
+	if ( !VK_Exec_SetRenderTarget( vectorTarget ) ) {
 		VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace );
 		return false;
 	}
@@ -1293,11 +1468,16 @@ static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostM
 	VkCommandBuffer cmd = VK_Exec_ActiveCmd();
 	const VkPipeline pipeline = VK_Exec_ExtraPipeline( VK_POST_MOTION_VECTORS, vertModule, fragModule,
 			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO, VK_EXTRA_VERTEX_POSITION, 0 );
-	float viewportSize[ 4 ] = { (float)width, (float)height, 0.0f, 0.0f };
+	// Sample the depth image using its recorded row order, including
+	// both canonical scene depth and normalized post captures.
+	const vkImageEntry_t *depthEntry = VK_Image_GetEntry( depthImage->GetDeviceHandle() );
+	const bool depthFlip = depthEntry != NULL && depthEntry->materialSampleFlipY;
+	float viewportSize[ 4 ] = { (float)width, (float)height, depthFlip ? 1.0f : 0.0f, 0.0f };
 	const int uniformOffset = VK_Exec_InteractionUniformAlloc( viewportSize, sizeof( viewportSize ) );
 	bool drew = false;
 	if ( cmd != VK_NULL_HANDLE && pipeline != VK_NULL_HANDLE && uniformOffset >= 0
 			&& VK_Exec_MainRenderingScopeOpen() ) {
+		complete = true;
 		VkViewport viewport;
 		memset( &viewport, 0, sizeof( viewport ) );
 		viewport.width = (float)width;
@@ -1320,28 +1500,33 @@ static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostM
 			if ( !R_ScenePackets_TemporalRigidMotionEligible( surf ) ) {
 				continue;
 			}
+			if ( temporal ) { ++vkTemporalMotionEligible; }
 			float previousModelMatrix[ 16 ];
-			if ( !VK_Post_FindMotionEntityHistory( surf->space->entityDef->index, previousModelMatrix ) ) {
+			if ( !VK_Post_FindMotionEntityHistory( entityHistory, surf->space->entityDef, previousModelMatrix ) ) {
+				complete = false;
 				continue;
 			}
 			const srfTriangles_t *tri = surf->geo;
 			if ( tri->ambientCache == NULL || tri->indexes == NULL
 					|| !VK_Exec_BindTriGeometry( cmd, slot, tri ) ) {
+				complete = false;
 				continue;
 			}
 
-			// per-surface scissor; the target is the view's size, so the rect
-			// needs no scaling, and bottom-up rows need no flip
+			// TAA runs after scene scaling restores the view rectangles. Scale
+			// the native scissor to the actual vector-target extent.
 			VkRect2D scissor;
 			scissor.offset.x = 0;
 			scissor.offset.y = 0;
 			scissor.extent.width = (uint32_t)width;
 			scissor.extent.height = (uint32_t)height;
 			if ( r_useScissor.GetBool() && !surf->scissorRect.IsEmpty() ) {
-				const int x1 = idMath::ClampInt( 0, width - 1, surf->scissorRect.x1 );
-				const int y1 = idMath::ClampInt( 0, height - 1, surf->scissorRect.y1 );
-				const int x2 = idMath::ClampInt( x1 + 1, width, surf->scissorRect.x2 + 1 );
-				const int y2 = idMath::ClampInt( y1 + 1, height, surf->scissorRect.y2 + 1 );
+				const float scaleX = (float)width / Max( 1, VK_Post_ViewWidth( viewDef ) );
+				const float scaleY = (float)height / Max( 1, VK_Post_ViewHeight( viewDef ) );
+				const int x1 = idMath::ClampInt( 0, width - 1, idMath::Ftoi( surf->scissorRect.x1 * scaleX ) );
+				const int y1 = idMath::ClampInt( 0, height - 1, idMath::Ftoi( surf->scissorRect.y1 * scaleY ) );
+				const int x2 = idMath::ClampInt( x1 + 1, width, idMath::Ceil( ( surf->scissorRect.x2 + 1 ) * scaleX ) );
+				const int y2 = idMath::ClampInt( y1 + 1, height, idMath::Ceil( ( surf->scissorRect.y2 + 1 ) * scaleY ) );
 				scissor.offset.x = x1;
 				scissor.offset.y = y1;
 				scissor.extent.width = (uint32_t)( x2 - x1 );
@@ -1369,12 +1554,53 @@ static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostM
 			vkCmdPushConstants( cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 					0, sizeof( push ), &push );
 			vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+			if ( temporal ) { ++vkTemporalMotionDrawn; }
 			drew = true;
 		}
-		vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+		vkCmdSetFrontFace( cmd, VK_Exec_CanonicalFrontFace() );
 	}
-	VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace );
+	if ( drew ) { VK_Exec_MarkColorOrigin( false ); }
+	complete = VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace ) && complete;
 	return drew;
+}
+
+idImage *VK_PostProcess_TemporalMotionVectors( const viewDef_t *viewDef,
+		idImage *depthImage, int width, int height, unsigned int generation,
+		bool useHistory, bool &complete ) {
+	complete = false;
+	vkTemporalMotionEligible = vkTemporalMotionDrawn = 0;
+	vkTemporalMotionComplete = false;
+	if ( !useHistory || viewDef == NULL || depthImage == NULL || tr.takingScreenshot
+			|| viewDef->temporalCaptureFrame || !viewDef->temporalPreviousProjectionValid
+			|| generation != vkTemporalMotionGeneration
+			|| generation != R_TemporalPresentation_HistoryGeneration()
+			|| viewDef->temporalViewIdentity != vkTemporalMotionViewIdentity
+			|| vkTemporalMotionFrame != backEnd.frameCount - 1
+			|| width != vkTemporalMotionViewHistory.viewportWidth
+			|| height != vkTemporalMotionViewHistory.viewportHeight ) {
+		VK_PostProcess_ResetTemporalMotion();
+		return NULL;
+	}
+	const bool drawn = VK_Post_RenderMotionVectors( viewDef, vkTemporalMotionViewHistory,
+		depthImage, VK_Exec_ActiveRenderTexture(), vkTemporalMotionEntityHistory,
+		vkTemporalMotionImage, vkTemporalMotionTarget, width, height, true, complete );
+	vkTemporalMotionComplete = complete;
+	if ( drawn && complete ) { ++vkTemporalMotionCompletedViews; }
+	return drawn ? vkTemporalMotionImage : NULL;
+}
+
+void VK_PostProcess_CommitTemporalMotion( const viewDef_t *viewDef,
+		int width, int height, unsigned int generation ) {
+	if ( viewDef == NULL || tr.takingScreenshot || viewDef->temporalCaptureFrame
+			|| generation != R_TemporalPresentation_HistoryGeneration()
+			|| !VK_Post_BuildMotionViewState( viewDef, vkTemporalMotionViewHistory, width, height ) ) {
+		VK_PostProcess_ResetTemporalMotion();
+		return;
+	}
+	VK_Post_UpdateMotionEntityHistory( viewDef, vkTemporalMotionEntityHistory, vkTemporalMotionNextEntityHistory );
+	vkTemporalMotionGeneration = generation;
+	vkTemporalMotionViewIdentity = viewDef->temporalViewIdentity;
+	vkTemporalMotionFrame = backEnd.frameCount;
 }
 
 // std140 layout of MotionBlurBlock in post_motionblur.frag
@@ -1451,7 +1677,10 @@ static bool VK_Post_MotionBlur( const viewDef_t *viewDef, idRenderTexture *scene
 	}
 	vkPostScene.motionVectorValid = false;
 	if ( objectVectorsRequested ) {
-		vkPostScene.motionVectorValid = VK_Post_RenderMotionVectors( viewDef, previousState, depthImage, sceneTarget );
+		bool complete = false;
+		vkPostScene.motionVectorValid = VK_Post_RenderMotionVectors( viewDef, previousState, depthImage, sceneTarget,
+			vkPostMotionEntityHistory, vkPostScene.motionVectorImage, vkPostScene.motionVectorTarget,
+			width, height, false, complete );
 	}
 	VK_Post_UpdateMotionEntityHistory( viewDef );
 	if ( VK_Exec_ActiveRenderTexture() != sceneTarget ) {
@@ -1518,8 +1747,31 @@ static void VK_Post_BloomLevelSize( int level, int viewWidth, int viewHeight, in
 	}
 }
 
+struct vkPostPreparedStep_t {
+	idRenderTexture *target;
+	VkPipeline pipeline;
+	VkDescriptorSet sourceSet;
+	int uniformOffset;
+};
+struct vkPostPreparedSteps_t {
+	vkPostPreparedStep_t steps[VK_HDR_MAX_LEVELS + 3 * VK_POST_BLOOM_MAX_LEVELS];
+	int count;
+};
+
+static bool VK_Post_ExecuteSteps( const vkPostPreparedSteps_t &plan ) {
+	for ( int i = 0; i < plan.count; ++i ) {
+		const vkPostPreparedStep_t &step = plan.steps[i];
+		if ( !VK_Exec_SetRenderTarget( step.target )
+				|| !VK_Post_DrawTarget( step.pipeline, &step.sourceSet, 1, step.uniformOffset ) ) { return false; }
+	}
+	return true;
+}
+
+// The same builder serves ordinary immediate passes and complete-view HDR
+// preparation. Preparing allocates every target, pipeline, descriptor and
+// uniform slice without sampling or writing any scene/pyramid contents.
 static bool VK_Post_DrawBloomStep( idRenderTexture *target, int kind, int module, idImage *source,
-		const void *block, int blockBytes ) {
+		const void *block, int blockBytes, vkPostPreparedSteps_t *plan = NULL ) {
 	const VkShaderModule fragModule = VK_Post_SceneModule( module );
 	if ( fragModule == VK_NULL_HANDLE || !VK_Exec_SetRenderTarget( target ) ) {
 		return false;
@@ -1528,8 +1780,35 @@ static bool VK_Post_DrawBloomStep( idRenderTexture *target, int kind, int module
 	const int uniformOffset = VK_Exec_InteractionUniformAlloc( block, blockBytes );
 	const VkPipeline pipeline = VK_Exec_PostPipeline( kind, vkPost.fullscreenVert, fragModule,
 			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
-	return VK_Post_SetsReady( pipeline, &sourceSet, 1, uniformOffset )
-		&& VK_Post_DrawTarget( pipeline, &sourceSet, 1, uniformOffset );
+	if ( !VK_Post_SetsReady( pipeline, &sourceSet, 1, uniformOffset ) ) { return false; }
+	if ( plan != NULL ) {
+		if ( plan->count >= int( sizeof( plan->steps ) / sizeof( plan->steps[0] ) ) ) { return false; }
+		vkPostPreparedStep_t &step = plan->steps[plan->count++];
+		step.target = target;
+		step.pipeline = pipeline;
+		step.sourceSet = sourceSet;
+		step.uniformOffset = uniformOffset;
+		return true;
+	}
+	return VK_Post_DrawTarget( pipeline, &sourceSet, 1, uniformOffset );
+}
+
+static idImage *VK_Post_BuildHDRPyramid( const viewDef_t *viewDef, idImage *scene, vkPostPreparedSteps_t *plan = NULL ) {
+	idImage *source = scene;
+	int width = VK_Post_ViewWidth( viewDef ), height = VK_Post_ViewHeight( viewDef );
+	for ( int level = 0; level < VK_HDR_MAX_LEVELS; ++level ) {
+		const int nextWidth = Max( 1, ( width + 1 ) / 2 ), nextHeight = Max( 1, ( height + 1 ) / 2 );
+		const float block[4] = { 1.0f / width, 1.0f / height, level == 0 ? 1.0f : 0.0f, 0.0f };
+		if ( !VK_Post_EnsureColorTarget( vkHDR.images[level], vkHDR.targets[level],
+				va( "_vkHDRLuminance%d", level ), nextWidth, nextHeight, TF_LINEAR, "Vulkan HDR luminance" )
+				|| !VK_Post_DrawBloomStep( vkHDR.targets[level], VK_POST_HDR_LUMINANCE,
+					VK_POST_MODULE_HDR_LUMINANCE, source, block, sizeof( block ), plan ) ) { return NULL; }
+		source = vkHDR.images[level];
+		width = nextWidth;
+		height = nextHeight;
+		if ( width == 1 && height == 1 ) { return source; }
+	}
+	return NULL;
 }
 
 static void VK_Post_AdaptHDRExposure( float time ) {
@@ -1540,7 +1819,8 @@ static void VK_Post_AdaptHDRExposure( float time ) {
 	}
 }
 
-static float VK_Post_UpdateHDRAutoExposure( const viewDef_t *viewDef, idImage *scene ) {
+static float VK_Post_UpdateHDRAutoExposure( const viewDef_t *viewDef, idImage *scene,
+		const vkPostPreparedSteps_t *plan = NULL, idImage *preparedLuminance = NULL ) {
 	if ( !vkHDR.enabled || !r_hdrAutoExposure.GetBool() || !r_hdrToneMap.GetBool() ) {
 		return 1.0f;
 	}
@@ -1554,28 +1834,10 @@ static float VK_Post_UpdateHDRAutoExposure( const viewDef_t *viewDef, idImage *s
 	}
 	idRenderTexture *savedTarget = VK_Exec_ActiveRenderTexture();
 	const int savedFace = VK_Exec_ActiveCubeFace();
-	idImage *source = scene;
-	int width = VK_Post_ViewWidth( viewDef );
-	int height = VK_Post_ViewHeight( viewDef );
-	bool queued = false;
-	for ( int level = 0; level < VK_HDR_MAX_LEVELS; ++level ) {
-		const int nextWidth = Max( 1, ( width + 1 ) / 2 );
-		const int nextHeight = Max( 1, ( height + 1 ) / 2 );
-		const float block[ 4 ] = { 1.0f / width, 1.0f / height, level == 0 ? 1.0f : 0.0f, 0.0f };
-		if ( !VK_Post_EnsureColorTarget( vkHDR.images[ level ], vkHDR.targets[ level ],
-				va( "_vkHDRLuminance%d", level ), nextWidth, nextHeight, TF_LINEAR, "Vulkan HDR luminance" )
-				|| !VK_Post_DrawBloomStep( vkHDR.targets[ level ], VK_POST_HDR_LUMINANCE,
-					VK_POST_MODULE_HDR_LUMINANCE, source, block, sizeof( block ) ) ) {
-			break;
-		}
-		source = vkHDR.images[ level ];
-		width = nextWidth;
-		height = nextHeight;
-		if ( width == 1 && height == 1 ) {
-			queued = VK_Exec_QueueHDRExposureReadback( source, vkHDR.generation, backEnd.frameCount, synchronous );
-			break;
-		}
-	}
+	idImage *source = plan != NULL ? ( VK_Post_ExecuteSteps( *plan ) ? preparedLuminance : NULL )
+		: VK_Post_BuildHDRPyramid( viewDef, scene );
+	const bool queued = source != NULL
+		&& VK_Exec_QueueHDRExposureReadback( source, vkHDR.generation, backEnd.frameCount, synchronous );
 	(void)VK_Exec_SetRenderTarget( savedTarget, savedFace );
 	if ( queued ) {
 		vkHDR.queuedFrame = backEnd.frameCount;
@@ -1605,6 +1867,7 @@ static bool VK_Post_TestHDRCase( int width, int height, int samples, bool asynch
 	options.height = height;
 	options.numLevels = 1;
 	options.numMSAASamples = samples;
+	options.isPersistant = true;
 	idImage *image = globalImages->ScratchImage( "_vkHDRTestScene", &options, TF_LINEAR, TR_CLAMP, TD_DEFAULT );
 	if ( image == NULL ) {
 		return false;
@@ -1663,6 +1926,10 @@ static bool VK_Post_TestHDRCase( int width, int height, int samples, bool asynch
 	return passed;
 }
 
+static bool VK_Post_TestToneMapping( viewDef_t &view );
+static bool VK_Post_TestLinearToneMapping( viewDef_t &view );
+static bool VK_Post_TestPreparedHDR( viewDef_t &view );
+
 void R_RendererVulkanHDRSelfTest_f( const idCmdArgs &args ) {
 	(void)args;
 	idCVar *settings[] = { &r_skipPostProcess, &r_hdrSceneTarget, &r_hdrToneMap, &r_hdrAutoExposure,
@@ -1713,6 +1980,10 @@ void R_RendererVulkanHDRSelfTest_f( const idCmdArgs &args ) {
 	VK_Post_ResetHDRExposure();
 	VK_PostProcess_ConsumeHDRSample( vkHDR.generation, backEnd.frameCount + 2, 0.0f );
 	passed = passed && !vkHDR.haveSample;
+	passed = passed && VK_Post_TestToneMapping( view );
+	passed = passed && VK_Post_TestLinearToneMapping( view );
+	passed = passed && VK_Post_TestPreparedHDR( view );
+	passed = passed && VK_HDRScene_Test();
 	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[ 0 ] ); ++i ) {
 		settings[ i ]->SetString( previous[ i ] );
 	}
@@ -1728,7 +1999,8 @@ void R_RendererVulkanHDRSelfTest_f( const idCmdArgs &args ) {
 
 // Builds the bloom pyramid; each level ends blurred in its P0 image. Leaves
 // the last level's target bound; the caller restores the scene target.
-static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene, int levelCount ) {
+static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene, int levelCount,
+		vkPostPreparedSteps_t *plan = NULL ) {
 	const int viewWidth = VK_Post_ViewWidth( viewDef );
 	const int viewHeight = VK_Post_ViewHeight( viewDef );
 	const float bloomRadius = Max( r_bloomRadius.GetFloat(), 0.1f );
@@ -1750,7 +2022,7 @@ static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene,
 				r_bloomThreshold.GetFloat(), r_bloomSoftKnee.GetFloat()
 			};
 			if ( !VK_Post_DrawBloomStep( p0, VK_POST_BLOOM_EXTRACT, VK_POST_MODULE_BLOOM_EXTRACT,
-					scene, block, sizeof( block ) ) ) {
+					scene, block, sizeof( block ), plan ) ) {
 				return false;
 			}
 		} else {
@@ -1758,7 +2030,7 @@ static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene,
 			VK_Post_BloomLevelSize( level - 1, viewWidth, viewHeight, previousWidth, previousHeight );
 			const float block[ 4 ] = { 1.0f / (float)previousWidth, 1.0f / (float)previousHeight, 0.0f, 0.0f };
 			if ( !VK_Post_DrawBloomStep( p0, VK_POST_BLOOM_DOWNSAMPLE, VK_POST_MODULE_BLOOM_DOWNSAMPLE,
-					vkPostScene.bloomImages[ level - 1 ][ 0 ], block, sizeof( block ) ) ) {
+					vkPostScene.bloomImages[ level - 1 ][ 0 ], block, sizeof( block ), plan ) ) {
 				return false;
 			}
 		}
@@ -1770,20 +2042,159 @@ static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene,
 		blur.params[ 2 ] = 1.0f;
 		blur.params[ 3 ] = 0.0f;
 		if ( !VK_Post_DrawBloomStep( p1, VK_POST_BLOOM_BLUR, VK_POST_MODULE_BLOOM_BLUR,
-				vkPostScene.bloomImages[ level ][ 0 ], &blur, sizeof( blur ) ) ) {
+				vkPostScene.bloomImages[ level ][ 0 ], &blur, sizeof( blur ), plan ) ) {
 			return false;
 		}
 		blur.params[ 2 ] = 0.0f;
 		blur.params[ 3 ] = 1.0f;
 		if ( !VK_Post_DrawBloomStep( p0, VK_POST_BLOOM_BLUR, VK_POST_MODULE_BLOOM_BLUR,
-				vkPostScene.bloomImages[ level ][ 1 ], &blur, sizeof( blur ) ) ) {
+				vkPostScene.bloomImages[ level ][ 1 ], &blur, sizeof( blur ), plan ) ) {
 			return false;
 		}
 	}
 	return true;
 }
 
-static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneTarget ) {
+static void VK_Post_BloomCompositeBlock( vkPostBloomCompositeBlock_t &block, bool bloomRequested,
+		bool bloomEnabled, int levelCount, float adaptedExposure, bool linearScene ) {
+	memset( &block, 0, sizeof( block ) );
+	block.bloom[0] = bloomRequested ? r_bloomIntensity.GetFloat() : 0.0f;
+	block.bloom[1] = bloomEnabled ? 1.0f : 0.0f;
+	block.bloom[2] = r_hdrToneMap.GetBool() ? 1.0f : 0.0f;
+	block.bloom[3] = float( idMath::ClampInt( 0, 2, r_hdrDebugView.GetInteger() ) );
+	block.exposure[0] = r_hdrExposure.GetFloat() * adaptedExposure;
+	block.exposure[1] = r_hdrWhitePoint.GetFloat();
+	block.exposure[2] = r_hdrLift.GetFloat();
+	block.exposure[3] = r_hdrPostGamma.GetFloat();
+	block.grade[0] = r_hdrGain.GetFloat();
+	block.grade[1] = r_hdrVibrance.GetFloat();
+	block.grade[2] = r_hdrSaturation.GetFloat();
+	block.grade[3] = r_hdrContrast.GetFloat();
+	block.highlight[0] = r_hdrHighlightDesaturation.GetFloat();
+	block.highlight[1] = r_hdrGamutCompression.GetFloat();
+	if ( bloomEnabled ) {
+		float total = 0.0f;
+		for ( int i = 0; i < levelCount; ++i ) { total += VK_POST_BLOOM_BASE_WEIGHTS[i]; }
+		if ( total <= 0.0f ) { total = 1.0f; }
+		for ( int i = 0; i < levelCount; ++i ) {
+			( i < 4 ? block.weights[i] : block.weights2[0] ) = VK_POST_BLOOM_BASE_WEIGHTS[i] / total;
+		}
+	}
+	block.weights2[1] = linearScene ? 1.0f : 0.0f;
+}
+
+// A complete linear scene must have a usable output before it takes ownership.
+// Seal the exposure/bloom chains and final output, including capture/resolve
+// storage, readback buffer, descriptors and every uniform slice. The private
+// output slice is filled with the adapted exposure only after metering, before
+// its first draw; synchronous metering can submit without consuming that slice.
+static struct vkLinearOutputPlan_t {
+	const viewDef_t *view;
+	int frame;
+	idRenderTexture *target;
+	VkPipeline pipeline;
+	VkDescriptorSet sets[1 + VK_POST_BLOOM_MAX_LEVELS];
+	int uniformOffset;
+	vkPostBloomCompositeBlock_t block;
+	vkPostPreparedSteps_t exposureSteps;
+	vkPostPreparedSteps_t bloomSteps;
+	idImage *luminance;
+	int uniformCheckpoint;
+	bool consumed;
+} vkLinearOutputPlan;
+
+void VK_PostProcess_DiscardLinearOutput() {
+	if ( !vkLinearOutputPlan.consumed && vkLinearOutputPlan.uniformCheckpoint >= 0
+			&& vkLinearOutputPlan.frame == backEnd.frameCount ) {
+		VK_Exec_InteractionUniformRestore( vkLinearOutputPlan.uniformCheckpoint );
+	}
+	vkLinearOutputPlan.uniformCheckpoint = -1;
+	vkLinearOutputPlan.view = NULL;
+}
+
+const char *VK_PostProcess_PrepareLinearOutput( const viewDef_t *view ) {
+	memset( &vkLinearOutputPlan, 0, sizeof( vkLinearOutputPlan ) );
+	vkLinearOutputPlan.uniformCheckpoint = -1;
+	if ( !VK_Post_IsMainSceneView( view ) || !VK_Post_BloomPassRequested( view ) ) { return "post-view"; }
+	if ( VK_Post_SSAORequested( view )
+			|| r_motionBlur.GetBool() || VK_Post_CelInkRequested( view ) ) { return "post-combination"; }
+	if ( !VK_Post_EnsureModules() ) { return "output-modules"; }
+	idRenderTexture *target = VK_Exec_ActiveRenderTexture();
+	if ( target == NULL || target->GetNumColorImages() != 1 || target->GetDepthImage() == NULL
+			|| target->GetColorImage( 0 )->GetOpts().format != FMT_RGBA16F ) { return "scene-target"; }
+	if ( vkPortalSkyOwner == view ) { return "portal-sky"; }
+	idImage *scene = VK_Post_CaptureLinearScene( view );
+	if ( scene == NULL ) { return "output-capture"; }
+	// The capture above records real commands. Only the subsequently reserved,
+	// never-drawn post slices may be reclaimed if any preparation stage fails.
+	vkLinearOutputPlan.uniformCheckpoint = VK_Exec_InteractionUniformCheckpoint();
+	vkLinearOutputPlan.frame = backEnd.frameCount;
+	const bool bloom = VK_Post_BloomRequested();
+	const int levelCount = bloom ? idMath::ClampInt( 1, VK_POST_BLOOM_MAX_LEVELS, r_bloomMipCount.GetInteger() ) : 0;
+	const char *failure = NULL;
+	if ( r_hdrAutoExposure.GetBool() ) {
+		vkLinearOutputPlan.luminance = VK_Post_BuildHDRPyramid( view, scene, &vkLinearOutputPlan.exposureSteps );
+		if ( vkLinearOutputPlan.luminance == NULL || !VK_Exec_PrepareHDRExposureReadback()
+				|| r_vkHDRPrepareFailure.GetInteger() == 1 ) { failure = "exposure-resources"; }
+	}
+	if ( failure == NULL && bloom ) {
+		if ( !VK_Post_BuildBloomPyramid( view, scene, levelCount, &vkLinearOutputPlan.bloomSteps )
+				|| r_vkHDRPrepareFailure.GetInteger() == 2 ) { failure = "bloom-resources"; }
+	}
+	if ( !VK_Exec_SetRenderTarget( target ) ) { failure = "output-target"; }
+	if ( failure != NULL ) { VK_PostProcess_DiscardLinearOutput(); return failure; }
+	VK_Post_BloomCompositeBlock( vkLinearOutputPlan.block, bloom, bloom, levelCount, 1.0f, true );
+	vkLinearOutputPlan.uniformOffset = VK_Exec_InteractionUniformAlloc( &vkLinearOutputPlan.block, sizeof( vkLinearOutputPlan.block ) );
+	vkLinearOutputPlan.sets[0] = VK_Post_Descriptor( scene );
+	for ( int i = 1; i <= VK_POST_BLOOM_MAX_LEVELS; ++i ) {
+		vkLinearOutputPlan.sets[i] = VK_Post_Descriptor( i <= levelCount
+			? vkPostScene.bloomImages[i - 1][0] : globalImages->blackImage );
+	}
+	vkLinearOutputPlan.pipeline = VK_Exec_PostPipeline( VK_POST_BLOOM_COMPOSITE, vkPost.fullscreenVert,
+		VK_Post_SceneModule( VK_POST_MODULE_BLOOM_COMPOSITE ), GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	if ( !VK_Post_SetsReady( vkLinearOutputPlan.pipeline, vkLinearOutputPlan.sets,
+			1 + VK_POST_BLOOM_MAX_LEVELS, vkLinearOutputPlan.uniformOffset )
+			|| r_vkHDRPrepareFailure.GetInteger() == 3 ) {
+		VK_PostProcess_DiscardLinearOutput();
+		return "output-resources";
+	}
+	vkLinearOutputPlan.target = target;
+	vkLinearOutputPlan.view = view;
+	vkLinearOutputPlan.frame = backEnd.frameCount;
+	return NULL;
+}
+
+static bool VK_Post_DrawPreparedLinearOutput( const viewDef_t *view, idRenderTexture *target ) {
+	if ( vkLinearOutputPlan.view != view || vkLinearOutputPlan.frame != backEnd.frameCount
+			|| vkLinearOutputPlan.target != target ) { return false; }
+	vkLinearOutputPlan.consumed = true;
+	idImage *scene = VK_Post_CaptureLinearScene( view );
+	if ( scene == NULL ) { return false; }
+	const float exposure = VK_Post_UpdateHDRAutoExposure( view, scene,
+		&vkLinearOutputPlan.exposureSteps, vkLinearOutputPlan.luminance );
+	const bool bloomReady = VK_Post_ExecuteSteps( vkLinearOutputPlan.bloomSteps );
+	if ( !VK_Exec_SetRenderTarget( target ) || !bloomReady ) { return false; }
+	vkLinearOutputPlan.block.exposure[0] = r_hdrExposure.GetFloat() * exposure;
+	const bool submitted = VK_Exec_UpdateInteractionUniform( vkLinearOutputPlan.uniformOffset,
+			&vkLinearOutputPlan.block, sizeof( vkLinearOutputPlan.block ) )
+		&& VK_Post_DrawSceneRect( view, vkLinearOutputPlan.pipeline, vkLinearOutputPlan.sets,
+			1 + VK_POST_BLOOM_MAX_LEVELS, vkLinearOutputPlan.uniformOffset );
+	if ( submitted && VK_HDRScene_LinearActive() ) {
+		const vkImageEntry_t *entry = VK_Image_GetEntry( scene->GetDeviceHandle() );
+		vkLinearCapture.valid = entry != NULL;
+		vkLinearCapture.handle = scene->GetDeviceHandle();
+		vkLinearCapture.generation = entry != NULL ? entry->generation : 0;
+		vkLinearCapture.frame = backEnd.frameCount;
+		vkLinearCapture.videoRestart = tr.GetVideoRestartCount();
+	}
+	return submitted;
+}
+
+static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneTarget,
+		bool linearScene ) {
+	if ( linearScene && VK_HDRScene_LinearActive() ) {
+		return VK_Post_DrawPreparedLinearOutput( viewDef, sceneTarget );
+	}
 	const int sceneCubeFace = VK_Exec_ActiveCubeFace();
 	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_BLOOM_COMPOSITE );
 	if ( fragModule == VK_NULL_HANDLE ) {
@@ -1797,7 +2208,6 @@ static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneT
 	const float adaptedExposure = VK_Post_UpdateHDRAutoExposure( viewDef, scene );
 	const int levelCount = idMath::ClampInt( 1, VK_POST_BLOOM_MAX_LEVELS, r_bloomMipCount.GetInteger() );
 	idImage *bloomImages[ VK_POST_BLOOM_MAX_LEVELS ];
-	float weights[ VK_POST_BLOOM_MAX_LEVELS ] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 	for ( int i = 0; i < VK_POST_BLOOM_MAX_LEVELS; i++ ) {
 		bloomImages[ i ] = globalImages->blackImage;
 	}
@@ -1805,16 +2215,8 @@ static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneT
 	if ( bloomRequested ) {
 		bloomEnabled = VK_Post_BuildBloomPyramid( viewDef, scene, levelCount );
 		if ( bloomEnabled ) {
-			float weightSum = 0.0f;
-			for ( int level = 0; level < levelCount; level++ ) {
-				weightSum += VK_POST_BLOOM_BASE_WEIGHTS[ level ];
-			}
-			if ( weightSum <= 0.0f ) {
-				weightSum = 1.0f;
-			}
 			for ( int level = 0; level < levelCount; level++ ) {
 				bloomImages[ level ] = vkPostScene.bloomImages[ level ][ 0 ];
-				weights[ level ] = VK_POST_BLOOM_BASE_WEIGHTS[ level ] / weightSum;
 			}
 		}
 		if ( !VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace ) ) {
@@ -1823,25 +2225,7 @@ static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneT
 	}
 
 	vkPostBloomCompositeBlock_t block;
-	memset( &block, 0, sizeof( block ) );
-	block.bloom[ 0 ] = bloomRequested ? r_bloomIntensity.GetFloat() : 0.0f;
-	block.bloom[ 1 ] = bloomEnabled ? 1.0f : 0.0f;
-	block.bloom[ 2 ] = r_hdrToneMap.GetBool() ? 1.0f : 0.0f;
-	block.bloom[ 3 ] = (float)idMath::ClampInt( 0, 2, r_hdrDebugView.GetInteger() );
-	block.exposure[ 0 ] = r_hdrExposure.GetFloat() * adaptedExposure;
-	block.exposure[ 1 ] = r_hdrWhitePoint.GetFloat();
-	block.exposure[ 2 ] = r_hdrLift.GetFloat();
-	block.exposure[ 3 ] = r_hdrPostGamma.GetFloat();
-	block.grade[ 0 ] = r_hdrGain.GetFloat();
-	block.grade[ 1 ] = r_hdrVibrance.GetFloat();
-	block.grade[ 2 ] = r_hdrSaturation.GetFloat();
-	block.grade[ 3 ] = r_hdrContrast.GetFloat();
-	block.highlight[ 0 ] = r_hdrHighlightDesaturation.GetFloat();
-	block.highlight[ 1 ] = r_hdrGamutCompression.GetFloat();
-	for ( int i = 0; i < 4; i++ ) {
-		block.weights[ i ] = weights[ i ];
-	}
-	block.weights2[ 0 ] = weights[ 4 ];
+	VK_Post_BloomCompositeBlock( block, bloomRequested, bloomEnabled, levelCount, adaptedExposure, linearScene );
 
 	VkDescriptorSet sets[ 1 + VK_POST_BLOOM_MAX_LEVELS ];
 	sets[ 0 ] = VK_Post_Descriptor( scene );
@@ -1851,7 +2235,20 @@ static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneT
 	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
 	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_BLOOM_COMPOSITE, vkPost.fullscreenVert,
 			fragModule, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
-	return VK_Post_DrawSceneRect( viewDef, pipeline, sets, 1 + VK_POST_BLOOM_MAX_LEVELS, uniformOffset );
+	// The portal sky is an already composed backdrop. OpenGL preserves its
+	// far-depth pixels at scene presentation; do the equivalent here before
+	// authored post effects or game-owned presentation can consume this target.
+	bool preserveSky = false;
+	if ( sceneTarget != NULL && sceneTarget->GetDepthImage() != NULL ) {
+		preserveSky = vkPortalSkyOwner == viewDef;
+		for ( int i = 0; i < viewDef->numDrawSurfs && !preserveSky; ++i ) {
+			const drawSurf_t *surf = viewDef->drawSurfs[i];
+			preserveSky = surf != NULL && surf->material != NULL
+				&& ( surf->material->IsPortalSky() || surf->material->GetSort() == SS_PORTAL_SKY );
+		}
+	}
+	vkHDR.skyPreserved = preserveSky;
+	return VK_Post_DrawSceneRect( viewDef, pipeline, sets, 1 + VK_POST_BLOOM_MAX_LEVELS, uniformOffset, preserveSky );
 }
 
 // ---- cel world ink (RB_STD_CelWorldOutline) ----
@@ -1864,6 +2261,468 @@ typedef struct vkPostCelOutlineBlock_s {
 	float	celEdgeParams[ 4 ];
 	float	celOutlineColor[ 4 ];
 } vkPostCelOutlineBlock_t;
+
+static bool VK_Post_TestToneMapping( viewDef_t &view ) {
+	idCVar *settings[] = { &r_bloom, &r_hdrAutoExposure, &r_hdrExposure, &r_hdrWhitePoint,
+		&r_hdrLift, &r_hdrPostGamma, &r_hdrGain, &r_hdrVibrance, &r_hdrSaturation,
+		&r_hdrContrast, &r_hdrHighlightDesaturation, &r_hdrGamutCompression, &r_hdrDebugView };
+	const float controls[] = { 0, 0, 1, 6, 0, 1, 1, 0, 1, 1, 0, 0, 0 };
+	idStr previous[ sizeof( settings ) / sizeof( settings[0] ) ];
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) {
+		previous[i] = settings[i]->GetString();
+		settings[i]->SetFloat( controls[i] );
+	}
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_RGBA16F;
+	opts.width = opts.height = 8;
+	opts.numLevels = 1;
+	opts.numMSAASamples = 0;
+	opts.isPersistant = true;
+	idImage *image = globalImages->ScratchImage( "_vkHDRToneMapTest", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	bool passed = image != NULL;
+	int cases = 0;
+	if ( passed ) {
+		image->AllocImage( opts, TF_NEAREST, TR_CLAMP );
+		idRenderTexture target( image, NULL );
+		view.viewport.x1 = view.viewport.y1 = view.scissor.x1 = view.scissor.y1 = 0;
+		view.viewport.x2 = view.viewport.y2 = view.scissor.x2 = view.scissor.y2 = 7;
+		const float colors[][4] = {
+			{0,0,0,1}, {.18f,.18f,.18f,1}, {.5f,.5f,.5f,1}, {.75f,.75f,.75f,1},
+			{1,1,1,1}, {2,2,2,1}, {4,4,4,1}, {6,6,6,1}, {8,8,8,1}, {64,64,64,1},
+			{.25f,.5f,.75f,1}, {1,.7f,.35f,1}, {4,1,.5f,1}, {-1,.18f,2,1}
+		};
+		const float exposures[] = { .125f, 1, 3, 8 };
+		for ( int white = 0; white < 2 && passed; ++white ) {
+			const float whitePoint = white == 0 ? 1.0f : 6.0f;
+			r_hdrWhitePoint.SetFloat( whitePoint );
+			for ( int e = 0; e < 4 && passed; ++e ) {
+				r_hdrExposure.SetFloat( exposures[e] );
+				for ( int c = 0; c < 14 && passed; ++c ) {
+					++backEnd.frameCount;
+					passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent();
+					if ( passed ) {
+						VK_Exec_ClearRenderTarget( true, false, 1, colors[c] );
+						passed = VK_Post_DrawBloom( &view, &target, false );
+					}
+					idList<float> pixels;
+					passed = passed && VK_Exec_TestReadFloatImage( image, pixels ) && pixels.Num() == 8 * 8 * 4;
+					for ( int i = 0; i < pixels.Num() && passed; ++i ) {
+						const int channel = i % 4;
+						const double x = Max( 0.0, double( colors[c][channel] ) * exposures[e] );
+						const double range = Max( 1.0, double( whitePoint ) * exposures[e] ) - .5;
+						const double t = Max( 0.0, x - .5 );
+						// Independent rational form: identity slope at the knee,
+						// exact reference white and unchanged lower half-range.
+						const double expected = channel == 3 ? 1.0 : Min( 1.0,
+							x <= .5 ? x : .5 + t * range / ( range + t * ( 2 * range - 1 ) ) );
+						passed = std::isfinite( pixels[i] ) && fabs( pixels[i] - expected ) < .002;
+						if ( !passed ) {
+							common->Warning( "Vulkan HDR tone-map fixture white=%g exposure=%g color=%d channel=%d got=%g expected=%g",
+								whitePoint, exposures[e], c, channel, pixels[i], expected );
+						}
+					}
+					++cases;
+				}
+			}
+		}
+		(void)VK_Exec_SetRenderTarget( NULL );
+		image->PurgeImage();
+	}
+	// The right half is portal-sky depth, the left half foreground. Both
+	// contain identical radiance; only foreground receives exposure/tone map.
+	int skyCases = 0;
+	const idMaterial *skyMaterial = declManager->FindMaterial( "_default" );
+	const float originalSort = skyMaterial->GetSort();
+	skyMaterial->SetSort( SS_PORTAL_SKY );
+	drawSurf_t skySurf = {};
+	skySurf.material = skyMaterial;
+	drawSurf_t *skySurfs[] = { &skySurf };
+	view.drawSurfs = skySurfs;
+	view.numDrawSurfs = 1;
+	r_hdrExposure.SetFloat( 8 );
+	r_hdrWhitePoint.SetFloat( 6 );
+	for ( int fixture = 0; fixture < 20 && passed; ++fixture ) {
+		const int mode = fixture % 5;
+		const bool linearScene = fixture >= 10;
+		opts.numMSAASamples = fixture % 10 < 5 ? 0 : 4;
+		opts.format = FMT_RGBA16F;
+		image->AllocImage( opts, TF_NEAREST, TR_CLAMP );
+		opts.format = FMT_DEPTH;
+		idImage *depth = globalImages->ScratchImage( "_vkHDRSkyDepthTest", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+		passed = depth != NULL;
+		if ( passed ) {
+			depth->AllocImage( opts, TF_NEAREST, TR_CLAMP );
+			idRenderTexture target( image, depth );
+			++backEnd.frameCount;
+			passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent();
+			if ( passed ) {
+				view.numDrawSurfs = mode == 0 ? 1 : 0;
+				if ( mode != 0 ) {
+					viewDef_t portal = view;
+					portal.renderFlags |= RF_PORTAL_SKY;
+					if ( mode == 3 ) { ++portal.viewport.x2; }
+					VK_PostProcess_BeginView( &portal );
+					if ( mode == 2 ) { ++backEnd.frameCount; }
+					if ( mode == 4 ) { (void)VK_Exec_SetRenderTarget( NULL ); }
+				}
+				VK_PostProcess_BeginView( &view );
+				passed = VK_Exec_SetRenderTarget( &target );
+				const float color[] = { .5f, .5f, .5f, 1 };
+				VK_Exec_ClearRenderTarget( true, true, 1, color );
+				VkClearAttachment clear = {};
+				clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+				clear.clearValue.depthStencil.depth = .5f;
+				VkClearRect rect = {};
+				rect.rect.extent.width = 4;
+				rect.rect.extent.height = 8;
+				rect.layerCount = 1;
+				vkCmdClearAttachments( VK_Exec_ActiveCmd(), 1, &clear, 1, &rect );
+				passed = VK_Post_DrawBloom( &view, &target, linearScene );
+			}
+			idList<float> pixels;
+			idImage *resolved = passed ? VK_Post_CaptureScene( &view ) : NULL;
+			passed = passed && VK_Exec_TestReadFloatImage( resolved, pixels ) && pixels.Num() == 8 * 8 * 4;
+			for ( int i = 0; i < pixels.Num() && passed; ++i ) {
+				const bool foreground = mode >= 2 || ( i / 4 ) % 8 < 4;
+				// Linear filmic output for radiance .5 at exposure 8/white 6
+				// is 0.99119336; the stock shoulder is 0.94156707.
+				const double expected = i % 4 == 3 ? 1.0 : !foreground ? .5
+					: linearScene ? .99119336 : .94156707;
+				passed = std::isfinite( pixels[i] ) && fabs( pixels[i] - expected ) < .002;
+			}
+			(void)VK_Exec_SetRenderTarget( NULL );
+			depth->PurgeImage();
+		}
+		image->PurgeImage();
+		++skyCases;
+	}
+	skyMaterial->SetSort( originalSort );
+	view.drawSurfs = NULL;
+	view.numDrawSurfs = 0;
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) {
+		settings[i]->SetString( previous[i] );
+	}
+	common->Printf( "Vulkan HDR tone-map self-test %s (%d production shader fixtures, %d portal-sky masks)\n",
+		passed && cases == 112 && skyCases == 20 ? "passed" : "FAILED", cases, skyCases );
+	return passed && cases == 112 && skyCases == 20;
+}
+
+// Double-precision reference for the output contract. This is deliberately
+// independent of the GLSL arithmetic: integer-coefficient rational film and
+// scalar piecewise display transfer, evaluated from the actual CVar inputs.
+static void VK_Post_TestHDRExpected( const float *source, bool linearScene, double *expected ) {
+	double color[3];
+	for ( int c = 0; c < 3; ++c ) {
+		color[c] = Max( 0.0, double( source[c] ) );
+	}
+	const int debugView = r_hdrDebugView.GetInteger();
+	if ( debugView != 0 ) {
+		const double peak = Max( color[0], Max( color[1], color[2] ) );
+		const double logPeak = log( Max( peak, .0001 ) ) / log( 2.0 );
+		if ( debugView == 2 ) {
+			for ( int c = 0; c < 3; ++c ) {
+				color[c] = Min( 1.0, Max( 0.0, ( logPeak + 10.0 ) / 10.0 ) );
+			}
+		} else {
+			const double stops[5][3] = { {.02,.05,.16}, {0,.55,.95}, {.18,.84,.18}, {.98,.78,.08}, {.95,.14,.05} };
+			const double position = Min( 4.0, Max( 0.0, ( logPeak + 8.0 ) / 2.0 ) );
+			const int lower = Min( 3, int( position ) );
+			for ( int c = 0; c < 3; ++c ) {
+				color[c] = stops[lower][c] + ( stops[lower+1][c] - stops[lower][c] ) * ( position - lower );
+			}
+		}
+	} else {
+		// A spatially constant input with zero threshold is unchanged by the
+		// normalized bloom pyramid, so its exact contribution is intensity*C.
+		if ( r_bloom.GetBool() ) {
+			for ( int c = 0; c < 3; ++c ) {
+				color[c] *= 1.0 + double( r_bloomIntensity.GetFloat() );
+			}
+		}
+		if ( r_hdrToneMap.GetBool() ) {
+			const double exposure = Max( .001, double( r_hdrExposure.GetFloat() ) );
+			const double white = Max( 1.0, double( r_hdrWhitePoint.GetFloat() ) );
+			for ( int c = 0; c < 3; ++c ) {
+				const double x = color[c] * exposure;
+				if ( linearScene ) {
+					color[c] = ( 251*x*x + 3*x ) * ( 243*white*white + 59*white + 14 )
+						/ ( ( 243*x*x + 59*x + 14 ) * ( 251*white*white + 3*white ) );
+				} else {
+					const double range = Max( 1.0, white * exposure ) - .5;
+					const double t = Max( 0.0, x - .5 );
+					color[c] = x <= .5 ? x : .5 + t * range / ( range + t * ( 2*range - 1 ) );
+				}
+			}
+			double luma = .2126*color[0] + .7152*color[1] + .0722*color[2];
+			const double h = Min( 1.0, Max( 0.0, ( Max( color[0], Max( color[1], color[2] ) ) - .98 ) / .02 ) );
+			const double desaturate = Min( 1.0, Max( 0.0, h*h*(3-2*h) * r_hdrHighlightDesaturation.GetFloat() ) );
+			for ( int c = 0; c < 3; ++c ) {
+				color[c] += ( luma - color[c] ) * desaturate;
+			}
+			const double peak = Max( color[0], Max( color[1], color[2] ) );
+			const double gamut = r_hdrGamutCompression.GetFloat();
+			const double scale = peak > 1 && gamut > 0 ? ( 1 + ( peak - 1 ) / ( 1 + gamut*( peak - 1 ) ) ) / peak : 1;
+			for ( int c = 0; c < 3; ++c ) {
+				color[c] = Min( 1.0, Max( 0.0, color[c] * scale ) );
+				if ( linearScene ) {
+					color[c] = color[c] < .0031308 ? 12.92*color[c] : 1.055*pow( color[c], 1.0/2.4 ) - .055;
+				}
+				color[c] = pow( Max( 0.0, color[c] + r_hdrLift.GetFloat() ),
+					1.0 / Max( .001, double( r_hdrPostGamma.GetFloat() ) ) ) * r_hdrGain.GetFloat();
+			}
+			luma = .2126*color[0] + .7152*color[1] + .0722*color[2];
+			const double saturation = Max( color[0], Max( color[1], color[2] ) ) - Min( color[0], Min( color[1], color[2] ) );
+			const double vibrance = Min( 2.0, Max( 0.0, 1 + r_hdrVibrance.GetFloat() * ( 1 - saturation ) ) );
+			for ( int c = 0; c < 3; ++c ) {
+				// Both vibrance and saturation preserve the same luma.
+				color[c] = luma + ( color[c] - luma ) * vibrance * r_hdrSaturation.GetFloat();
+				color[c] = Min( 1.0, Max( 0.0, ( color[c] - .5 ) * r_hdrContrast.GetFloat() + .5 ) );
+			}
+		}
+	}
+	for ( int c = 0; c < 3; ++c ) {
+		expected[c] = color[c];
+	}
+	expected[3] = source[3];
+}
+
+static bool VK_Post_TestOutputFixture( viewDef_t &view, idRenderTexture &target,
+		const float *color, bool linearScene, const char *group, int fixture ) {
+	++backEnd.frameCount;
+	bool passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent();
+	if ( passed ) {
+		VK_Exec_ClearRenderTarget( true, false, 1, color );
+		passed = VK_Post_DrawBloom( &view, &target, linearScene );
+	}
+	idImage *resolved = passed ? VK_Post_CaptureScene( &view ) : NULL;
+	idList<float> pixels;
+	passed = passed && VK_Exec_TestReadFloatImage( resolved, pixels ) && pixels.Num() == 8 * 8 * 4;
+	double expected[4];
+	VK_Post_TestHDRExpected( color, linearScene, expected );
+	for ( int i = 0; i < pixels.Num() && passed; ++i ) {
+		const int channel = i % 4;
+		passed = std::isfinite( pixels[i] ) && ( channel == 3
+			? pixels[i] == expected[channel] : fabs( pixels[i] - expected[channel] ) < .003 );
+		if ( !passed ) {
+			common->Warning( "Vulkan HDR %s fixture=%d linear=%d samples=%d channel=%d got=%g expected=%g",
+				group, fixture, int( linearScene ), target.GetColorImage( 0 )->GetOpts().numMSAASamples,
+				channel, pixels[i], expected[channel] );
+		}
+	}
+	return passed;
+}
+
+static bool VK_Post_TestLinearToneMapping( viewDef_t &view ) {
+	idCVar *settings[] = { &r_bloom, &r_bloomIntensity, &r_bloomThreshold, &r_bloomSoftKnee,
+		&r_bloomMipCount, &r_bloomRadius, &r_hdrAutoExposure, &r_hdrExposure, &r_hdrWhitePoint,
+		&r_hdrLift, &r_hdrPostGamma, &r_hdrGain, &r_hdrVibrance, &r_hdrSaturation,
+		&r_hdrContrast, &r_hdrHighlightDesaturation, &r_hdrGamutCompression, &r_hdrDebugView, &r_hdrToneMap };
+	const float controls[] = { 0, .5f, 0, 0, 5, 1, 0, 1, 6, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1 };
+	idStr previous[ sizeof( settings ) / sizeof( settings[0] ) ];
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) {
+		previous[i] = settings[i]->GetString();
+		settings[i]->SetFloat( controls[i] );
+	}
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_RGBA16F;
+	opts.width = opts.height = 8;
+	opts.numLevels = 1;
+	opts.numMSAASamples = 0;
+	opts.isPersistant = true;
+	idImage *image = globalImages->ScratchImage( "_vkHDRLinearOutputTest", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	view.viewport.x1 = view.viewport.y1 = view.scissor.x1 = view.scissor.y1 = 0;
+	view.viewport.x2 = view.viewport.y2 = view.scissor.x2 = view.scissor.y2 = 7;
+	const float colors[][4] = {
+		{0,0,0,0}, {.18f,.18f,.18f,.125f}, {.5f,.5f,.5f,.4375f}, {.75f,.75f,.75f,1},
+		{1,1,1,0}, {2,2,2,.125f}, {4,4,4,.4375f}, {6,6,6,1}, {8,8,8,0}, {64,64,64,.125f},
+		{.25f,.5f,.75f,.4375f}, {1,.7f,.35f,1}, {4,1,.5f,0}, {-1,.18f,2,.125f},
+		{65504,4096,1,.4375f}, {.00001f,.0001f,.001f,1}, {.0009765625f,.001953125f,.00390625f,0},
+		{.015625f,.03125f,.0625f,.125f}, {1,0,0,.4375f}, {0,0,4,1}
+	};
+	const float exposures[] = { .125f, 1, 3, 8 };
+	bool passed = image != NULL;
+	int cases = 0;
+	int compositionCases = 0;
+	for ( int sampleCase = 0; sampleCase < 2 && passed; ++sampleCase ) {
+		opts.numMSAASamples = sampleCase == 0 ? 0 : 4;
+		image->AllocImage( opts, TF_NEAREST, TR_CLAMP );
+		passed = image->GetOpts().numMSAASamples == opts.numMSAASamples;
+		idRenderTexture target( image, NULL );
+		for ( int white = 0; white < 2 && passed; ++white ) {
+			r_hdrWhitePoint.SetFloat( white == 0 ? 1.0f : 6.0f );
+			for ( int e = 0; e < 4 && passed; ++e ) {
+				r_hdrExposure.SetFloat( exposures[e] );
+				for ( int c = 0; c < 20 && passed; ++c ) {
+					passed = VK_Post_TestOutputFixture( view, target, colors[c], true, "linear output", cases++ );
+				}
+			}
+		}
+		for ( int domain = 0; domain < 2 && passed; ++domain ) {
+			for ( int variant = 0; variant < 8 && passed; ++variant ) {
+				for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) {
+					settings[i]->SetFloat( controls[i] );
+				}
+				float color[] = { .25f, .0625f, .015625f, .4375f };
+				r_bloom.SetBool( variant == 1 || variant == 2 || variant == 5 || variant == 6 );
+				r_hdrToneMap.SetBool( variant != 1 && variant != 7 );
+				if ( variant == 0 ) { r_hdrExposure.SetFloat( 0 ); }
+				if ( variant == 3 ) {
+					r_hdrLift.SetFloat( .02f ); r_hdrPostGamma.SetFloat( 1.6f ); r_hdrGain.SetFloat( .9f );
+					r_hdrVibrance.SetFloat( .25f ); r_hdrSaturation.SetFloat( .85f ); r_hdrContrast.SetFloat( 1.2f );
+				}
+				if ( variant == 4 ) {
+					color[0] = 4; color[1] = 1; color[2] = .5f;
+					r_hdrHighlightDesaturation.SetFloat( .6f ); r_hdrGamutCompression.SetFloat( 1 );
+				}
+				r_hdrDebugView.SetInteger( variant == 5 ? 1 : variant == 6 ? 2 : 0 );
+				passed = VK_Post_TestOutputFixture( view, target, color, domain != 0, "composition", compositionCases++ );
+			}
+		}
+		(void)VK_Exec_SetRenderTarget( NULL );
+		image->PurgeImage();
+		for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) {
+			settings[i]->SetFloat( controls[i] );
+		}
+	}
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) {
+		settings[i]->SetString( previous[i] );
+	}
+	passed = passed && cases == 320 && compositionCases == 32;
+	common->Printf( "Vulkan HDR linear-output self-test %s (%d linear fixtures, %d composition fixtures, actual 0x/4x MSAA)\n",
+		passed ? "passed" : "FAILED", cases, compositionCases );
+	return passed;
+}
+
+static bool VK_Post_TestPreparedHDR( viewDef_t &view ) {
+	idCVar *settings[] = { &r_bloom, &r_bloomIntensity, &r_bloomThreshold, &r_bloomSoftKnee,
+		&r_bloomMipCount, &r_bloomRadius, &r_hdrAutoExposure, &r_hdrAutoExposureAsync,
+		&r_hdrExposure, &r_hdrWhitePoint, &r_hdrLift, &r_hdrPostGamma, &r_hdrGain,
+		&r_hdrVibrance, &r_hdrSaturation, &r_hdrContrast, &r_hdrHighlightDesaturation,
+		&r_hdrGamutCompression, &r_hdrDebugView, &r_hdrToneMap, &r_ssao, &r_motionBlur,
+		&r_vkHDRPrepareFailure };
+	const float controls[] = { 0, .5f, 0, 0, 5, 1, 0, 0, 1, 6, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0 };
+	static_assert( sizeof( settings ) / sizeof( settings[0] ) == sizeof( controls ) / sizeof( controls[0] ), "HDR test settings" );
+	idStr previous[sizeof( settings ) / sizeof( settings[0] )];
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) {
+		previous[i] = settings[i]->GetString();
+		settings[i]->SetFloat( controls[i] );
+	}
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_RGBA16F;
+	opts.width = opts.height = 8;
+	opts.numLevels = 1;
+	opts.numMSAASamples = 0;
+	opts.isPersistant = true;
+	idImage *image = globalImages->ScratchImage( "_vkHDRPreparedOutputTest", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	opts.format = FMT_DEPTH;
+	idImage *depth = globalImages->ScratchImage( "_vkHDRPreparedOutputDepth", &opts, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	const float colors[2][4] = { {.25f,.5f,2.0f,.125f}, {4.0f,.125f,.5f,.4375f} };
+	bool passed = image != NULL && depth != NULL;
+	int cases = 0, rejected = 0, domains = 0;
+	for ( int sample = 0; sample < 2 && passed; ++sample ) {
+		for ( int size = 0; size < 2 && passed; ++size ) {
+			opts.width = size == 0 ? 8 : 17;
+			opts.height = size == 0 ? 8 : 9;
+			opts.numMSAASamples = sample == 0 ? 0 : 4;
+			opts.format = FMT_RGBA16F;
+			image->AllocImage( opts, TF_NEAREST, TR_CLAMP );
+			opts.format = FMT_DEPTH;
+			depth->AllocImage( opts, TF_NEAREST, TR_CLAMP );
+			passed = image->GetOpts().numMSAASamples == opts.numMSAASamples && depth->GetOpts().numMSAASamples == opts.numMSAASamples;
+			idRenderTexture target( image, depth );
+			view.viewport.x1 = view.viewport.y1 = view.scissor.x1 = view.scissor.y1 = 0;
+			view.viewport.x2 = view.scissor.x2 = opts.width - 1;
+			view.viewport.y2 = view.scissor.y2 = opts.height - 1;
+			for ( int automatic = 0; automatic < 2 && passed; ++automatic ) {
+				for ( int bloom = 0; bloom < 2 && passed; ++bloom ) {
+					for ( int c = 0; c < 2 && passed; ++c ) {
+						++backEnd.frameCount;
+						view.floatTime = float( backEnd.frameCount ) * .016f;
+						r_hdrExposure.SetFloat( 1.0f );
+						r_hdrAutoExposure.SetBool( automatic != 0 );
+						r_bloom.SetBool( bloom != 0 );
+						r_bloomMipCount.SetInteger( c == 0 ? 1 : 5 );
+						passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent();
+						if ( passed ) {
+							VK_Exec_ClearRenderTarget( true, true, 1, colors[c] );
+							VK_PostProcess_BeginView( &view );
+							VK_Post_SynchronizeHDRExposure( &view, true );
+							VK_Post_ResetHDRExposure();
+							passed = VK_PostProcess_PrepareLinearOutput( &view ) == NULL
+								&& VK_Post_DrawPreparedLinearOutput( &view, &target );
+						}
+						idList<float> pixels;
+						idImage *resolved = passed ? VK_Post_CaptureScene( &view ) : NULL;
+						passed = passed && VK_Exec_TestReadFloatImage( resolved, pixels ) && pixels.Num() == opts.width * opts.height * 4;
+						const double luminance = .2126*colors[c][0] + .7152*colors[c][1] + .0722*colors[c][2];
+						const double expectedExposure = automatic ? Min( double( r_hdrMaxExposure.GetFloat() ),
+							Max( double( r_hdrMinExposure.GetFloat() ), double( r_hdrKeyValue.GetFloat() ) / luminance ) ) : 1.0;
+						// Use the analytic input luminance, not the measured exposure,
+						// to independently predict the complete production-chain output.
+						r_hdrExposure.SetFloat( float( expectedExposure ) );
+						double expected[4];
+						VK_Post_TestHDRExpected( colors[c], true, expected );
+						r_hdrExposure.SetFloat( 1.0f );
+						for ( int i = 0; i < pixels.Num() && passed; ++i ) {
+							passed = std::isfinite( pixels[i] ) && ( i % 4 == 3 ? pixels[i] == expected[3]
+								: fabs( pixels[i] - expected[i % 4] ) < .003 );
+						}
+						if ( automatic ) {
+							passed = passed && vkHDR.adaptation.initialized
+								&& fabs( vkHDR.adaptation.exposure - expectedExposure ) < expectedExposure * .015;
+						}
+						if ( !passed ) { common->Warning( "Vulkan HDR prepared fixture %d failed (samples=%d size=%d auto=%d bloom=%d color=%d)", cases, opts.numMSAASamples, size, automatic, bloom, c ); }
+						++cases;
+					}
+				}
+			}
+			// Late preflight failures must restore the destination without writing
+			// a partial pyramid, tone map or changed scene. Exercise every stage.
+			if ( size == 1 ) {
+				for ( int fault = 1; fault <= 3 && passed; ++fault ) {
+					++backEnd.frameCount;
+					r_vkHDRPrepareFailure.SetInteger( fault );
+					passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent();
+					if ( passed ) {
+						VK_Exec_ClearRenderTarget( true, true, 1, colors[0] );
+						const int checkpoint = VK_Exec_InteractionUniformCheckpoint();
+						passed = VK_PostProcess_PrepareLinearOutput( &view ) != NULL && VK_Exec_ActiveRenderTexture() == &target
+							&& VK_Exec_InteractionUniformCheckpoint() == checkpoint;
+					}
+					idList<float> pixels;
+					idImage *resolved = passed ? VK_Post_CaptureScene( &view ) : NULL;
+					passed = passed && VK_Exec_TestReadFloatImage( resolved, pixels ) && pixels.Num() == opts.width * opts.height * 4;
+					for ( int i = 0; i < pixels.Num() && passed; ++i ) { passed = pixels[i] == colors[0][i % 4]; }
+					++rejected;
+				}
+				r_vkHDRPrepareFailure.SetInteger( 0 );
+				for ( int linear = 0; linear < 2 && passed; ++linear ) {
+					++backEnd.frameCount;
+					passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent();
+					const unsigned int oldGeneration = vkHDR.generation;
+					VK_Post_SynchronizeHDRExposure( &view, linear != 0 );
+					VK_PostProcess_ConsumeHDRSample( oldGeneration, backEnd.frameCount, 4.0f );
+					passed = passed && vkHDR.generation != oldGeneration && !vkHDR.haveSample && !vkHDR.adaptation.initialized;
+					VK_PostProcess_ConsumeHDRSample( vkHDR.generation, backEnd.frameCount, 0.0f );
+					VK_Post_AdaptHDRExposure( view.floatTime );
+					passed = passed && vkHDR.haveSample && vkHDR.adaptation.initialized && vkHDR.adaptation.averageLuminance == 1.0f;
+					++domains;
+				}
+			}
+			(void)VK_Exec_SetRenderTarget( NULL );
+			image->PurgeImage();
+			depth->PurgeImage();
+		}
+	}
+	for ( unsigned int i = 0; i < sizeof( settings ) / sizeof( settings[0] ); ++i ) { settings[i]->SetString( previous[i] ); }
+	passed = passed && cases == 32 && rejected == 6 && domains == 4;
+	common->Printf( "Vulkan HDR prepared-post self-test %s (%d exposure/bloom fixtures, %d unchanged-scene rejections, %d domain resets, actual 0x/4x MSAA)\n",
+		passed ? "passed" : "FAILED", cases, rejected, domains );
+	return passed;
+}
 
 static bool VK_Post_DrawCelInk( const viewDef_t *viewDef ) {
 	const int width = VK_Post_ViewWidth( viewDef );
@@ -1945,7 +2804,7 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
 		return false;
 	}
 	vkPostScene.viewSerial++;
-	VK_Post_SynchronizeHDRExposure( viewDef );
+	VK_Post_SynchronizeHDRExposure( viewDef, VK_HDRScene_LinearActive() );
 	const bool ssao = VK_Post_SSAORequested( viewDef );
 	const bool bloomPass = VK_Post_BloomPassRequested( viewDef );
 	const bool celInk = VK_Post_CelInkRequested( viewDef );
@@ -1988,7 +2847,10 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
 		return drew;
 	}
 	if ( bloomPass ) {
-		if ( VK_Post_DrawBloom( viewDef, sceneTarget ) ) {
+		const bool linearScene = R_ModernGLExecutor_PBRLinearSceneActive();
+		const bool outputSubmitted = VK_Post_DrawBloom( viewDef, sceneTarget, linearScene );
+		if ( linearScene ) { VK_HDRScene_FinishOutput( outputSubmitted ); }
+		if ( outputSubmitted ) {
 			drew = true;
 			VK_Post_LogFirstDraw( bloomLogged, "bloom/tone map", "" );
 		} else {

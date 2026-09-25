@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "framebuffer_coords.glsl"
 
 // Vulkan port of Quake 4's shipped
 // glprogs/glsl/sniperstretch2.glslfp.
@@ -69,7 +71,7 @@ vec2 CurrentRenderCoord(out vec2 halfTextureScale) {
     // Vulkan fragment coordinates are upper-left oriented.  Convert to the
     // bottom-left GL window space used by the retail program and by the
     // current-render capture, then localize the coordinate to this viewport.
-    vec2 windowGL = vec2(gl_FragCoord.x, framebufferHeight - gl_FragCoord.y);
+    vec2 windowGL = vec2(gl_FragCoord.x, CanonicalWindowY(framebufferHeight));
     vec2 viewportCoord = (windowGL - viewportOrigin) / viewportSize;
     halfTextureScale = currentRenderScale * 0.5;
     return clamp(viewportCoord * currentRenderScale, vec2(0.0), currentRenderScale);

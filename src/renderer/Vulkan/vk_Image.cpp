@@ -42,6 +42,17 @@
 
 #include "VulkanDevice.h"
 #include "vk_Image.h"
+#include "vk_ExecutorHooks.h"
+
+bool idImage::ReadPixelsRGBA8( idList<byte> &pixels ) {
+	pixels.Clear();
+	if ( !IsLoaded() || opts.textureType != TT_2D || opts.format != FMT_RGBA8
+			|| opts.numMSAASamples != 0 || opts.width < 1 || opts.height < 1
+			|| opts.width > 8192 || opts.height > 8192 ) {
+		return false;
+	}
+	return VK_Exec_ReadImageScreenshot( this, pixels );
+}
 
 extern idCVar image_anisotropy;
 
@@ -237,7 +248,10 @@ static int vkNumSamplers = 0;
 static VkSampler VK_Image_GetSampler( textureFilter_t filter, textureRepeat_t repeat, bool mips ) {
 	const imageFilterState_t defaultFilter = R_GetDefaultImageFilterState();
 	const int defaultFilterMode = filter == TF_DEFAULT ? static_cast<int>( defaultFilter.mode ) : -1;
-	if ( filter == TF_DEFAULT && !defaultFilter.usesMipmaps ) {
+	// Explicit linear/nearest filters select the base level even if the image
+	// was uploaded with a mip chain before its sampler state changed. Match
+	// GL_LINEAR/GL_NEAREST so reloadImages cannot change which level is used.
+	if ( filter != TF_DEFAULT || !defaultFilter.usesMipmaps ) {
 		mips = false;
 	}
 	int anisotropy = 0;
@@ -813,11 +827,14 @@ void idImage::AllocImage( void ) {
 		imageUsage |= isDepth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
 				: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 	}
-	const VkImageCreateFlags imageFlags =
+	VkImageCreateFlags imageFlags =
 			isCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
 	const VkSampleCountFlagBits samples = VK_Image_SelectSampleCount(
 			opts, info.format, attachmentAspect, imageUsage, imageFlags,
 			attachmentCapable );
+	if ( isDepth && ( vkCtx.sampleLocationCounts & samples ) != 0 ) {
+		imageFlags |= VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT;
+	}
 	opts.numMSAASamples = VK_Image_SampleCountInteger( samples );
 	const int numMips = samples == VK_SAMPLE_COUNT_1_BIT
 			? ( opts.numLevels > 0 ? opts.numLevels : 1 ) : 1;
@@ -1097,14 +1114,50 @@ static void VK_Image_RecordUpload( VkCommandBuffer cmd, void *user ) {
 
 void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int height, const void *pic, int pixelPitch ) const {
 	vkImageEntry_t *entry = VK_Image_GetEntry( texnum );
+	if ( entry != NULL ) {
+		entry->lastUploadSucceeded = false;
+	}
 	if ( entry == NULL || pic == NULL || width <= 0 || height <= 0
 			|| entry->samples != VK_SAMPLE_COUNT_1_BIT
 			|| ( entry->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT ) == 0 ) {
 		return;
 	}
+	// Reject malformed regions before allocating or recording a GPU copy.
+	// In particular, a sixth-face admission bit must never come from a copy
+	// to a nonexistent layer, mip, or a region outside that mip's storage.
+	if ( mipLevel < 0 || mipLevel >= entry->numMips || mipLevel >= 31
+			|| z < 0 || z >= entry->numLayers || x < 0 || y < 0
+			|| pixelPitch < 0 || ( pixelPitch != 0 && pixelPitch < width ) ) {
+		return;
+	}
+	const int mipWidth = Max( 1, entry->width >> mipLevel );
+	const int mipHeight = Max( 1, entry->height >> mipLevel );
+	if ( x >= mipWidth || y >= mipHeight ) {
+		return;
+	}
 
 	vkFormatInfo_t info;
 	if ( !VK_Image_GetFormatInfo( opts, usage, info ) ) {
+		return;
+	}
+	int copyWidth = width, copyHeight = height;
+	if ( info.blockDim > 1 ) {
+		// BinaryImage supplies whole compressed blocks, including padded 4x4
+		// tails for a 2x2/1x1 cube mip. The byte payload includes that padding;
+		// VkBufferImageCopy's extent must still stay inside the physical mip.
+		const int block = info.blockDim;
+		const int remainingWidth = mipWidth - x, remainingHeight = mipHeight - y;
+		const int paddedWidth = ( remainingWidth + block - 1 ) / block * block;
+		const int paddedHeight = ( remainingHeight + block - 1 ) / block * block;
+		if ( x % block != 0 || y % block != 0 || pixelPitch != 0
+				|| width > paddedWidth || height > paddedHeight
+				|| ( width % block != 0 && width != remainingWidth )
+				|| ( height % block != 0 && height != remainingHeight ) ) {
+			return;
+		}
+		copyWidth = Min( width, remainingWidth );
+		copyHeight = Min( height, remainingHeight );
+	} else if ( width > mipWidth - x || height > mipHeight - y ) {
 		return;
 	}
 
@@ -1187,14 +1240,21 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 	ctx.layer = entry->isCube ? z : 0;
 	ctx.x = x;
 	ctx.y = y;
-	ctx.width = width;
-	ctx.height = height;
+	ctx.width = copyWidth;
+	ctx.height = copyHeight;
 	ctx.bufferRowLengthTexels = rowLengthTexels;
 	ctx.oldLayout = entry->layout;
 
 	if ( VK_Device_BatchedUpload( VK_Image_RecordUpload, &ctx, staging, stagingAlloc,
 			(VkDeviceSize)dataBytes ) ) {
 		entry->everUploaded = true;
+		entry->lastUploadSucceeded = true;
+		entry->materialSampleFlipY = false;
+		if ( ++entry->uploadGeneration == 0 ) { ++entry->uploadGeneration; }
+		if ( entry->isCube && mipLevel == 0 && x == 0 && y == 0
+				&& copyWidth == entry->width && copyHeight == entry->height ) {
+			entry->uploadedCubeFaces |= 1u << z;
+		}
 		entry->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 	} else {
 		// nothing recorded: release the staging buffer through the normal

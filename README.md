@@ -111,7 +111,65 @@ Packaged support currently focuses on Windows x64, Linux x64, and Steam Deck/Ste
 </p>
 <p align="center"><sub>A second CRT comparison on mp/q4dm6 shows the same post-process across a brighter indoor arena.</sub></p>
 
-> **Renderer backends:** OpenGL remains the default and recommended release renderer on every platform. The **Vulkan** backend is **experimental and opt-in** (`r_renderApi vulkan`, applied on engine restart), but now renders the stock Quake 4 material-program families, including environment and heat-haze effects, displacement and depth/blur post effects, and guide-driven parallax, custom-lighting, water, and refractive-glass stages. Vulkan also supports 4x MSAA with SMAA. On Windows and Linux it drives a Vulkan driver directly. Apple ships no Vulkan driver, so on macOS the same module runs on top of **MoltenVK**, a Vulkan-on-Metal translation layer bundled inside both existing macOS packages — a runtime option rather than a third download, and not a Metal renderer. It also draws brightness and gamma, baked light grids, soft particles, MSAA alpha-to-coverage, the classic SSAO/bloom/HDR/motion-blur/CRT chain, cel shading, the underwater view, multiplayer player outlines, and the `r_show*` debug views; opt-in floating-point HDR scenes and automatic exposure now pass local stock-map and restart checks, while custom (non-stock) material programs, complete PBR/probe and HDR visual parity, and broader GPU qualification remain incomplete. If loading Vulkan or creating its device, window, surface, swapchain or mandatory startup resources fails, openQ4 continues with OpenGL in the same launch and records the reason. A device failure during a later full `vid_restart` still selects OpenGL for the next launch. See [Display Settings → Renderer Backend](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental).
+> **Renderer backends:** OpenGL remains the default and recommended release renderer on every platform. The **Vulkan** backend is **experimental and opt-in** (`r_renderApi vulkan`, applied on engine restart), but now renders the stock Quake 4 material-program families, including environment and heat-haze effects, displacement and depth/blur post effects, and guide-driven parallax, custom-lighting, water, and refractive-glass stages. Vulkan also supports 4x MSAA with SMAA and exact eligible rigid-object motion in experimental temporal AA. On Windows and Linux it drives a Vulkan driver directly. Apple ships no Vulkan driver, so on macOS the same module runs on top of **MoltenVK**, a Vulkan-on-Metal translation layer bundled inside both existing macOS packages — a runtime option rather than a third download, and not a Metal renderer. It also draws brightness and gamma, baked light grids, soft particles, MSAA alpha-to-coverage, the classic SSAO/bloom/HDR/motion-blur/CRT chain, cel shading, the underwater view, multiplayer player outlines, and the `r_show*` debug views; opt-in floating-point HDR scenes and automatic exposure now pass local stock-map and restart checks, while custom (non-stock) material programs, complete PBR/probe and HDR visual parity, and broader GPU qualification remain incomplete. If loading Vulkan or creating its device, window, surface, swapchain or mandatory startup resources fails, openQ4 continues with OpenGL in the same launch and records the reason. A device failure during a later full `vid_restart` still selects OpenGL for the next launch. See [Display Settings → Renderer Backend](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental).
+
+Automatic Vulkan GPU selection now skips adapters that lack required rendering
+or presentation capabilities before trying the next one. Explicit GPU choices
+remain explicit. See [device admission and validation](docs/dev/vulkan-device-selection.md).
+
+Eligible Vulkan HDR scenes now support baked PBR area lighting while retaining reflections, with recovery checks for image reloads and video restarts. [Baked-lighting scope and remaining comparisons](docs/dev/vulkan-pbr-baked.md) describe the current limits; complete PBR visual parity remains in progress.
+
+Vulkan PBR cutouts now use their own albedo texture for depth coverage, preventing missing coverage when textures are strongly minified. They also preserve constant alpha, preventing unintended holes at an inclusive 1.0 cutoff. Offscreen rendering uses consistent framebuffer coordinates across geometry, depth copies and presentation, reducing cutout edge differences. See [cutout validation](docs/dev/vulkan-pbr-cutout.md) and [image orientation and remaining qualification](docs/dev/vulkan-image-origin.md).
+
+Experimental Vulkan now renders an initial [custom GLSL material subset](docs/dev/vulkan-material-programs.md), including textures, material parameters, vertex movement, per-light effects and supported overrides of stock shader names. Both backends support live material shader reload and recovery after source repair. Broader shader compatibility and complete shadow, material and platform qualification remain in development.
+
+Vulkan point-light shadow edges now use consistent scene coordinates and radial
+depth calculations. The default filtered comparison passes locally against
+OpenGL; stencil and alternate sampling differences remain under investigation.
+See [point-shadow validation](docs/dev/vulkan-point-shadow-parity.md).
+
+Experimental Vulkan PBR also supports [authored ambient lighting](docs/dev/vulkan-pbr-ambient.md), including metallic response and transparent materials. Eligible scenes now have [linear HDR composition with bloom, automatic exposure and linear screenshots](docs/dev/vulkan-hdr.md), including fog and transparency at 0x/4x MSAA. Controlled HDR scenes also match OpenGL at reduced and increased scene resolutions; broader material and post-effect combinations remain in progress.
+
+For renderer debugging, both backends support [raw render-image captures](docs/dev/renderer-image-capture.md) through `screenshot image`, alongside the existing linear HDR screenshots.
+
+Vulkan timing traces also separate frame-completion and image-acquisition waits
+from presentation work. The [frame-pacing investigation](docs/dev/vulkan-frame-pacing.md)
+records the remaining stock-scene stalls and performance qualification limits.
+Storage1 benchmarking now distinguishes the scripted drop-pod entry from a
+separate, checked gameplay view after the second-entry lift settles. Results
+from these two scenes must be compared separately.
+
+Eligible Vulkan PBR previews also preserve bright colors through multisample
+antialiasing when HDR tone mapping is off, avoiding dark edges around emissive
+materials. Classic materials retain their existing color limits. Eligible
+OpenGL previews now apply authored fog and blend lights once, before transparent
+materials, matching Vulkan without an experimental lighting-parity override.
+Vulkan PBR previews explicitly average their stored samples before display
+clamping, preventing darkened supersampled edges from native resolve precision.
+A remaining 125%/8x edge comparison is tracked in the
+[viewport and coverage investigation](docs/dev/vulkan-hdr.md#125-percent-msaa-edge-investigation).
+
+Vulkan's SMAA anti-aliasing now preserves scene orientation through its render
+textures, fixing upside-down gameplay while keeping the HUD upright. Explicit
+averaging of RGBA8 multisample targets also prevents resolve rounding from
+creating visibly different color edges when MSAA and SMAA are combined. The
+[renderer validation guide](docs/dev/renderer-validation-matrix.md) describes
+the controlled scene and resource-recovery checks.
+
+Classic Vulkan material colors now follow the same limits as OpenGL, avoiding
+over-bright surfaces and incorrectly opaque cutouts while preserving intended
+HDR vertex-color brightness and PBR emission. Imported ASE vertex colors also
+have a defined opaque alpha value on both renderers. Bulk texture reloads keep
+enough Vulkan descriptor storage to avoid skipping subsequent draws.
+
+On GPUs supporting programmable sample locations, Vulkan MSAA aligns its
+coverage pattern with the classic OpenGL convention, including HDR targets.
+The [HDR renderer notes](docs/dev/vulkan-hdr.md#multisample-locations) describe
+capability checks and the native fallback.
+
+Supersampled OpenGL PBR scenes now retain the requested MSAA, including at
+125–200% resolution. Repeated resolution changes recycle unused render targets
+so the experimental PBR path can stay active instead of exhausting its cache.
 
 ---
 
@@ -161,6 +219,7 @@ Packaged support currently focuses on Windows x64, Linux x64, and Steam Deck/Ste
 - [BUILDING.md](BUILDING.md) - compile openQ4 from source
 - [TECHNICAL.md](TECHNICAL.md) - advanced configuration, file layout, compatibility notes, and mod details
 - [Map Entity Strings](docs/user/map-entity-strings.md) - replace or extend a map's runtime entities without editing the original map
+- [Experimental Level Editor](docs/user/level-editor.md) - separate `editorExperimental` workspace with source preview, entity inspector, undo, protected saves and recovery; legacy Radiant retained
 
 ---
 
@@ -198,6 +257,7 @@ Bug reports, compatibility reports, testing feedback, and code contributions are
 - **id Software's official Doom 3 and Doom 3 BFG source releases** - retained idTech 4 source lineage; see the [audited provenance inventory](docs/dev/source-provenance.md)
 - **id Software** and **Raven Software** - Quake 4 and the underlying technology
 - **Chris Robinson and the [OpenAL Soft](https://openal-soft.org/) contributors** - maintained cross-platform OpenAL runtime bundled by macOS packages
+- **The Khronos Group and [glslang contributors](https://github.com/KhronosGroup/glslang/tree/15.1.0)** - GLSL parsing and SPIR-V compilation for the Vulkan authored-material support; the pinned source retains its notices, and staging includes the complete license under `licenses/`.
 - **akacross** (Discord user) - Thorough playtesting on Linux and Windows, a huge help moving the project forward!
 
 ---

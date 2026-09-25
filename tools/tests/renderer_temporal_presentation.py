@@ -300,6 +300,9 @@ def main() -> int:
         "VK_TemporalPresentation_DepthStampMatches(",
         "&& depthReady && writeMatches",
         '"Vulkan temporal depth is not current"',
+        "VK_PostProcess_TemporalMotionVectors(",
+        "VK_PostProcess_CommitTemporalMotion(",
+        "velocityComplete",
     ):
         require(vk_resolve, token, "Vulkan temporal resolve")
     vk_direct = function_body(
@@ -336,6 +339,18 @@ def main() -> int:
     ):
         require(vk_fill_resolve, token, "Vulkan reactive-policy fail-safe")
     vk_shader = read(RENDERER / "Vulkan" / "shaders" / "temporal_resolve.frag")
+    vk_post = read(RENDERER / "Vulkan" / "vk_PostProcess.cpp")
+    vk_motion = function_body(vk_post, "idImage *VK_PostProcess_TemporalMotionVectors(")
+    for token in (
+        "viewDef->temporalCaptureFrame", "viewDef->temporalPreviousProjectionValid",
+        "generation != vkTemporalMotionGeneration", "vkTemporalMotionFrame != backEnd.frameCount - 1",
+        "viewDef->temporalViewIdentity != vkTemporalMotionViewIdentity", "VK_PostProcess_ResetTemporalMotion()",
+    ):
+        require(vk_motion, token, "Vulkan exact transform-history ownership")
+    require(vk_shader, "texture(objectMotion, sceneCameraUV)", "Vulkan rigid velocity texture origin")
+    require(vk_shader, "objectVelocity.xy * temporal.sceneOutputExtent.xy", "Vulkan rigid scene-pixel velocity units")
+    if "bool objectValid = false;" in vk_shader:
+        raise AssertionError("Vulkan rigid velocity execution is disabled")
     for token in (
         "neighborhoodMin",
         "historyClamped",

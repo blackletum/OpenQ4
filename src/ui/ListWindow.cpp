@@ -113,6 +113,7 @@ static int openQ4_EnsureSelectionVisible( int top, int fit, int selection, int i
 }
 
 void idListWindow::CommonInit() {
+	maxItems = MAX_LIST_ITEMS;
 	typed = "";
 	typedTime = 0;
 	clickTime = 0;
@@ -364,6 +365,10 @@ void idListWindow::MouseEnter() {
 
 
 bool idListWindow::ParseInternalVar(const char *_name, idParser *src) {
+	if ( idStr::Icmp( _name, "maxitems" ) == 0 ) {
+		maxItems = idMath::ClampInt( 1, 65536, src->ParseInt() );
+		return true;
+	}
 	if (idStr::Icmp(_name, "horizontal") == 0) {
 		horizontal = src->ParseBool();
 		return true;
@@ -799,7 +804,7 @@ void idListWindow::HandleBuddyUpdate(idWindow *buddy) {
 void idListWindow::UpdateList() {
 	idStr str;
 	listItems.Clear();
-	for (int i = 0; i < MAX_LIST_ITEMS; i++) {
+	for (int i = 0; i < maxItems; i++) {
 		if (gui->State().GetString( va("%s_item_%i", listName.c_str(), i), "", str) ) {
 			if ( str.Length() ) {
 				listItems.Append(str);

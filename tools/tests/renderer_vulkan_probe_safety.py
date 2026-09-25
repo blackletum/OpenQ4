@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 
 import renderer_validation_matrix as matrix
 import renderer_vulkan_hdr_gameplay as hdr_gameplay
+import renderer_hdr_highlights as hdr_highlights
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -132,6 +133,25 @@ def validate_runtime_gate() -> None:
     if matrix.evaluate_checks(complete_log.replace(mrt_marker, ""), startup["checks"], {})[0]:
         raise AssertionError("startup without MRT evidence passed")
 
+    probe_source_marker = "Vulkan probe source self-test passed (GPU cube readback, face orientation, sRGB/HDR, upload/reload generations and rejection)"
+    if [probe_source_marker] not in startup["checks"]:
+        raise AssertionError("Vulkan startup no longer requires real GPU probe source reads")
+    if matrix.evaluate_checks(complete_log.replace(probe_source_marker, ""), startup["checks"], {})[0]:
+        raise AssertionError("startup without probe source evidence passed")
+
+    source_case = next(case for case in cases if case["id"] == "renderer-vk-probe-source-lifecycle")
+    source_markers = source_case["orderedLogChecks"]
+    if matrix.evaluate_ordered_log_checks("\n".join(source_markers), source_markers):
+        raise AssertionError("complete probe source lifecycle evidence rejected")
+    for index in range(len(source_markers)):
+        incomplete = "\n".join(source_markers[:index] + source_markers[index + 1:])
+        if not matrix.evaluate_ordered_log_checks(incomplete, source_markers):
+            raise AssertionError("incomplete probe source lifecycle evidence accepted")
+    if "vid_restart partial failed" not in source_case["absent"]:
+        raise AssertionError("partial restart falling back to full could masquerade as partial coverage")
+    for workflow in ("push-verification.yml", "commit-validation.yml"):
+        require(read(f".github/workflows/{workflow}"), source_case["id"], f"{workflow} required probe source coverage")
+
     hdr = next(case for case in cases if case["id"] == "renderer-vk-hdr-selftest")
     hdr_log = "\n".join(alternatives[0] for alternatives in hdr["checks"])
     if not matrix.evaluate_checks(hdr_log, hdr["checks"], {})[0]:
@@ -146,6 +166,20 @@ def validate_runtime_gate() -> None:
         raise AssertionError("complete HDR device-restart sequence rejected")
     if not matrix.evaluate_ordered_log_checks(hdr["orderedLogChecks"][0], hdr["orderedLogChecks"]):
         raise AssertionError("HDR without post-restart GPU evidence passed")
+
+    motion = next(case for case in cases if case["id"] == "renderer-vk-temporal-motion-selftest")
+    motion_log = "\n".join(alternatives[0] for alternatives in motion["checks"])
+    if not matrix.evaluate_checks(motion_log, motion["checks"], {})[0]:
+        raise AssertionError("complete rigid motion GPU evidence rejected")
+    for marker in (validated, motion["checks"][-1][0]):
+        if matrix.evaluate_checks(motion_log.replace(marker, ""), motion["checks"], {})[0]:
+            raise AssertionError("rigid motion without GPU/validation evidence passed")
+    if matrix.evaluate_ordered_log_checks("\n".join(motion["orderedLogChecks"]), motion["orderedLogChecks"]):
+        raise AssertionError("complete rigid motion restart sequence rejected")
+    if not matrix.evaluate_ordered_log_checks(motion["orderedLogChecks"][0], motion["orderedLogChecks"]):
+        raise AssertionError("rigid motion without a post-restart exercise passed")
+    for workflow in ("push-verification.yml", "commit-validation.yml"):
+        require(read(f".github/workflows/{workflow}"), motion["id"], f"{workflow} required rigid motion coverage")
 
 
 def validate_recovery_gate() -> None:
@@ -192,11 +226,12 @@ def validate_hdr_gameplay_gate() -> None:
                         "generation": str(generation), "async": "0" if name == "synchronous" else "1",
                         "autoExposure": str(int(active)), "initialized": str(int(active)),
                         "average": "0.125", "target": "1.44", "exposure": "1.4",
-                        "queued": "30", "completed": "29"}
-    if hdr_gameplay.validate_states(states, 4):
+                        "queued": "30", "completed": "29", "skyPreserved": str(int(name != "disabled"))}
+    if hdr_gameplay.validate_states(states, 4, "sp"):
         raise AssertionError("complete HDR gameplay sequence rejected")
     for checkpoint, field, value in (
         ("initial", "samples", "0"),
+        ("scaled", "skyPreserved", "0"),
         ("disabled", "samples", "0"),
         ("synchronous", "async", "1"),
         ("resized", "extent", "2560x1440"),
@@ -207,11 +242,56 @@ def validate_hdr_gameplay_gate() -> None:
     ):
         broken = deepcopy(states)
         broken[checkpoint][field] = value
-        if not hdr_gameplay.validate_states(broken, 4):
+        if not hdr_gameplay.validate_states(broken, 4, "sp"):
             raise AssertionError(f"invalid HDR gameplay evidence accepted: {checkpoint}.{field}={value}")
     del states["manual"]
     if not hdr_gameplay.validate_states(states, 4):
         raise AssertionError("missing HDR gameplay checkpoint accepted")
+
+    motion_log = "\n".join(f"HDR_MOTION_START_{name}\nVulkan temporal motion: frame=240 generation=1 "
+                           "eligible=10 drawn=10 complete=1 completedViews=30\n"
+                           f"HDR_CHECK_{name}\nTemporal presentation: taaRequested=1 frame=300 historyGeneration=2\n"
+                           "Vulkan temporal motion: frame=300 generation=2 "
+                           "eligible=10 drawn=10 complete=1 completedViews=90"
+                           for name in ("scaled", "resized", "partial"))
+    if hdr_gameplay.validate_temporal_motion(motion_log)[1]:
+        raise AssertionError("complete rigid motion gameplay rejected")
+    # Correctly rejected current history does not erase successful interval draws.
+    cut_log = motion_log.replace("eligible=10 drawn=10 complete=1", "eligible=0 drawn=0 complete=0")
+    if hdr_gameplay.validate_temporal_motion(cut_log)[1]:
+        raise AssertionError("safe history rejection after completed interval draws was rejected")
+    for old, new in (("eligible=10", "eligible=0"), ("drawn=10", "drawn=9"),
+                     ("complete=1", "complete=2"), ("completedViews=90", "completedViews=30"),
+                     ("taaRequested=1", "taaRequested=0"), ("historyGeneration=2", "historyGeneration=1"),
+                     ("frame=300", "frame=-1"), ("generation=2", "generation=0"),
+                     ("HDR_MOTION_START_scaled", "HDR_MOTION_START_missing"),
+                     ("HDR_CHECK_partial", "HDR_CHECK_missing")):
+        if not hdr_gameplay.validate_temporal_motion(motion_log.replace(old, new))[1]:
+            raise AssertionError(f"missing/invalid rigid motion gameplay accepted: {new}")
+
+
+def validate_highlight_capture_gate() -> None:
+    captures = {name: {"sha256": str(i)} for i, (name, _) in enumerate(hdr_highlights.CONTROLS)}
+    for name in ("pbr_enabled", "pbr_restored"):
+        captures[name] = captures["auto"].copy()
+    captures["restored"] = captures["manual1"].copy()
+    sky = {"changedChannels": 0, "greenStdDev": 12, "nearWhiteFraction": 0}
+    if hdr_highlights.validate_controls(captures, sky):
+        raise AssertionError("complete HDR highlight evidence rejected")
+    for key, value in (("changedChannels", 100), ("greenStdDev", 0), ("nearWhiteFraction", 1)):
+        if not hdr_highlights.validate_controls(captures, {**sky, key: value}):
+            raise AssertionError(f"invalid portal-sky comparison accepted: {key}")
+    for name in ("pbr_enabled", "pbr_restored", "restored"):
+        broken = deepcopy(captures)
+        broken[name]["sha256"] = "changed"
+        if not hdr_highlights.validate_controls(broken, sky):
+            raise AssertionError(f"broken HDR/PBR restoration accepted: {name}")
+    # Distinct rows AND columns expose both TGA origin flags independently.
+    pixels = (bytes([1,2,3]), bytes([4,5,6]), bytes([7,8,9]), bytes([10,11,12]))
+    for descriptor, order in ((32,(0,1,2,3)), (0,(2,3,0,1)), (48,(1,0,3,2)), (16,(3,2,1,0))):
+        raw = b"".join(pixels[i] for i in order)
+        if hdr_highlights.extract_patch(raw, 2, 2, descriptor, (0,0,1,1)) != pixels[0]:
+            raise AssertionError(f"TGA origin {descriptor} changed the selected sky patch")
 
 
 def main() -> None:
@@ -219,6 +299,7 @@ def main() -> None:
     validate_runtime_gate()
     validate_recovery_gate()
     validate_hdr_gameplay_gate()
+    validate_highlight_capture_gate()
     print("renderer_vulkan_probe_safety: ok")
 
 

@@ -164,6 +164,8 @@ typedef struct drawSurf_s {
 	// Sealed by R_FinalizeDrawSurf. Receiver-only drawSurfs intentionally leave
 	// this slot untouched and publish NOT_APPLICABLE snapshots per packet role.
 	classicDeformRecord_t	classicDeform;
+	// Optional per-light PBR receiver geometry. Classic stages always use geo.
+	const srfTriangles_t	*pbrLightGeo;
 	// specular directions for non vertex program cards, skybox texcoords, etc
 } drawSurf_t;
 
@@ -639,6 +641,10 @@ void *R_GetCommandBuffer( int bytes );
 // this allows a global override of all materials
 bool R_GlobalShaderOverride( const idMaterial **shader );
 bool R_ValidateGLSLProgram( newShaderStage_t *stage );
+bool R_FindGLSLSourcePair( const char *programName, idStr &vertexPath, idStr &fragmentPath,
+    char **vertexBuffer, char **fragmentBuffer, int *vertexBytes = NULL, int *fragmentBytes = NULL,
+    bool *foundAnySource = NULL );
+void R_ReloadGLSLPrograms_f( const idCmdArgs &args );
 bool RB_BindGLSLShaderParm( glslShaderParmBinding_t binding, int location, const shaderStage_t *stage, const drawInteraction_t *din );
 idImage *RB_ResolveGLSLShaderTextureImage( const newShaderStage_t *stage, int slot, const drawInteraction_t *din );
 
@@ -1587,7 +1593,7 @@ void R_InitOpenGL( void );
 void R_PublishCompressionCapsToImageTools( void );
 
 void R_InitFreeType( void );
-void R_DoneFreeType( void );
+void R_DoneFreeType( bool preserveAtlasImages = false );
 
 // Scalable font path: rasterises the shipped .ttf faces at the display's own
 // resolution instead of scaling up the fixed 12/24/48 point retail atlases.
@@ -1601,7 +1607,7 @@ void R_SyncFontCodePage( void );
 // The generated atlas materials have no file behind them, so a level load purge
 // would otherwise leave every glyph sampling the transparent default image.
 void R_TTFRestoreAtlasMaterials( void );
-void R_ShutdownTrueTypeFonts( void );
+void R_ShutdownTrueTypeFonts( bool preserveAtlasImages );
 
 void R_SetColorMappings( void );
 
@@ -1815,7 +1821,8 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 					const idMaterial *shader, const idScreenRect &scissor, int extraDrawSurfFlags = 0 );
 
 bool R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const viewEntity_t *space,
-				   const idRenderLightLocal *light, const idMaterial *shader, const idScreenRect &scissor, bool viewInsideShadow );
+				   const idRenderLightLocal *light, const idMaterial *shader, const idScreenRect &scissor, bool viewInsideShadow,
+				   const srfTriangles_t *pbrLightGeo = NULL );
 
 bool R_CreateAmbientCache( srfTriangles_t *tri, bool needsLighting );
 bool R_CreatePackedSurfaceFrameCaches( srfTriangles_t *tri, bool needsLighting, bool createIndexCache );
@@ -1959,6 +1966,11 @@ void RB_FinishStageTexture( const textureStage_t *texture, const drawSurf_t *sur
 bool RB_DrawSurfHasSoftParticleStage( const drawSurf_t *surf );
 void RB_StencilShadowPass( const drawSurf_t *drawSurfs );
 void RB_STD_DrawView( void );
+// Temporarily use the same scene coordinates while building/submitting modern
+// packets that the later legacy scene target uses. End restores all rectangles.
+bool RB_BeginModernSceneScaling( const emptyCommand_t *cmds,
+	int &sceneWidth, int &sceneHeight );
+void RB_EndModernSceneScaling( void );
 void RB_STD_FogAllLights( void );
 void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float textureMatrix[16] );
 
@@ -2014,9 +2026,9 @@ vkMaterialProgramFamily_t R_GetARBProgramFamily( unsigned int target, unsigned i
 bool	R_BindARBProgram( unsigned int target, unsigned int ident, const char *usage, bool required );
 
 // Stable identities for every GLSL family named by the shipped Quake 4
-// materials. Vulkan embeds native SPIR-V replacements and resolves authored
-// shaderParm/shaderTexture declarations by semantic name, so it does not
-// depend on source files or OpenGL shader-object handles at run time.
+// materials. Native replacements require an approved source-pair identity,
+// or a canonical built-in default with no authored source files. Replacements
+// with different source use the authored compiler and never GL object handles.
 typedef enum {
 	VK_GLSL_PROGRAM_FAMILY_UNKNOWN = 0,
 	VK_GLSL_PROGRAM_FAMILY_DISPLACEMENT,

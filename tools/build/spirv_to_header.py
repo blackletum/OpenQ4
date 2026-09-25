@@ -35,10 +35,12 @@ def find_glslang(explicit: str | None) -> str | None:
     return None
 
 
-def compile_spirv(glslang: str, source: pathlib.Path, out_dir: pathlib.Path) -> bytes:
+def compile_spirv(glslang: str, source: pathlib.Path, out_dir: pathlib.Path,
+                  defines: list[str] | None = None) -> bytes:
     spv_path = out_dir / (source.name + ".spv")
     result = subprocess.run(
-        [glslang, "-V", str(source), "-o", str(spv_path)],
+        [glslang, "-V", *(f"-D{define}" for define in defines or []),
+         str(source), "-o", str(spv_path)],
         capture_output=True,
         text=True,
     )
@@ -65,6 +67,10 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--glslang", help="Explicit glslangValidator path.")
     parser.add_argument("--header-out", required=True)
+    parser.add_argument("--define", action="append", default=[],
+                        help="Compile a shader variant with NAME or NAME=value (repeatable).")
+    parser.add_argument("--symbol-prefix", default="vk_",
+                        help="Prefix for generated C array names.")
     parser.add_argument(
         "--guard",
         default="__VK_GUI_SHADERS_SPV_H__",
@@ -79,6 +85,10 @@ def main(argv: list[str]) -> int:
 
     if not args.guard.isidentifier():
         parser.error("--guard must be a valid C preprocessor identifier")
+    if not args.symbol_prefix.isidentifier():
+        parser.error("--symbol-prefix must be a valid C identifier")
+    if any(not define.split("=", 1)[0].isidentifier() for define in args.define):
+        parser.error("--define must start with a valid preprocessor identifier")
 
     glslang = find_glslang(args.glslang)
     if glslang is None:
@@ -100,8 +110,8 @@ def main(argv: list[str]) -> int:
         tmp_dir = pathlib.Path(tmp)
         for shader in args.shaders:
             source = pathlib.Path(shader)
-            data = compile_spirv(glslang, source, tmp_dir)
-            array_name = "vk_" + source.name.replace(".", "_") + "_spv"
+            data = compile_spirv(glslang, source, tmp_dir, args.define)
+            array_name = args.symbol_prefix + source.name.replace(".", "_") + "_spv"
             blocks.append(emit_array(array_name, data))
             blocks.append("")
     blocks.append("#endif")

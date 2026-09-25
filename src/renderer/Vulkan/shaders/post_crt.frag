@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "framebuffer_coords.glsl"
 
 // CRT monitor effect over the finished frame. A port of
 // content/baseoq4/pak0/glprogs/crt.fs, which RB_ApplyCRTToBackBuffer draws on
@@ -93,7 +95,7 @@ vec3 PhosphorMask( void ) {
 }
 
 void main() {
-    fragCoordGL = vec2( gl_FragCoord.x, block.texel.z - gl_FragCoord.y );
+    fragCoordGL = vec2( gl_FragCoord.x, CanonicalWindowY(block.texel.z) );
 
     vec2 baseUV = vec2( fragUV.x, 1.0 - fragUV.y );
     vec4 originalSample = texture( Scene, baseUV );

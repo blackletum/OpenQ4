@@ -39,6 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "BindWindow.h"
 #include "ListWindow.h"
 #include "RenderWindow.h"
+#include "LevelEditorWindow.h"
 #include "MarkerWindow.h"
 #include "FieldWindow.h"
 
@@ -1010,8 +1011,10 @@ idWindow *idWindow::SetCapture(idWindow *w) {
 		}
 	}
 
-	w->flags |= WIN_CAPTURE;
-	w->GainCapture();
+	if ( w ) {
+		w->flags |= WIN_CAPTURE;
+		w->GainCapture();
+	}
 	gui->GetDesktop()->captureChild = w;
 	return last;
 }
@@ -3449,6 +3452,18 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 			dwt.simp = NULL;
 			dwt.win = win;
 			drawWindows.Append(dwt);
+		}
+		else if ( token == "editorViewDef" ) {
+			idLevelEditorWindow *win = new idLevelEditorWindow( gui );
+			win->SetDC( dc );
+			SaveExpressionParseState();
+			win->Parse( src, rebuild );
+			RestoreExpressionParseState();
+			AddChild( win );
+			win->SetParent( this );
+			dwt.simp = NULL;
+			dwt.win = win;
+			drawWindows.Append( dwt );
 		}
 		else if ( token == "renderDef" ) {
 			idRenderWindow *win = new idRenderWindow(dc, gui);

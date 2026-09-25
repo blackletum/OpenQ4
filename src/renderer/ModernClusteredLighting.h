@@ -5,6 +5,8 @@
 #define __MODERN_CLUSTERED_LIGHTING_H__
 
 #include "RendererCaps.h"
+#include "ModernSpecularProbeAtlas.h"
+#include <vector>
 
 class idScenePacketFrame;
 typedef struct viewDef_s viewDef_t;
@@ -29,6 +31,31 @@ static const int RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_TILES = 6;
 static const int RENDERER_MODERN_SHADOW_DESCRIPTOR_MAX_CASCADES = 4;
 static const int RENDERER_CLUSTER_SPECULAR_PROBE_MAX_RECORDS = 32;
 static const int RENDERER_CLUSTER_SPECULAR_PROBES_PER_CLUSTER = 2;
+
+// The same packed records and CPU top-two selection serve both graphics APIs.
+// Resource allocation, upload, publication and lifetime belong to the caller.
+struct rendererSpecularProbeRecord_t {
+	float positionRadius[4];
+	float tintIntensity[4];
+	float axisXPriority[4];
+	float axisYBlend[4];
+	float axisZSlot[4];
+	float identity[4];
+};
+
+struct rendererSpecularProbeView_t {
+	const viewDef_t *viewDef;
+	float grid[4]; // xyz dimensions, w record count
+	float depth[4]; // near, far, log(far/near), publication generation
+	float viewOrigin[4];
+	float worldToView[3][4]; // camera left, up, forward; w unused
+	float projection[4]; // x/y scale and offset, before the Vulkan Y flip
+	rendererSpecularProbeRecord_t records[RENDERER_CLUSTER_SPECULAR_PROBE_MAX_RECORDS];
+	std::vector<std::uint32_t> indices; // two record indices per cluster
+};
+
+typedef modernSpecularProbeAtlasReject_t ( *rendererProbeAtlasAcquire_t )(
+	const idImage *, modernSpecularProbeAtlasPlacement_t * );
 static const int RENDERER_CLUSTER_DECAL_MAX_RECORDS = 1024;
 static const int RENDERER_CLUSTER_DECAL_MAX_REFERENCES = 65536;
 static const unsigned int RENDERER_CLUSTER_DECAL_INVALID_STABLE_ID = 0xffffffffu;
@@ -314,6 +341,12 @@ typedef struct rendererClusteredLightingStats_s {
 void R_ModernClusteredLighting_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features );
 void R_ModernClusteredLighting_Shutdown( void );
 void R_ModernClusteredLighting_PrepareFrame( const idScenePacketFrame &packetFrame, bool requested );
+// CPU-only export. The acquire callback must publish complete, resident tiles.
+// Failure clears every view; partial probe sets are never consumed. No GL call
+// is made. Native storage budgets use the same grid policy as the GL SSBO path.
+bool R_ModernClusteredLighting_PrepareProbes( const idScenePacketFrame &packetFrame,
+	rendererProbeAtlasAcquire_t acquire, std::uint64_t generation,
+	std::vector<rendererSpecularProbeView_t> &views, rendererClusteredLightingStats_t &stats );
 void R_ModernClusteredLighting_ResetDecalsForFrame( void );
 void R_ModernClusteredLighting_DrawDebugOverlay( void );
 void R_ModernClusteredLighting_PrintGfxInfo( void );

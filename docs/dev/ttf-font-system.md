@@ -196,13 +196,21 @@ at half the resolution the display needed and text stayed softer than it should
 have been.
 
 Font atlases follow the renderer restart lifecycle. A full `vid_restart`
-releases cached TrueType faces before image purge, reallocates persistent atlas
-images with the new context, reinitialises the font reader, and immediately
+releases cached TrueType faces before image purge, retains atlas coverage while
+generated images rebuild with the new context, reinitialises the font reader, and immediately
 rebuilds the console sheet. A successful partial restart keeps the context,
 faces, and images alive, but still refreshes the resolution-dependent console
 sheet. Cached GUI fonts notice the renderer restart generation on their next
 lookup or selection and re-register in place, preserving the integer indices
 stored by parsed GUIs as well as the active font and size selection.
+
+GUI, extended-character and console atlases retain one byte of coverage per
+texel in CPU memory. Their image generator expands that coverage to white RGB
+with alpha when storage is recreated, including `reloadImages all`. A scratch
+allocation alone loses the glyph pixels and can leave Vulkan sampling an
+undefined image. Re-registering a font replaces the retained coverage for its
+new scale/codepage; final renderer shutdown frees it. This cache adds one
+quarter of the atlas's RGBA8 GPU footprint in CPU memory.
 
 Glyph area grows with the square of the scale, so a slot is capped at
 `Q4_TTF_MAX_PAGE_AREA` (2048x2048, 16MB at RGBA8). The required area is
@@ -246,7 +254,7 @@ Each atlas is bound through a material this module generates at registration
 time. Those declarations have no `.mtr` behind them, which makes them fragile in
 a way a shipped material is not.
 
-The material and its intrinsic scratch image intentionally use the same
+The material and its intrinsic generated image intentionally use the same
 `_ttfatlas...` identity. The declaration manager parses a newly requested
 implicit material before the font module can replace its source, and that
 implicit stage maps an image named after the material. Sharing the already

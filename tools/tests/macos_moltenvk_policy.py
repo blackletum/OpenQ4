@@ -107,16 +107,18 @@ def validate_portability_negotiation() -> None:
     # Hard 1.3 floor: ~135 core-1.3 entry points are called unconditionally, so a
     # device below the floor must fail closed with a readable message instead of
     # faulting on a NULL volk pointer during the first frame.
-    require(init_body, "vkCtx.deviceProperties.apiVersion < VK_API_VERSION_1_3", "Vulkan 1.3 floor check")
-    require(init_body, "this renderer requires Vulkan 1.3", "Vulkan 1.3 floor diagnostic")
+    selection = read("src/renderer/Vulkan/VulkanDeviceSelection.cpp")
+    require(init_body, "VK_SelectPhysicalDevice( selectionApi, vkCtx.instance, vkCtx.surface,", "device admission before creation")
+    require(selection, "properties.apiVersion < VK_API_VERSION_1_3", "Vulkan 1.3 floor check")
+    require(selection, "this renderer requires Vulkan 1.3", "Vulkan 1.3 floor diagnostic")
 
     # 8 bound descriptor sets is exactly the ceiling on Metal-backed devices.
     require(
-        read("src/renderer/Vulkan/VulkanDevice.h"),
+        read("src/renderer/Vulkan/VulkanDeviceSelection.h"),
         "VK_REQUIRED_BOUND_DESCRIPTOR_SETS = 8",
         "bound descriptor set requirement",
     )
-    require(init_body, "limits.maxBoundDescriptorSets < VK_REQUIRED_BOUND_DESCRIPTOR_SETS", "descriptor set ceiling check")
+    require(selection, "limits.maxBoundDescriptorSets < VK_REQUIRED_BOUND_DESCRIPTOR_SETS", "descriptor set ceiling check")
 
 
 def validate_loader_agreement() -> None:

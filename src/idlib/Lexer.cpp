@@ -2689,7 +2689,7 @@ Lexer::Lexer(int flags)
 	}
 }
 
-Lexer::Lexer(char const * const ptr, int length, char const * const name, int flags)
+Lexer::Lexer(char const * const ptr, int length, char const * const name, int flags) : Lexer(flags)
 {
 	if(flags & LEXFL_READBINARY)
 	{
@@ -2702,7 +2702,7 @@ Lexer::Lexer(char const * const ptr, int length, char const * const name, int fl
 	}
 	else
 	{
-		mDelegate = new idLexer(ptr, length, name, flags);
+		mDelegate->LoadMemory(ptr, length, name);
 	}
 }
 
@@ -2775,6 +2775,13 @@ void Lexer::Error(char const *str, ...)
 	va_start( ap, str );
 	idStr::vsnPrintf( text, sizeof( text ), str, ap );
 	va_end( ap );
+
+	// Text lexers own their error policy and HadError state. In particular,
+	// authoring previews use NOFATALERRORS for incomplete user-authored geometry.
+	if (mDelegate) {
+		mDelegate->Error("%s", text);
+		return;
+	}
 
 	assert(false);
 

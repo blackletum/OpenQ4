@@ -89,12 +89,15 @@ vec3 ToneMapHDR( vec3 color ) {
 		return mix( mapped * 12.92, 1.055 * pow( mapped, vec3(1.0 / 2.4) ) - 0.055,
 			step( vec3(0.0031308), mapped ) );
 	}
-	float shoulderStart = 0.98;
-	float exposedWhitePoint = max( safeWhitePoint * safeExposure, shoulderStart + 0.001 );
-	float shoulderRange = max( exposedWhitePoint - shoulderStart, 0.001 );
-	float shoulderNorm = max( 1.0 - exp( -4.0 ), 0.0001 );
-	vec3 shoulderT = max( exposedColor - vec3( shoulderStart ), vec3( 0.0 ) ) / shoulderRange;
-	vec3 shoulderColor = vec3( shoulderStart ) + ( 1.0 - shoulderStart ) * ( vec3( 1.0 ) - exp( -shoulderT * 4.0 ) ) / shoulderNorm;
+	// Stock scene values are perceptual. Preserve their midrange and reserve
+	// the upper half of the display range for a smooth highlight shoulder;
+	// the former .98 knee lost texture detail under automatic exposure.
+	float shoulderStart = 0.5;
+	float exposedWhitePoint = max( safeWhitePoint * safeExposure, 1.0 );
+	float shoulderRange = exposedWhitePoint - shoulderStart;
+	float curvature = 1.0 / ( 1.0 - shoulderStart ) - 1.0 / shoulderRange;
+	vec3 shoulderT = max( exposedColor - vec3( shoulderStart ), vec3( 0.0 ) );
+	vec3 shoulderColor = vec3( shoulderStart ) + shoulderT / ( vec3( 1.0 ) + curvature * shoulderT );
 	vec3 mappedColor = mix( exposedColor, shoulderColor, step( vec3( shoulderStart ), exposedColor ) );
 	return clamp( HighlightCompress( mappedColor ), 0.0, 1.0 );
 }

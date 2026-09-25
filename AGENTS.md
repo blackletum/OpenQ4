@@ -67,6 +67,13 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Stage editable override content under `.install/baseoq4/` (for example GUI scripts in `.install/baseoq4/guis/`).
 - Avoid shipping build-only linker artifacts in `.install/`; keep `*.lib` in `builddir/` unless intentionally producing a developer SDK artifact set.
 
+**Stable Test Executable Paths**
+- Reuse executable paths across runtime tests so Windows Firewall permissions remain useful. Rebuild and stage in place; do not create a new executable name or launch directory for each task, timestamp, or run.
+- Use `.install/openQ4-client_x64.exe` and `.install/openQ4-ded_x64.exe` for ordinary Windows testing, with the existing mode-specific launch options. Re-stage the current build and matching runtime modules before testing.
+- Isolate each test's writable configuration, saves, logs, and captures under `.tmp/<task>/` using supported filesystem options; test-data isolation must not require copying the executable.
+- When a comparison, stock-only probe, architecture, or build configuration genuinely requires a separate runtime, reuse a small set of fixed project-local locations, such as `.tmp/runtime/baseline/` and `.tmp/runtime/candidate/`. Keep each executable with its matching modules, record the tested build identity, and coordinate use so another task cannot replace a runtime during a test. Retain these reusable locations across tasks; clean disposable test data separately.
+- Apply the same convention when adding or updating test harnesses. Resolve recurring firewall prompts through stable launch paths; do not disable the firewall or its notifications, add broad exceptions, or modify firewall rules without the user's explicit instruction.
+
 **Development Procedure (Correct Direction)**
 1. Develop against the installed Quake 4 assets only (base PK4s), not repo `q4base/` content.
 2. Prefer launching from the repo `.install/` directory so locked `fs_cdpath` targets staged openQ4 overlays; use a different working directory only when intentionally testing stock-only behavior.

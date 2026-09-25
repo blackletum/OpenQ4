@@ -48,6 +48,10 @@ bool				VK_Exec_ActiveTargetMultisampled( void );
 int					VK_Exec_ActiveFramebufferWidth( void );
 int					VK_Exec_ActiveFramebufferHeight( void );
 idRenderTexture *	VK_Exec_ActiveRenderTexture( void );
+bool VK_Exec_ActiveLowerOrigin();
+void VK_Exec_MarkColorOrigin( bool flipY );
+void VK_Exec_MarkCanonicalWrites();
+VkFrontFace VK_Exec_CanonicalFrontFace();
 int					VK_Exec_ActiveCubeFace( void );
 bool				VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace = 0 );
 void				VK_Exec_ClearRenderTarget( bool clearColor, bool clearDepth, float depthValue,
@@ -60,12 +64,24 @@ bool				VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
 bool				VK_Exec_CaptureViewDepth( const viewDef_t *viewDef );
 
 VkPipelineLayout	VK_Exec_InteractionPipelineLayout( void );
+VkPipeline VK_Exec_ProbeEnvironmentPipeline( bool transparent );
+VkPipelineLayout VK_Exec_ProbeEnvironmentPipelineLayout();
 // Source-alpha variants of the interaction pipelines; shadowMode is
 // 0 unshadowed, 1 projected, 2 point, matching vkInterPass_t::shadowMode.
 VkPipeline			VK_Exec_TransparentInteractionPipeline( int shadowMode, bool composite );
 VkDescriptorSet		VK_Exec_ImageDescriptor( unsigned int texnum, bool require2D );
 VkDescriptorSet		VK_Exec_InteractionUniformSet( void );
 int					VK_Exec_InteractionUniformAlloc( const void *data, int bytes );
+// Update a reserved, not-yet-consumed slice in the current frame slot. Submission
+// flushes the mapped ring; callers must keep the slice private until its draw.
+bool VK_Exec_UpdateInteractionUniform( int offset, const void *data, int bytes );
+int VK_Exec_InteractionUniformCheckpoint();
+void VK_Exec_InteractionUniformRestore( int checkpoint );
+// Authored programs have their own descriptor layout and larger uniform block.
+bool VK_Exec_AuthoredUniformAlloc( const void *data, int bytes, VkDescriptorBufferInfo &buffer );
+VkPipeline VK_Exec_AuthoredMaterialPipeline( int identity, VkShaderModule vertex,
+    VkShaderModule fragment, VkPipelineLayout layout, int stateBits,
+    bool separateColor, unsigned int vertexInputMask );
 VkPipeline			VK_Exec_PostPipeline( int kind, VkShaderModule vertModule,
 							VkShaderModule fragModule, int stateBits );
 VkPipeline			VK_Exec_ExtraPipeline( int kind, VkShaderModule vertModule,
@@ -75,8 +91,28 @@ void				VK_Exec_TransitionImageForSampling( idImage *image );
 // after that slot's existing frame fence, without an extra GPU wait. The
 // diagnostic synchronous mode submits and resumes this frame without presenting.
 bool				VK_Exec_QueueHDRExposureReadback( idImage *image, unsigned int generation, int frame, bool synchronous );
+bool VK_Exec_PrepareHDRExposureReadback();
+// Explicit self-tests only: submits the diagnostic frame and waits for its fence.
+bool VK_Exec_TestReadFloatImage( idImage *image, idList<float> &values );
+// Explicit console capture: submit/wait/resume without presenting a partial frame.
+bool VK_Exec_ReadLinearScreenshot( idImage *image, idList<float> &values );
+// Raw RGBA8 mip zero, normalized to the image API's bottom-up row order.
+bool VK_Exec_ReadImageScreenshot( idImage *image, idList<byte> &pixels );
+void VK_PostProcess_ResetLinearCapture();
+bool VK_PostProcess_LinearScreenshot( const char *fileName );
 void				VK_PostProcess_ConsumeHDRSample( unsigned int generation, int frame, float logLuminance );
 bool				VK_PostProcess_HDRSceneRequested( void );
+// Called before any temporary scene scaling mutates the incoming viewport.
+void VK_PostProcess_BeginView( const viewDef_t *viewDef );
+
+// TAA transform history is independent of motion blur. Commit only after the
+// matching color history is written; captures and failed writes discard it.
+idImage *VK_PostProcess_TemporalMotionVectors( const viewDef_t *viewDef,
+	idImage *depthImage, int width, int height, unsigned int generation,
+	bool useHistory, bool &complete );
+void VK_PostProcess_CommitTemporalMotion( const viewDef_t *viewDef,
+	int width, int height, unsigned int generation );
+void VK_PostProcess_ResetTemporalMotion( void );
 
 bool				VK_Exec_BindTriGeometry( VkCommandBuffer cmd, int slot, const srfTriangles_t *tri );
 // streams vertices into the frame's vertex ring and binds them as binding 0
@@ -93,17 +129,49 @@ bool				VK_Exec_SetViewViewport( VkCommandBuffer cmd, const viewDef_t *viewDef, 
 void				VK_Interactions_SetDrawInteraction( const shaderStage_t *surfaceStage,
 							const float *surfaceRegs, idImage **image, idVec4 matrix[ 2 ], float color[ 4 ] );
 
+// Complete native baked-lighting admission, before HDR framebuffer ownership.
+bool VK_LightGrid_PrepareModern( const viewDef_t *view, const drawSurf_t *surf,
+    idImage *images[3], float params[7][4] );
+void VK_PBR_PrepareBakedView( const viewDef_t *view );
+bool VK_PBR_BakedViewReady( const viewDef_t *view );
+bool VK_PBR_RetargetBakedView( const viewDef_t *view );
+bool VK_PBR_BakedSurfaceOwned( const viewDef_t *view, const drawSurf_t *surf );
+VkPipeline VK_Exec_BakedEnvironmentPipeline( bool probes );
+VkPipelineLayout VK_Exec_BakedEnvironmentPipelineLayout();
+VkDescriptorSet VK_Exec_BakedDescriptor( idImage * const images[3], VkDescriptorSet probes );
+void VK_LightGrid_PrepareModernView( const viewDef_t *view );
+
 // Native emission shares material admission with the direct-light owner and
 // replaces only the proven matching additive ambient stage, once per surface.
+bool VK_PBR_DepthCoverage( const drawSurf_t *surf );
+// Change only the sealed transparent pipelines to match the current target.
+// All required variants are obtained before any prepared record is modified.
+bool VK_PBR_RetargetTransparentView( const viewDef_t *view );
+// CPU receiver eligibility, not GPU resource admission. Used to avoid adding
+// environment diffuse over a requested baked contribution.
+bool VK_LightGrid_SurfaceRequestsBakedDiffuse( const viewDef_t *viewDef, const drawSurf_t *surf );
 bool VK_PBR_EmissionForStage( const drawSurf_t *surf, int stageIndex,
 		idImage *&image, float color[ 4 ] );
+
+// Once per opaque/perforated surface, before its authored ambient stages.
+// Translucent environment radiance joins the ordered composite below.
+bool VK_PBR_DrawEnvironment( VkCommandBuffer cmd, const viewDef_t *viewDef,
+	const drawSurf_t *surf, const srfTriangles_t *tri, const float mvp[16],
+	float alphaScale = 0.0f, bool composite = false );
 
 // Native ordered transparency. Returns true when the light pass recorded this
 // surface's draws for the named source-alpha stage and has now composited
 // them; the classic stage draw is then the replaced work, not extra work.
+bool VK_PBR_BindTransparentGeometry( VkCommandBuffer cmd, const viewDef_t *viewDef,
+		const drawSurf_t *surf );
 bool VK_PBR_DrawTransparentStage( VkCommandBuffer cmd, const viewDef_t *viewDef,
 		const drawSurf_t *drawSurf, const srfTriangles_t *tri, const float mvp[ 16 ],
 		int stageIndex, float alphaScale );
+void VK_PBR_PrintGfxInfo();
+// Prepare against the final single-color scene target, before an HDR MRT
+// accumulation target is bound. The ordered replay keeps these sealed pipelines.
+void VK_PBR_PrepareTransparentView( const viewDef_t *viewDef );
+bool VK_PBR_TransparentSurfaceReady( const viewDef_t *viewDef, const drawSurf_t *surf );
 
 // The debug tools' stencil prints (RB_CountStencilBuffer, RB_ScanStencilBuffer).
 // The executor copies the active target's stencil out and hands it to

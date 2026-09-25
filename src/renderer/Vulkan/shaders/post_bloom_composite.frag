@@ -1,8 +1,9 @@
 #version 450
 
 // Bloom composite, HDR tone map and colour grade in one pass. A port of
-// content/baseoq4/pak0/glprogs/bloom.fs (RB_STD_Bloom). The OpenGL file also
-// carries ACESFilm/ACESFilmScalar, which nothing calls; they are left out.
+// content/baseoq4/pak0/glprogs/bloom.fs (RB_STD_Bloom). The scene owner must
+// explicitly select the numeric domain; an FP16 target alone is not proof of
+// linear lighting. Native mixed scenes retain the stock branch.
 // fragUV is OpenGL's texture coordinate; see post_ssao.frag.
 
 layout(set = 0, binding = 0) uniform sampler2D Scene;
@@ -18,7 +19,7 @@ layout(std140, set = 6, binding = 0) uniform BloomCompositeBlock {
     vec4 grade;				// x: gain, y: vibrance, z: saturation, w: contrast
     vec4 highlight;			// x: highlight desaturation, y: gamut compression
     vec4 weights;			// bloom level weights 0-3
-    vec4 weights2;			// x: bloom level weight 4
+    vec4 weights2;			// x: bloom level weight 4, y: committed linear scene
 } block;
 
 #define bloomIntensity				block.bloom.x
@@ -40,6 +41,7 @@ layout(std140, set = 6, binding = 0) uniform BloomCompositeBlock {
 #define bloomWeight2				block.weights.z
 #define bloomWeight3				block.weights.w
 #define bloomWeight4				block.weights2.x
+#define hdrLinearScene				block.weights2.y
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
@@ -79,12 +81,28 @@ vec3 ToneMapHDR( vec3 color ) {
 	float safeExposure = max( hdrExposure, 0.001 );
 	vec3 exposedColor = color * safeExposure;
 	float safeWhitePoint = max( hdrWhitePoint, 1.0 );
-	float shoulderStart = 0.98;
-	float exposedWhitePoint = max( safeWhitePoint * safeExposure, shoulderStart + 0.001 );
-	float shoulderRange = max( exposedWhitePoint - shoulderStart, 0.001 );
-	float shoulderNorm = max( 1.0 - exp( -4.0 ), 0.0001 );
-	vec3 shoulderT = max( exposedColor - vec3( shoulderStart ), vec3( 0.0 ) ) / shoulderRange;
-	vec3 shoulderColor = vec3( shoulderStart ) + ( 1.0 - shoulderStart ) * ( vec3( 1.0 ) - exp( -shoulderT * 4.0 ) ) / shoulderNorm;
+	if ( hdrLinearScene > 0.5 ) {
+		// Match the admitted GL linear scene. Exposure changes the radiance,
+		// not the reference white, and display encoding happens exactly once.
+		vec3 mapped = ( exposedColor * ( 2.51 * exposedColor + 0.03 ) )
+			/ ( exposedColor * ( 2.43 * exposedColor + 0.59 ) + 0.14 );
+		float white = ( safeWhitePoint * ( 2.51 * safeWhitePoint + 0.03 ) )
+			/ ( safeWhitePoint * ( 2.43 * safeWhitePoint + 0.59 ) + 0.14 );
+		mapped = clamp( HighlightCompress( mapped / max( white, 0.0001 ) ), 0.0, 1.0 );
+		return mix( mapped * 12.92, 1.055 * pow( mapped, vec3( 1.0 / 2.4 ) ) - 0.055,
+			step( vec3( 0.0031308 ), mapped ) );
+	}
+	// Reserve real display range for highlights. Starting at .98 collapsed
+	// sunlit textures to about five output codes whenever exposure rose.
+	// This rational shoulder joins the unchanged midrange with slope one and
+	// reaches display white at the exposed reference white. No extra sRGB
+	// encoding belongs here: these stock scene values are already perceptual.
+	float shoulderStart = 0.5;
+	float exposedWhitePoint = max( safeWhitePoint * safeExposure, 1.0 );
+	float shoulderRange = exposedWhitePoint - shoulderStart;
+	float curvature = 1.0 / ( 1.0 - shoulderStart ) - 1.0 / shoulderRange;
+	vec3 shoulderT = max( exposedColor - vec3( shoulderStart ), vec3( 0.0 ) );
+	vec3 shoulderColor = vec3( shoulderStart ) + shoulderT / ( vec3( 1.0 ) + curvature * shoulderT );
 	vec3 mappedColor = mix( exposedColor, shoulderColor, step( vec3( shoulderStart ), exposedColor ) );
 	return clamp( HighlightCompress( mappedColor ), 0.0, 1.0 );
 }

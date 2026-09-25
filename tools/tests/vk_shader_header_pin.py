@@ -76,6 +76,7 @@ SHADERS = [
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "material_smaa_blend.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "pbr_probe_environment.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction_shadow.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction_shadow.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "interaction_shadow_point.vert",
@@ -143,6 +144,14 @@ DEBUG_SHADERS = [
 # Headers embedded by a single translation unit each, with their own guards.
 EXTRA_HEADERS = [
     (
+        REPO_ROOT / "src/renderer/Vulkan/shaders/hdr_scene_spv.h",
+        [REPO_ROOT / "src/renderer/Vulkan/shaders" / name for name in
+         ("hdr_scene.vert", "hdr_scene_seed.frag", "hdr_scene_seed_ms.frag",
+          "hdr_scene_combine.frag", "hdr_scene_combine_ms.frag", "hdr_scene_test.frag",
+          "hdr_scene_test_seed.frag", "hdr_scene_preview.frag", "hdr_scene_preview_ms.frag")],
+        "__VK_HDR_SCENE_SPV_H__",
+    ),
+    (
         REPO_ROOT / "src/renderer/Vulkan/shaders/hdr_luminance_spv.h",
         [REPO_ROOT / "src/renderer/Vulkan/shaders/post_hdr_luminance.frag"],
         "__VK_HDR_LUMINANCE_SPV_H__",
@@ -151,15 +160,30 @@ EXTRA_HEADERS = [
     ( SCENE_COMMITTED, SCENE_SHADERS, SCENE_GUARD ),
     ( DEBUG_COMMITTED, DEBUG_SHADERS, DEBUG_GUARD ),
     (
+        REPO_ROOT / "src/renderer/Vulkan/shaders/color_resolve_spv.h",
+        [REPO_ROOT / "src/renderer/Vulkan/shaders" / name for name in
+         ("color_resolve.vert", "color_resolve.frag")],
+        "__VK_COLOR_RESOLVE_SPV_H__",
+    ),
+    (
         REPO_ROOT / "src/renderer/Vulkan/shaders/target_test_spv.h",
         [REPO_ROOT / "src/renderer/Vulkan/shaders" / name for name in
-         ("target_test.vert", "target_test.frag", "target_test_five.frag")],
+         ("target_test.vert", "target_test.frag", "target_test_five.frag", "target_test_resolve.frag")],
         "__VK_TARGET_TEST_SPV_H__",
     ),
 ]
 
 
-def check_header(committed: pathlib.Path, shaders: list[pathlib.Path], guard: str | None = None) -> bool:
+HDR_DOMAIN_COMMITTED = REPO_ROOT / "src/renderer/Vulkan/shaders/hdr_domain_spv.h"
+HDR_DOMAIN_SHADERS = [REPO_ROOT / "src/renderer/Vulkan/shaders" / name for name in
+    ("gui.frag", "interaction.frag", "interaction_shadow.frag",
+     "interaction_shadow_point.frag", "pbr_probe_environment.frag",
+     "pbr_baked_environment.frag", "pbr_baked_probe_environment.frag")]
+HDR_DOMAIN_OPTIONS = ["--define", "VK_HDR_DOMAIN_MRT", "--symbol-prefix", "vk_hdr_"]
+
+
+def check_header(committed: pathlib.Path, shaders: list[pathlib.Path], guard: str | None = None,
+                 options: list[str] | None = None) -> bool:
     if not committed.is_file():
         print(f"vk_shader_header_pin: missing committed header {committed}", file=sys.stderr)
         return False
@@ -173,6 +197,7 @@ def check_header(committed: pathlib.Path, shaders: list[pathlib.Path], guard: st
                 "--header-out",
                 str(regenerated),
                 *( ["--guard", guard] if guard else [] ),
+                *(options or []),
                 *[str(s) for s in shaders],
             ],
             capture_output=True,
@@ -185,7 +210,7 @@ def check_header(committed: pathlib.Path, shaders: list[pathlib.Path], guard: st
         # header with LF while the generator writes platform line endings
         if regenerated.read_bytes().replace(b"\r\n", b"\n") != committed.read_bytes().replace(b"\r\n", b"\n"):
             shader_args = " ".join(s.relative_to(REPO_ROOT).as_posix() for s in shaders)
-            guard_arg = f"--guard {guard} " if guard else ""
+            guard_arg = (f"--guard {guard} " if guard else "") + " ".join(options or []) + " "
             print(
                 "vk_shader_header_pin: committed header is stale — regenerate with:\n"
                 f"  python tools/build/spirv_to_header.py {guard_arg}--header-out {committed.relative_to(REPO_ROOT).as_posix()} "
@@ -207,6 +232,8 @@ def main() -> int:
     ok = check_header(COMMITTED, SHADERS)
     for committed, shaders, guard in EXTRA_HEADERS:
         ok = check_header(committed, shaders, guard) and ok
+    ok = check_header(HDR_DOMAIN_COMMITTED, HDR_DOMAIN_SHADERS,
+                      "__VK_HDR_DOMAIN_SPV_H__", HDR_DOMAIN_OPTIONS) and ok
     if not ok:
         return 1
 

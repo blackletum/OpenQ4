@@ -39,6 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "GameModuleDiagnostics.h"
 #include "RenderDoc.h"
 #include "ParallelJobSystem.h"
+#include "LevelEditor.h"
 #include "../sys/NetworkEndpoint.h"
 
 #if defined( USE_SDL3 )
@@ -416,7 +417,7 @@ openQ4_IsAnyToolActive
 ==================
 */
 bool openQ4_IsAnyToolActive( void ) {
-	return com_editorActive || openQ4_GetActiveToolFlags( EDITOR_ALL ) != 0;
+	return com_editorActive || LevelEditor_UIIsActive() || openQ4_GetActiveToolFlags( EDITOR_ALL ) != 0;
 }
 
 /*
@@ -1690,6 +1691,7 @@ void idCommonLocal::CheckToolMode( void ) {
 		
 		if ( !idStr::Icmp( com_consoleLines[ i ].Argv(0), "renderbump" )
 			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "editor" )
+			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "editorExperimental" )
 			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "guieditor" )
 			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "debugger" )
 			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "dmap" )
@@ -5488,6 +5490,7 @@ idCommonLocal::InitCommands
 =================
 */
 void idCommonLocal::InitCommands( void ) {
+	LevelEditor_InitCommands();
 	cmdSystem->AddCommand( "error", Com_Error_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "causes an error" );
 	cmdSystem->AddCommand( "crash", Com_Crash_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "causes a crash" );
 	cmdSystem->AddCommand( "freeze", Com_Freeze_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "freezes the game for a number of seconds" );
@@ -5772,6 +5775,7 @@ void idCommonLocal::Frame( void ) {
 		eventLoop->RunEventLoop();
 
 		com_frameTime = GetUserCmdTime( com_ticNumber );
+		LevelEditor_Frame();
 
 		idAsyncNetwork::RunFrame();
 
@@ -6752,6 +6756,7 @@ idCommonLocal::Shutdown
 void idCommonLocal::Shutdown( void ) {
 
 	com_shuttingDown = true;
+	LevelEditor_Shutdown();
 
 	// Stop every engine job before any subsystem it may reference is torn down.
 	// Running jobs receive cancellation and are joined; queued jobs never start.

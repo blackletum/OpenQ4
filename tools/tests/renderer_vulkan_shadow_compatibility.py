@@ -902,6 +902,7 @@ def validate_runtime_failure_gates() -> None:
         "vulkanValidation": "Vulkan validation: descriptor binding mismatch",
         "vulkanVuid": "Validation ID VUID-vkCmdDrawIndexed-commandBuffer-recording",
         "vulkanCallFailed": "Vulkan: vkCreateGraphicsPipelines failed (-3)",
+        "vulkanDrawFailure": "^3WARNING: ^1Vulkan: descriptor retirement budget exhausted; image draw skipped",
         "fatal": "Fatal Error: renderer bootstrap stopped",
         "errorLine": "ERROR: render target creation stopped",
     }
@@ -948,6 +949,12 @@ def validate_runtime_failure_gates() -> None:
                 raise AssertionError(
                     f"{context} must preserve the exact source line for {signature}; got {matches!r}"
                 )
+
+        post_refusal = "^3WARNING: ^1Vulkan: r_bloom/r_hdrToneMap pass could not run (draw refused)"
+        if counter(post_refusal).get("vulkanDrawFailure") != 1:
+            raise AssertionError(f"{context} must reject a refused Vulkan post draw")
+        if counter("Vulkan: expected draw skipped by material condition").get("vulkanDrawFailure") != 0:
+            raise AssertionError(f"{context} must require a warning for skipped-draw failures")
 
         benign_counts = counter(benign_vk_result)
         if benign_counts.get("errorLine") != 0:
@@ -1337,7 +1344,7 @@ def validate_shadow_depth_format_selection() -> None:
     require_order(
         device_init,
         (
-            "vkCtx.physicalDevice = devices[ chosenDevice ];",
+            "vkCtx.physicalDevice = selected.device;",
             "VK_Device_SelectShadowDepthFormat();",
         ),
         "shadow depth probing after physical-device selection",
@@ -2569,10 +2576,25 @@ def validate_point_receiver_world_bias_contract() -> None:
         (
             "vec3 pointShadowVector = worldPos - shadow.lightOriginFar.xyz;",
             "float shadowSinTheta",
-            "shadow.biasParams.w * length(pointShadowVector)",
+            "shadow.biasParams.w * PointShadowRadialLength(pointShadowVector)",
             "vPointShadowVector = pointShadowVector + worldNormal * normalOffset;",
         ),
         "Vulkan bounded point normal-offset consumption",
+    )
+    # The radial helper intentionally fixes square-summation order. It must
+    # retain the world-axis length used by both the offset and depth compare.
+    require(vk_point_vertex, '#include "point_shadow_math.glsl"', "shared radial helper")
+    radial = read("src/renderer/Vulkan/shaders/point_shadow_math.glsl")
+    require_order(
+        radial,
+        (
+            "precise float squareLength = value.x * value.x;",
+            "squareLength = fma(value.y, value.y, squareLength);",
+            "squareLength = fma(value.z, value.z, squareLength);",
+            "return sqrt(squareLength);",
+            "precise float depth = PointShadowRadialLength(value) * inverseFar;",
+        ),
+        "world-axis radial shadow length and depth",
     )
 
 

@@ -75,6 +75,7 @@ private:
 
 	idList<idTabRect>	tabInfo;
 	int					top;
+	int					maxItems;
 	float				sizeBias;
 	bool				horizontal;
 	idStr				tabStopStr;

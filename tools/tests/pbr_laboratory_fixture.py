@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools/validation'))
 import generate_pbr_validation_map as lab
 import renderer_pbr_laboratory as runner
+import renderer_pbr_environment_parity as environment_parity
 
 
 def test_material_data_and_geometry() -> None:
@@ -51,6 +52,19 @@ def test_material_data_and_geometry() -> None:
     checker=files[f'baseoq4/{lab.PREFIX}/checker.tga'][18::3]
     assert checker.count(0)==checker.count(255)==2048
     assert '*MESH_TVERT 0 2.37500000 2.37500000 0' in files['baseoq4/'+lab.SAMPLING_MODEL].decode()
+    plane = files['baseoq4/'+lab.BACKFACE_MODEL].decode()
+    plane_vertices = {int(i):(float(x),float(y),float(z)) for i,x,y,z in re.findall(r'\*MESH_VERTEX (\d+) ([^ ]+) ([^ ]+) ([^\n]+)',plane)}
+    plane_faces = re.findall(r'\*MESH_FACE (\d+): A: (\d+) B: (\d+) C: (\d+)',plane)
+    assert len(plane_vertices) == 4 and len(plane_faces) == 2
+    for _,a,b,c in plane_faces:
+        va,vb,vc = (plane_vertices[int(k)] for k in (a,b,c))
+        u = [vb[i]-va[i] for i in range(3)]; v = [vc[i]-va[i] for i in range(3)]
+        normal = (u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+        assert normal[0] == normal[2] == 0 and normal[1] < 0
+        # The retained camera sees the -Y side; the regression's rear light
+        # sits at local Y=10, so both geometric faces must reject that light.
+        assert all(point[1] == 0 for point in (va,vb,vc))
+        assert normal[1] * 10 < 0
     mesh=files['baseoq4/models/openq4/pbr_lab/skinned.md5mesh'].decode()
     weights=[(int(j),float(w)) for j,w in re.findall(r'weight \d+ (\d+) ([^ ]+) ',mesh)]
     assert {j for j,_ in weights}=={0,1}
@@ -412,6 +426,34 @@ def test_vulkan_msaa_coverage_evidence(root: Path) -> None:
         sha256={**p[1]['results'][0]['sha256'],'screenshot':p[0]['results'][0]['sha256']['screenshot']}))
 
 
+def test_ibl_proof_gates() -> None:
+    original=runner.normal_patch
+    def check(values):
+        rows=[{'case':'ibl-'+name,'screenshot':name,'failures':[]} for name in values]
+        try:
+            runner.normal_patch=lambda path: values[str(path)]
+            runner.compare_ibl_captures(rows)
+        finally:
+            runner.normal_patch=original
+        return [failure for row in rows for failure in row['failures']]
+    lit=bytes([18,24,32])*64
+    dark=bytes(len(lit))
+    assert not check({'scalar':lit,'restored':lit,'off':dark,'ao-zero':dark})
+    assert check({'scalar':dark}), 'zero lighting is not environment evidence'
+    assert check({'scalar':b''}), 'missing capture must fail'
+    assert check({'scalar':bytes([255])*len(lit)}), 'clipping hides the lobe'
+    assert check({'off':lit}) and check({'ao-zero':lit}), 'disabled/occluded lighting must disappear'
+    assert check({'alpha-off':lit}), 'unlit transparent material must not retain its classic color stage'
+    assert check({'scalar':lit,'restored':bytes([20])*len(lit)}), 'state restoration must be exact'
+    assert check({'scalar':lit,'double':lit}), 'intensity control must have an effect'
+    assert check({'rough-low':lit,'rough-high':lit}), 'roughness control must have an effect'
+    assert check({'alpha':lit,'alpha-off':lit}), 'transparent environment must have an effect'
+    mask=bytes([0,0,0,0,255,0])*32
+    assert not check({'cutout-coverage':mask,'cutout-hard-coverage':mask})
+    assert check({'cutout-coverage':bytes([0,255,0])*64}), 'coverage must retain holes'
+    assert check({'cutout-hard-coverage':mask+bytes([0,64,0])*32}), 'hard cutouts must reject partial coverage'
+
+
 def test_bounded_console_scripts(root: Path) -> None:
     commands=[f'echo "capture_{i:04d}_'+('x'*220)+'"' for i in range(800)]
     cfg=root/'bounded.cfg'
@@ -432,9 +474,137 @@ def test_bounded_console_scripts(root: Path) -> None:
     assert restored==commands, 'chunking must retain the complete command order'
 
 
+def test_ibl_parity_provenance(root: Path) -> None:
+    header=struct.pack('<BBBHHBHHHHBB',0,0,2,0,0,0,0,0,1280,800,24,0x20)
+    shots={}
+    for value in (0,10,20,22,30,40):
+        shot=root/f'ibl-value-{value}.tga'
+        shot.write_bytes(header+bytes([value])*(1280*800*3))
+        shots[value]=shot
+    coverage=root/'ibl-coverage.tga'
+    coverage.write_bytes(header+(bytes([0,0,0])*640+bytes([0,255,0])*640)*800)
+    log=root/'ibl-proof.log'
+    log.write_text('Renderer AA: MSAA requested=0 effective=0\n')
+    pair=[]
+    for backend in ('gl','vk'):
+        rows=[]
+        for name in runner.IBL_MATERIALS:
+            if backend=='gl' and name=='shared': continue
+            value=0 if name in ('off','ao-zero','zero','alpha-off','cutout-off','master-off','legacy') else 20
+            value={'rough-low':10,'rough-high':30,'double':40}.get(name,value)
+            if name.startswith('normal-'): value=22
+            shot=coverage if name.endswith('coverage') else shots[value]
+            rows.append({'case':'ibl-'+name,'backend':backend,'camera':'sampling','failures':[],
+                         'screenshot':str(shot),'log':str(log),
+                         'sha256':{'screenshot':runner.digest(shot),'log':runner.digest(log)}})
+        pair.append({'complete':True,'runtimeUnchanged':True,'runtimeSHA256':{'engine':'same'},
+                     'fixture':{'id':'same'},'compiledMapSHA256':'same','basepath':'same',
+                     'harnessSHA256':'same','requestedSamples':0,'results':rows})
+    assert not environment_parity.compare(*pair)['failures']
+    def rejected(change):
+        altered=json.loads(json.dumps(pair)); change(altered)
+        assert environment_parity.compare(*altered)['failures']
+    rejected(lambda p:p[1].update(complete=False))
+    rejected(lambda p:p[1].update(runtimeUnchanged=False))
+    for key,value in (('runtimeSHA256',{'engine':'other'}),('compiledMapSHA256','other'),
+                      ('harnessSHA256','other'),('requestedSamples',4)):
+        rejected(lambda p,k=key,v=value:p[1].update({k:v}))
+    for key in ('runtimeSHA256','compiledMapSHA256','fixture','basepath','harnessSHA256','requestedSamples'):
+        rejected(lambda p,k=key:[report.pop(k) for report in p])
+    rejected(lambda p:p[1]['results'].pop())
+    rejected(lambda p:p[1]['results'].append(p[1]['results'][0]))
+    rejected(lambda p:p[1]['results'][0].update(backend='gl'))
+    rejected(lambda p:p[1]['results'][0].update(failures=['previous failure']))
+    rejected(lambda p:p[1]['results'][0]['sha256'].update(screenshot='changed'))
+    # A rehashed but unlit specimen also fails after the standalone gate
+    # reruns the individual controls; matching backends alone cannot pass it.
+    for report in pair:
+        report['results'][0].update(screenshot=str(shots[0]))
+        report['results'][0]['sha256']['screenshot']=runner.digest(shots[0])
+    assert environment_parity.compare(*pair)['failures']
+
+
+def test_ibl_coverage_lighting() -> None:
+    a=bytearray([0]*50+[255]*50); b=bytearray(a); a[49]=64
+    def color(mask): return bytes(round(v*c/255) for v in mask for c in (20,30,40))
+    ca,cb=color(a),color(b)
+    assert not environment_parity.coverage_lighting(ca,cb,a,b)['failures']
+    assert environment_parity.coverage_lighting(ca,bytes(len(cb)),a,b)['failures']
+    bad=bytearray(cb); bad[0]=20
+    assert environment_parity.coverage_lighting(ca,bad,a,b)['failures'], 'a hole cannot emit light'
+    bad=bytearray(ca); bad[49*3]=255
+    assert environment_parity.coverage_lighting(bad,cb,a,b)['failures'], 'a one-sample edge cannot hide a bright artifact'
+    bad=bytearray(b); bad[50]=0
+    assert environment_parity.coverage_lighting(ca,color(bad),a,bad)['failures'], 'whole missing pixels are not sample quantization'
+    bad=bytearray(b)
+    for i in range(50,65): bad[i]=191
+    assert environment_parity.coverage_lighting(ca,color(bad),a,bad)['failures'], 'systematic coverage loss must fail'
+
+
+def test_probe_hard_cutout_lighting() -> None:
+    from renderer_pbr_probe_parity import hard_cutout_lighting
+    width,height=256,128
+    mask=bytes(255 if 64<=x<192 else 0 for y in range(height) for x in range(width))
+    def color(values): return bytes(c if value else 0 for value in values for c in (20,30,40))
+    baseline=color(mask)
+    def check(other, actual=None, reference=baseline):
+        return hard_cutout_lighting(reference, color(other) if actual is None else actual,
+                                    mask,other,width,height)['failures']
+    assert not check(mask)
+    edge=64*width+64
+    missing=bytearray(mask); missing[edge]=0
+    assert not check(missing), 'one measured boundary fragment is permitted'
+    missing[65*width+64]=0
+    assert check(missing), 'systematic edge erosion must fail the pixel budget'
+    missing=bytearray(mask); missing[64*width+128]=0
+    assert check(missing), 'an interior hole is not edge quantization'
+    wrong=bytearray(baseline); wrong[3*(64*width+128)]+=3
+    assert check(mask,wrong), 'covered radiance still has a two-byte limit'
+    wrong=bytearray(baseline); wrong[0]=2
+    assert check(mask,wrong), 'uncovered pixels cannot carry stray light'
+    missing=bytearray(mask); missing[edge]=0
+    wrong=bytearray(baseline); wrong[3*edge]=255
+    assert check(missing,reference=wrong), 'an unmatched edge cannot conceal a bright artifact'
+    partial=bytearray(mask); partial[edge]=128
+    assert check(partial), 'single-sample coverage must be binary'
+    empty=bytes(len(mask))
+    assert hard_cutout_lighting(color(empty),color(empty),empty,empty,width,height)['failures']
+    assert hard_cutout_lighting(baseline,b'',mask,mask,width,height)['failures']
+
+
+def test_probe_specimen_framing() -> None:
+    from renderer_pbr_probe_parity import specimen_bounds, specimen_patch, metrics
+    report={'fixture':{'cameras':{'sampling':[0,-1100,380,0,90,0]}},'probeProfile':{}}
+    def spawn(origin):
+        report['probeProfile']['specimen']={'commands':[
+            f'spawn func_static name probe_specimen model "sphere" origin "{origin}" solid 0']}
+    spawn('0 -700 380')
+    assert specimen_bounds(report,'specimen')==(608,368,673,433)
+    spawn('60 -700 420')
+    bounds=specimen_bounds(report,'specimen')
+    assert bounds==(688,315,753,380), 'the shading patch must follow the translated sphere'
+    baseline=bytes(1280*800*3)
+    wrong=bytearray(baseline); wrong[(347*1280+720)*3]=3
+    assert metrics(specimen_patch(baseline,bounds),specimen_patch(wrong,bounds))['maximumError']==3
+    for origin in ('0 -1200 380','nan -700 380','0 -700','10000 -700 380','0 -600 380'):
+        spawn(origin)
+        try: specimen_bounds(report,'specimen')
+        except ValueError: pass
+        else: raise AssertionError('invalid framing was accepted: '+origin)
+    spawn('60 -700 420')
+    report['probeProfile']['specimen']['commands']*=2
+    try: specimen_bounds(report,'specimen')
+    except ValueError: pass
+    else: raise AssertionError('ambiguous specimen was accepted')
+
+
 def main() -> int:
     test_material_data_and_geometry()
     test_vulkan_backend_evidence()
+    test_ibl_proof_gates()
+    test_ibl_coverage_lighting()
+    test_probe_hard_cutout_lighting()
+    test_probe_specimen_framing()
     temporary=runner.fixture.validate_runtime_root(ROOT/'.tmp/pbr-laboratory-tests')
     temporary.mkdir(parents=True,exist_ok=True)
     # No links are created by this test. Its known temporary subtree contains
@@ -447,6 +617,7 @@ def main() -> int:
         test_vulkan_direct_evidence(Path(name))
         test_vulkan_msaa_coverage_evidence(Path(name))
         test_bounded_console_scripts(Path(name))
+        test_ibl_parity_provenance(Path(name))
     print('pbr_laboratory_fixture: ok (24 stations, geometry, channels, coverage, proof rejection)')
     return 0
 

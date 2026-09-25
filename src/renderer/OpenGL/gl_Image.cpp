@@ -35,6 +35,34 @@ Contains the Image implementation for OpenGL.
 */
 
 #include "../tr_local.h"
+#include "../GLPixelTransferScope.h"
+
+bool idImage::ReadPixelsRGBA8( idList<byte> &pixels ) {
+	pixels.Clear();
+	if ( !IsLoaded() || opts.textureType != TT_2D || opts.format != FMT_RGBA8
+			|| opts.numMSAASamples != 0 || opts.width < 1 || opts.height < 1
+			|| opts.width > 8192 || opts.height > 8192 ) {
+		return false;
+	}
+	idGLPixelTransferScope transfer;
+	R_GLStateCache().BindTexture( 0, GL_TEXTURE_2D, texnum );
+	GLint width = 0, height = 0, format = 0;
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width );
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height );
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &format );
+	if ( width != opts.width || height != opts.height || format != GL_RGBA8 ) {
+		return false;
+	}
+	pixels.SetNum( width * height * 4 );
+	glGetTexImage( GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.Ptr() );
+	const GLenum error = glGetError();
+	if ( error != GL_NO_ERROR ) {
+		common->Warning( "OpenGL image readback failed: 0x%x", error );
+		pixels.Clear();
+		return false;
+	}
+	return true;
+}
 
 #ifndef GL_SRGB8
 #define GL_SRGB8 0x8C41

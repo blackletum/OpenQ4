@@ -80,7 +80,7 @@ Every visible motion class has explicit ownership:
 | Domain | History treatment |
 |---|---|
 | Static world | Camera/depth reprojection and disocclusion testing |
-| Rigid entities | Previous model transform plus camera reprojection; OpenGL writes exact eligible object velocity, while Vulkan conservatively rejects the packet region |
+| Rigid entities | OpenGL and Vulkan write eligible object velocity from the previous model and camera transforms; a missing transform or failed draw retains conservative packet-region rejection |
 | Skinned geometry | Reactive rejection unless a backend supplies an explicitly validated previous palette and velocity stream |
 | Particles/BSE | Reactive rejection |
 | Material/generated deforms | Reactive rejection unless a backend supplies explicitly validated previous vertices |
@@ -93,6 +93,23 @@ claims: history is suppressed when a precise prior vertex stream is unavailable.
 The shared packet policy carries at most two conservative normalized regions;
 when a backend cannot establish that policy, it rejects history over the full
 view. Root 2D UI is never part of the temporal history or scene scaling.
+
+Vulkan keeps TAA transform history separate from motion blur. It commits that
+history only after the matching color history write, and requires the previous
+backend frame, view identity, generation, model identity and scene extent to
+match. Captures, cuts, resizes, missing previous geometry and failed resource
+admission cannot reuse old vectors. Its single-sample RGBA16F velocity target
+tests fragments against the current resolved scene depth, including MSAA scenes.
+Vectors include camera motion and jitter once, use scene-pixel units, and scale
+to native presentation pixels in the resolve. Unsupported geometry keeps its
+explicit reactive ownership.
+
+`rendererTemporalPresentationStatus` also reports Vulkan's eligible/drawn rigid
+surfaces, whether the last vector pass was complete, and completed vector views.
+The stock HDR gameplay gate checks that completed vector views increase during
+each scaled/restarted interval. A single frame can correctly reject history
+after a time discontinuity or newly visible entity; cumulative freshness proves
+the real production draws without requiring unsafe reuse on that frame.
 
 `r_temporalAAFeedback`, `r_temporalAAReactiveScale`, and `r_temporalAADebug`
 control maximum history weight, rejection strength, and the velocity/reactive/
@@ -124,3 +141,13 @@ Dependency-light policy coverage lives in
 is checked by `tools/tests/renderer_temporal_presentation.py`. Runtime acceptance
 uses windowed engine-TGA captures and mode-specific SP/MP gameplay; operating-
 system capture and injected user input are not part of the workflow.
+
+`rendererVulkanTemporalMotionSelfTest` numerically reads GPU velocity and resolve
+attachments for positive/negative translation, rotation, perspective interpolation, camera plus jitter,
+invalid previous clip positions, asymmetric depth occlusion and scaled scissors.
+Thirty-six fixtures cover two scene extents and both stored image origins;
+missing geometry, new entities and
+stale view/frame/generation/extent/capture state must reject exact ownership.
+The required `renderer-vk-temporal-motion-selftest` matrix case repeats them
+after full restart with active validation. These tests establish numerical
+behavior, not moving-scene visual parity, performance or platform promotion.

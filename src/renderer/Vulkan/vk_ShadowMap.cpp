@@ -3331,6 +3331,7 @@ static int VK_ShadowMap_DrawPointCasterChain( vkCasterPassCtx_t &ctx,
 		push.depthRow[ 0 ] = projRow[ 0 ];
 		push.depthRow[ 1 ] = projRow[ 1 ];
 		push.depthRow[ 2 ] = farClip;
+		push.depthRow[ 3 ] = static_cast<float>( cubeFace );
 
 		VK_ShadowMap_SetPushAlphaIdentity( push );
 		push.alphaS[ 2 ] = ctx.slopeFactor;
@@ -4134,7 +4135,7 @@ static int VK_ClassicShadow_DrawProjectedPass(
 static int VK_ClassicShadow_DrawPointPass(
 		vkCasterPassCtx_t &ctx,
 		const vkClassicShadowPassPlan_t &passPlan,
-		const float faceViewMatrix[ 16 ], const float projRow[ 2 ] ) {
+		const float faceViewMatrix[ 16 ], const float projRow[ 2 ], const int cubeFace ) {
 	const classicInteractionDomainShadowMapPass_t &pass = *passPlan.pass;
 	int draws = 0;
 	for ( int i = 0; i < passPlan.casterRefCount; ++i ) {
@@ -4150,6 +4151,7 @@ static int VK_ClassicShadow_DrawPointPass(
 		push.depthRow[ 0 ] = projRow[ 0 ];
 		push.depthRow[ 1 ] = projRow[ 1 ];
 		push.depthRow[ 2 ] = pass.point.farDistance;
+		push.depthRow[ 3 ] = static_cast<float>( cubeFace );
 		VK_ShadowMap_SetPushAlphaIdentity( push );
 		push.alphaS[ 2 ] = pass.polygonFactor;
 		push.alphaT[ 2 ] = pass.polygonOffset
@@ -5248,7 +5250,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 
 					if ( classicCommit ) {
 						drawnCasters += VK_ClassicShadow_DrawPointPass(
-							ctx, *classicPass, faceViewMatrix, projRow );
+							ctx, *classicPass, faceViewMatrix, projRow, cubeFace );
 					} else {
 					const viewLight_t *vLight = light.vLight;
 					drawnCasters += VK_ShadowMap_DrawPointCasterChain( ctx, vLight, faceViewMatrix,

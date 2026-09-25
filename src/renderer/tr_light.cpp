@@ -31,6 +31,9 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 #include "../sound/sound.h"
+#ifdef OPENQ4_RENDERER_VK_MODULE
+#include "Vulkan/vk_MaterialPrograms.h"
+#endif
 
 static ID_INLINE idSoundEmitter *R_GetShaderSoundEmitter( int soundEmitterHandle ) {
 	if ( soundEmitterHandle == 0 || soundSystem == NULL ) {
@@ -1126,11 +1129,13 @@ R_LinkLightSurf
 =================
 */
 bool R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const viewEntity_t *space,
-				   const idRenderLightLocal *light, const idMaterial *shader, const idScreenRect &scissor, bool viewInsideShadow ) {
+				   const idRenderLightLocal *light, const idMaterial *shader, const idScreenRect &scissor, bool viewInsideShadow,
+				   const srfTriangles_t *pbrLightGeo ) {
 	drawSurf_t		*drawSurf;
 	const int		limitBatchSize = r_limitBatchSize.GetInteger();
 
-	if ( limitBatchSize > 0 && tri->numIndexes <= limitBatchSize ) {
+	if ( limitBatchSize > 0 && tri->numIndexes <= limitBatchSize
+			&& ( pbrLightGeo == NULL || pbrLightGeo->numIndexes <= limitBatchSize ) ) {
 		return false;
 	}
 
@@ -1145,6 +1150,7 @@ bool R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const 
 	memset( &drawSurf->classicDeform, 0, sizeof( drawSurf->classicDeform ) );
 
 	drawSurf->geo = tri;
+	drawSurf->pbrLightGeo = pbrLightGeo;
 	drawSurf->space = space;
 	drawSurf->material = shader;
 	drawSurf->scissorRect = scissor;
@@ -1570,7 +1576,23 @@ bool R_ShadowMapLightWillUseShadowMaps( const idRenderLightLocal *lightDef ) {
 			return false;
 		}
 	}
-	return RB_ShadowMapResourcesKnownGood( pointLightPath );
+	if ( !RB_ShadowMapResourcesKnownGood( pointLightPath ) ) { return false; }
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	// Authored lighting has no engine shadow-map sampler in its shader ABI.
+	// Its receiver chain uses stencil, so retain volumes before any entity's
+	// interaction is submitted. Checking only the currently submitted surface
+	// is too late: earlier entities may already have discarded their volumes.
+	// An unbuilt interaction is conservatively unknown, never evidence that
+	// every receiver supports maps. This also covers newly spawned receivers.
+	for ( const idInteraction *inter = lightDef->firstInteraction; inter != NULL; inter = inter->lightNext ) {
+		if ( inter->numSurfaces < 0 ) { return false; }
+		for ( int i = 0; i < inter->numSurfaces; ++i ) {
+			if ( inter->surfaces[i].shader == NULL
+					|| VK_MaterialPrograms_NeedsStencil( inter->surfaces[i].shader, NULL ) ) { return false; }
+		}
+	}
+#endif
+	return true;
 }
 
 /*
@@ -2170,6 +2192,7 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 
 	drawSurf = (drawSurf_t *)R_FrameAlloc( sizeof( *drawSurf ) );
 	drawSurf->geo = tri;
+	drawSurf->pbrLightGeo = NULL;
 	drawSurf->space = space;
 	drawSurf->material = shader;
 	drawSurf->scissorRect = scissor;

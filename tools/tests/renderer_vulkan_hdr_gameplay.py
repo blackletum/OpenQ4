@@ -22,7 +22,13 @@ HDR_INFO = re.compile(r"Vulkan HDR: ([^\r\n]+)")
 
 
 def snapshot(name: str, *, capture: bool = True) -> list[str]:
-    lines = [f"echo HDR_CHECK_{name}", "rendererVulkanHDRInfo"]
+    lines = []
+    if name in ("scaled", "resized", "partial"):
+        # A single sampled frame can legitimately reject history after a camera
+        # cut, hitch or newly visible entity. Prove fresh complete draws over an
+        # interval, without treating that conservative fallback as a failure.
+        lines += [f"echo HDR_MOTION_START_{name}", "rendererTemporalPresentationStatus", "wait 60"]
+    lines += [f"echo HDR_CHECK_{name}", "rendererVulkanHDRInfo", "rendererTemporalPresentationStatus"]
     if capture:
         lines += [f'screenshot "screenshots/{name}.tga"']
     return lines
@@ -65,7 +71,7 @@ def read_states(log: str) -> dict[str, dict[str, str]]:
     return states
 
 
-def validate_states(states: dict[str, dict[str, str]], samples: int) -> list[str]:
+def validate_states(states: dict[str, dict[str, str]], samples: int, mode: str | None = None) -> list[str]:
     failures = []
     for name in ("initial", "after_capture", "ldr", "scaled", "synchronous", "resized", "partial", "manual", "disabled"):
         state = states.get(name)
@@ -81,6 +87,8 @@ def validate_states(states: dict[str, dict[str, str]], samples: int) -> list[str
             failures.append(f"{name}: wrong scene format/extent: {state}")
         if state.get("samples") != str(samples):
             failures.append(f"{name}: actual MSAA differs from requested {samples}: {state.get('samples')}")
+        if mode == "sp" and state.get("skyPreserved") != str(int(name != "disabled")):
+            failures.append(f"{name}: portal sky was not preserved by the actual HDR owner")
         if state.get("async") != ("0" if name == "synchronous" else "1"):
             failures.append(f"{name}: exposure readback mode differs from the requested control")
         if state.get("autoExposure") != str(int(active)) or state.get("initialized") != str(int(active)):
@@ -108,6 +116,37 @@ def validate_states(states: dict[str, dict[str, str]], samples: int) -> list[str
             except (KeyError, ValueError):
                 failures.append(f"{later}: malformed exposure generation")
     return failures
+
+
+def validate_temporal_motion(log: str) -> tuple[dict, list[str]]:
+    """Require real completed rigid draws in the TAA parts of stock gameplay."""
+    states, failures = {}, []
+    for name in ("scaled", "resized", "partial"):
+        beginning = re.search(rf"(?m)^HDR_MOTION_START_{name}\s*$([\s\S]*?)(?=^HDR_CHECK_|\Z)", log)
+        section = re.search(rf"(?m)^HDR_CHECK_{name}\s*$([\s\S]*?)(?=^HDR_CHECK_|\Z)", log)
+        before = re.search(r"Vulkan temporal motion: ([^\r\n]+)", beginning[1]) if beginning else None
+        info = re.search(r"Vulkan temporal motion: ([^\r\n]+)", section[1]) if section else None
+        if not info or not before:
+            failures.append(f"{name}: missing rigid temporal motion telemetry")
+            continue
+        start = dict(re.findall(r"(\w+)=(\S+)", before[1]))
+        state = dict(re.findall(r"(\w+)=(\S+)", info[1]))
+        states[name] = state
+        try:
+            completed = int(state["completedViews"]) - int(start["completedViews"])
+            state["intervalCompletedViews"] = str(completed)
+            presentation = re.search(r"Temporal presentation: ([^\r\n]+)", section[1])
+            active = dict(re.findall(r"(\w+)=(\S+)", presentation[1])) if presentation else {}
+            if (completed < 10 or int(state["drawn"]) > int(state["eligible"])
+                    or (state["complete"] == "1" and state["drawn"] != state["eligible"])
+                    or state["complete"] not in ("0", "1")
+                    or active.get("taaRequested") != "1" or active.get("frame") != state["frame"]
+                    or active.get("historyGeneration") != state["generation"]
+                    or int(state["frame"]) < 0 or int(state["generation"]) <= 0):
+                failures.append(f"{name}: rigid temporal draws not proven complete: {state}")
+        except (KeyError, ValueError) as exc:
+            failures.append(f"{name}: malformed rigid temporal telemetry: {exc}")
+    return states, failures
 
 
 def run_case(runtime: Path, output: Path, basepath: Path, mode: str, samples: int, timeout: int) -> dict:
@@ -152,7 +191,9 @@ def run_case(runtime: Path, output: Path, basepath: Path, mode: str, samples: in
         ["Vulkan: HDR luminance sample unavailable", "Vulkan: r_bloom/r_hdrToneMap pass could not run",
          "cannot be changed in multiplayer"])
     states = read_states(log)
-    failures += validate_states(states, samples)
+    failures += validate_states(states, samples, mode)
+    motion, motion_failures = validate_temporal_motion(log)
+    failures += motion_failures
     aa = re.findall(r"Renderer AA: MSAA requested=(\d+) effective=(\d+)", log)
     if not aa or aa[-1] != (str(samples), str(samples)):
         failures.append("final AA telemetry does not describe the requested and rendered scene samples")
@@ -173,7 +214,7 @@ def run_case(runtime: Path, output: Path, basepath: Path, mode: str, samples: in
             failures.append(f"{name}: invalid engine capture: {exc}")
     result = {"id": case_id, "status": "fail" if failures else "pass", "map": map_name,
               "exitCode": exit_code, "timedOut": timed_out, "elapsedSeconds": round(elapsed, 2),
-              "launchArgs": args, "log": str(log_path), "states": states, "screenshots": screenshots,
+              "launchArgs": args, "log": str(log_path), "states": states, "temporalMotion": motion, "screenshots": screenshots,
               "warningSignatures": warnings, "failures": failures}
     (evidence / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(f"{case_id}: {result['status']} ({elapsed:.1f}s)", flush=True)

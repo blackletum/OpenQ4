@@ -15,6 +15,7 @@
 
 #include "../RenderModuleAPI.h"
 #include "VulkanBringup.h"
+#include "VulkanDeviceSelection.h"
 
 /*
 ===============================================================================
@@ -37,9 +38,8 @@ static VkInstance vk_heldInstance = VK_NULL_HANDLE;
 // the feature floor the real Vulkan renderer is designed against
 // (docs/dev/plans/2026-07-16-vulkan-renderer.md, "Vulkan technical design")
 #define VK_BRINGUP_REQUIRED_API_VERSION		VK_API_VERSION_1_3
-// mirrors VK_REQUIRED_BOUND_DESCRIPTOR_SETS in VulkanDevice.h; kept as its own
-// literal because the probe deliberately links none of the device back end
-#define VK_BRINGUP_REQUIRED_BOUND_DESCRIPTOR_SETS	8
+// Share the renderer's limit without depending on its device context.
+#define VK_BRINGUP_REQUIRED_BOUND_DESCRIPTOR_SETS	VK_REQUIRED_BOUND_DESCRIPTOR_SETS
 
 typedef struct vkBringupDeviceInfo_s {
 	VkPhysicalDevice					physicalDevice;

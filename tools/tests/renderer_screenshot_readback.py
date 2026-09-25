@@ -98,33 +98,41 @@ def test_vulkan_swapchain_preserves_legacy_sdr_code_values() -> None:
     create_swapchain = function_body(
         device_cpp, "static bool VK_Device_CreateSwapchain( void )"
     )
+    selection = function_body(
+        read("src/renderer/Vulkan/VulkanDeviceSelection.cpp"),
+        "VkResult VK_SelectSurfaceFormat(",
+    )
     for snippet in (
         "VK_FORMAT_B8G8R8A8_UNORM",
         "VK_FORMAT_R8G8B8A8_UNORM",
         "VK_COLOR_SPACE_SRGB_NONLINEAR_KHR",
-        "formats[ i ].format == VK_FORMAT_UNDEFINED",
-        "chosen.format = VK_FORMAT_B8G8R8A8_UNORM;",
-        "if ( !compatibleSurfaceFormat )",
+        "format.format == VK_FORMAT_UNDEFINED",
+        "return VK_ERROR_FORMAT_NOT_SUPPORTED;",
+    ):
+        require(selection, snippet, "Vulkan shared legacy SDR surface selection")
+    for snippet in (
+        "VK_SelectSurfaceFormat( vkGetPhysicalDeviceSurfaceFormatsKHR,",
+        "if ( formatResult != VK_SUCCESS )",
         "Vulkan: surface has no compatible legacy SDR UNORM + SRGB_NONLINEAR format",
         "format=%d colorSpace=%d",
     ):
         require(create_swapchain, snippet, "Vulkan legacy SDR swapchain selection")
     reject(
-        create_swapchain,
-        "chosen = formats[ 0 ];",
+        selection,
+        "selected = formats[ 0 ];",
         "Vulkan arbitrary surface-format fallback",
     )
     reject(
-        create_swapchain,
+        selection,
         "VK_FORMAT_B8G8R8A8_SRGB",
         "Vulkan double-encoding swapchain format",
     )
     reject(
-        create_swapchain,
+        selection,
         "VK_FORMAT_R8G8B8A8_SRGB",
         "Vulkan double-encoding swapchain format",
     )
-    guard_start = create_swapchain.index("if ( !compatibleSurfaceFormat )")
+    guard_start = create_swapchain.index("if ( formatResult != VK_SUCCESS )")
     create_start = create_swapchain.index("vkCreateSwapchainKHR")
     require_order(
         create_swapchain[guard_start:create_start],

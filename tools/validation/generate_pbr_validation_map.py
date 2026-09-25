@@ -21,7 +21,9 @@ MAP = "maps/tools/openq4_pbr_lab"
 PREFIX = "textures/openq4/pbr_lab"
 MODEL = "models/openq4/pbr_lab/sphere.ase"
 SAMPLING_MODEL = "models/openq4/pbr_lab/sphere_tiled.ase"
+BACKFACE_MODEL = "models/openq4/pbr_lab/backface_receiver.ase"
 CONSTANT_NORMAL_MODEL = "models/openq4/pbr_lab/sphere_constant_normal.ase"
+VERTEX_COLOR_MODEL = "models/openq4/pbr_lab/sphere_vertex_color.ase"
 SKINNING_MODEL = "openq4_pbr_lab_skinned"
 
 
@@ -31,7 +33,7 @@ def rgba_tga(size: int, pixels: list[tuple[int, int, int, int]]) -> bytes:
     return header + bytes(channel for r, g, b, a in pixels for channel in (b, g, r, a))
 
 
-def sphere_ase(segments: int = 48, rings: int = 24, radius: float = 72, uv_scale: float = 1, uv_offset: float = 0, constant_normal: bool = False) -> str:
+def sphere_ase(segments: int = 48, rings: int = 24, radius: float = 72, uv_scale: float = 1, uv_offset: float = 0, constant_normal: bool = False, vertex_color: tuple[int, int, int] | None = None) -> str:
     vertices, uv, triangles = [], [], []
     for j in range(rings + 1):
         theta = math.pi * j / rings
@@ -57,13 +59,84 @@ def sphere_ase(segments: int = 48, rings: int = 24, radius: float = 72, uv_scale
     out += [f'*MESH_TVERT {i} {u:.8f} {v:.8f} 0' for i, (u, v) in enumerate(uv)]
     out += ['}', f'*MESH_NUMTVFACES {len(triangles)}', '*MESH_TFACELIST {']
     out += [f'*MESH_TFACE {i} {a} {b} {c}' for i, (a, b, c) in enumerate(triangles)]
-    out += ['}', '*MESH_NORMALS {']
+    out += ['}']
+    if vertex_color is not None:
+        # ASE truncates float * 255 to a byte. Stay inside each byte's bin so
+        # decimal-to-float rounding cannot change the intended (64,128,192).
+        out += ['*MESH_NUMCVERTEX 1', '*MESH_CVERTLIST {',
+                '*MESH_VERTCOL 0 ' + ' '.join(f'{(v + .25) / 255:.9f}' for v in vertex_color),
+                '}', f'*MESH_NUMCVFACES {len(triangles)}', '*MESH_CFACELIST {']
+        out += [f'*MESH_CFACE {i} 0 0 0' for i in range(len(triangles))]
+        out += ['}']
+    out += ['*MESH_NORMALS {']
     for i, indices in enumerate(triangles):
         center = [sum(vertices[k][axis] for k in indices) for axis in range(3)]
         length = math.sqrt(sum(x*x for x in center))
         out.append(f'*MESH_FACENORMAL {i} ' + ' '.join(f'{x/length:.8f}' for x in center))
         out += [f'*MESH_VERTEXNORMAL {k} ' + ('0 -1 0' if constant_normal else ' '.join(f'{x/radius:.8f}' for x in vertices[k])) for k in indices]
     return '\n'.join(out + ['}', '}', '*MATERIAL_REF 0', '}', ''])
+
+
+def backface_plane_ase() -> str:
+    """Original plane facing -Y; a light at positive local Y rejects both classic faces."""
+    return """*3DSMAX_ASCIIEXPORT 200
+*MATERIAL_LIST {
+*MATERIAL_COUNT 1
+*MATERIAL 0 {
+*MAP_DIFFUSE {
+*BITMAP "//openq4/baseoq4/textures/openq4/pbr_lab/neutral"
+*UVW_U_TILING 1
+*UVW_V_TILING 1
+}
+}
+}
+*GEOMOBJECT {
+*NODE_NAME "PBR_BACKFACE_RECEIVER"
+*NODE_TM {
+*TM_ROW0 1 0 0
+*TM_ROW1 0 1 0
+*TM_ROW2 0 0 1
+*TM_ROW3 0 0 0
+}
+*MESH {
+*MESH_NUMVERTEX 4
+*MESH_NUMFACES 2
+*MESH_VERTEX_LIST {
+*MESH_VERTEX 0 -72 0 -72
+*MESH_VERTEX 1 72 0 -72
+*MESH_VERTEX 2 72 0 72
+*MESH_VERTEX 3 -72 0 72
+}
+*MESH_FACE_LIST {
+*MESH_FACE 0: A: 0 B: 1 C: 2 AB: 1 BC: 1 CA: 1 *MESH_SMOOTHING 1 *MESH_MTLID 0
+*MESH_FACE 1: A: 0 B: 2 C: 3 AB: 1 BC: 1 CA: 1 *MESH_SMOOTHING 1 *MESH_MTLID 0
+}
+*MESH_NUMTVERTEX 4
+*MESH_TVERTLIST {
+*MESH_TVERT 0 0 0 0
+*MESH_TVERT 1 1 0 0
+*MESH_TVERT 2 1 1 0
+*MESH_TVERT 3 0 1 0
+}
+*MESH_NUMTVFACES 2
+*MESH_TFACELIST {
+*MESH_TFACE 0 0 1 2
+*MESH_TFACE 1 0 2 3
+}
+*MESH_NORMALS {
+*MESH_FACENORMAL 0 0 -1 0
+*MESH_VERTEXNORMAL 0 0 -1 0
+*MESH_VERTEXNORMAL 1 0 -1 0
+*MESH_VERTEXNORMAL 2 0 -1 0
+*MESH_FACENORMAL 1 0 -1 0
+*MESH_VERTEXNORMAL 0 0 -1 0
+*MESH_VERTEXNORMAL 2 0 -1 0
+*MESH_VERTEXNORMAL 3 0 -1 0
+}
+}
+*MATERIAL_REF 0
+}
+"""
 
 
 def brush(lo: tuple[int, int, int], hi: tuple[int, int, int], material: str) -> str:
@@ -207,9 +280,11 @@ def payloads() -> tuple[dict[str, bytes], list[dict]]:
         mats.append(material(name, **kwargs))
         stations.append({'name': name, 'origin': [-500+(i%6)*200,160,300-(i//6)*180], 'kind': 'material semantics', 'parameters': kwargs})
     add(MODEL, sphere_ase())
+    add(BACKFACE_MODEL, backface_plane_ase())
     # Same geometry with a deliberately constant shading normal: AA must
     # preserve its lighting exactly when no normal map perturbs the surface.
     add(CONSTANT_NORMAL_MODEL, sphere_ase(constant_normal=True))
+    add(VERTEX_COLOR_MODEL, sphere_ase(vertex_color=(64, 128, 192)))
     # Both coordinates stay outside [0,1] even on the UV seam. ASE inverts V,
     # so clamp must reach checker(x=63,y=0), whose known value is black.
     add(SAMPLING_MODEL, sphere_ase(uv_scale=16, uv_offset=2.375))
@@ -230,6 +305,11 @@ def payloads() -> tuple[dict[str, bytes], list[dict]]:
             add(f'env/openq4/pbr_lab/{probe}_{suffix}.tga', fixture.tga_bytes(size,size,pixels))
         mats.append(f'lights/openq4/pbr_lab/{probe}\n{{\nopenQ4SpecularProbe {{\ncubeMap env/openq4/pbr_lab/{probe}\nintensity 2\nblendFraction 0.5\npriority 8\n}}\n{{ map _white }}\n}}\n')
     mats.append('lights/openq4/pbr_lab/projected\n{\nlightFalloffImage _white\n{\nmap _white\ncolored\n}\n}\n')
+    # Constant authored ambient radiance isolates the PBR diffuse contract
+    # from normal direction, roughness, distance falloff and specular IBL.
+    for name, stages in (('ambient', 1), ('ambient_double', 2)):
+        mats.append(f'lights/openq4/pbr_lab/{name}\n{{\nambientLight\nnoShadows\nlightFalloffImage _white\n'
+                    + '{\nmap _white\ncolored\n}\n' * stages + '}\n')
     # Keep receivers visible through the volume: an opaque fog sheet would
     # trivially hide incorrect lighting and cannot prove composition.
     mats.append('lights/openq4/pbr_lab/fog\n{\nfogLight\nnoShadows\n{\nmap _white\ncolor 0.18, 0.32, 0.48, 6000\n}\n}\n')
@@ -254,6 +334,15 @@ def payloads() -> tuple[dict[str, bytes], list[dict]]:
         mats.append(material('sampler_'+name, albedo='checker', albedo_options=options))
     for name,encoding in (('xyz','tangentXYZ'),('rg','tangentRG'),('agb','quake4AGB'),('zero','tangentXYZ')):
         mats.append(material('baked_normal_'+name, normal=encoding, normal_scale=0 if name=='zero' else 1))
+    # Original fixed-function controls: primary color and texture-environment
+    # constants have different clamping rules on floating-point targets.
+    for mode, keyword in (('primary', ''), ('vertex', 'vertexColor'), ('inverse', 'inverseVertexColor')):
+        for blend, image in (('replace', 'cyan'), ('alpha', 'translucent'), ('mask', 'translucent')):
+            state = 'blend' if blend == 'alpha' else 'gl_one, gl_zero'
+            coverage = 'alphaTest parm4\n' if blend == 'mask' else ''
+            mats.append(f'{PREFIX}/classic_stage_{mode}_{blend}\n{{\nnoShadows\n{{\n'
+                        f'blend {state}\nmap {PREFIX}/{image}\n{keyword}\n'
+                        f'{coverage}color parm0, parm1, parm2, parm3\n}}\n}}\n')
     add('materials/openq4_pbr_lab.mtr', '\n'.join(mats))
     room = [((-820,-1220,-20),(820,420,0)),((-820,-1220,800),(820,420,820)),((-820,-1220,0),(-800,420,800)),((800,-1220,0),(820,420,800)),((-800,-1220,0),(800,-1200,800)),((-800,400,0),(800,420,800))]
     # Keep the backdrop classic: a missing sphere must never pass ownership
@@ -265,8 +354,12 @@ def payloads() -> tuple[dict[str, bytes], list[dict]]:
     precache += f'"model_constant_normal_test" "{CONSTANT_NORMAL_MODEL}"\n"mtr_aa_normal_test" "{PREFIX}/aa_normal"\n"mtr_aa_geometric_test" "{PREFIX}/aa_geometric"\n'
     precache += ''.join(f'"mtr_{name}_test" "{PREFIX}/{name}"\n' for name in
                        ('emission_half','emission_quarter','emission_cutout','emission_mismatch','cutout_mismatch','emission_extreme_native'))
-    precache += ''.join(f'"mtr_{name}_test" "lights/openq4/pbr_lab/{name}"\n' for name in ('fog','blend'))
+    precache += ''.join(f'"mtr_{name}_test" "lights/openq4/pbr_lab/{name}"\n'
+                        for name in ('fog','blend','ambient','ambient_double'))
     precache += ''.join(f'"mtr_baked_normal_{name}" "{PREFIX}/baked_normal_{name}"\n' for name in ('xyz','rg','agb','zero'))
+    precache += f'"model_vertex_color_test" "{VERTEX_COLOR_MODEL}"\n'
+    precache += ''.join(f'"mtr_stage_{mode}_{blend}" "{PREFIX}/classic_stage_{mode}_{blend}"\n'
+                        for mode in ('primary', 'vertex', 'inverse') for blend in ('replace', 'alpha', 'mask'))
     level = level.replace('"classname" "worldspawn"\n', '"classname" "worldspawn"\n'+precache, 1)
     # A classic backplate makes coverage observable in the ownership view:
     # cutout holes reveal it, while source-alpha must blend with it.

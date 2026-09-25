@@ -476,6 +476,7 @@ static void R_LinkShadowMapCasterSurf( const drawSurf_t **link, const srfTriangl
 
 	drawSurf_t *drawSurf = (drawSurf_t *)R_FrameAlloc( sizeof( *drawSurf ) );
 	drawSurf->geo = tri;
+	drawSurf->pbrLightGeo = NULL;
 	drawSurf->space = space;
 	drawSurf->material = shader;
 	drawSurf->sort = 0.0f;
@@ -992,9 +993,16 @@ The resulting surface will be a subset of the original triangles,
 it will never clip triangles, but it may cull on a per-triangle basis.
 ====================
 */
+static bool R_LightIncludesBackFaces( const idRenderEntityLocal *ent,
+		const idRenderLightLocal *light, const idMaterial *shader ) {
+	return r_lightAllBackFaces.GetBool() || light->lightShader->LightEffectsBackSides()
+		|| shader->ReceivesLightingOnBackSides() || ent->parms.noSelfShadow || ent->parms.noShadow;
+}
+
 static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent, 
 									 const srfTriangles_t *tri, const idRenderLightLocal *light,
-									 const idMaterial *shader, srfCullInfo_t &cullInfo ) {
+									 const idMaterial *shader, srfCullInfo_t &cullInfo,
+									 bool allFaces = false, bool keepEmpty = false ) {
 	int			i;
 	int			numIndexes;
 	glIndex_t	*indexes;
@@ -1013,13 +1021,7 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 	indexes = NULL;
 
 	// it is debatable if non-shadowing lights should light back faces. we aren't at the moment
-	if ( r_lightAllBackFaces.GetBool() || light->lightShader->LightEffectsBackSides()
-			|| shader->ReceivesLightingOnBackSides()
-				|| ent->parms.noSelfShadow || ent->parms.noShadow  ) {
-		includeBackFaces = true;
-	} else {
-		includeBackFaces = false;
-	}
+	includeBackFaces = allFaces || R_LightIncludesBackFaces( ent, light, shader );
 
 	// allocate a new surface for the lit triangles
 	newTri = R_AllocStaticTriSurf();
@@ -1057,7 +1059,7 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 		const byte *facing = includeBackFaces ? NULL : cullInfo.facing;
 		const byte *cullBits = ( cullInfo.cullBits == LIGHT_CULL_ALL_FRONT ) ? NULL : cullInfo.cullBits;
 		if ( R_MD5R_CreateLightTris( *tri, newTri, c_backfaced, c_distance, facing, cullBits, includeBackFaces ) ) {
-			if ( newTri->numIndexes == 0 ) {
+			if ( newTri->numIndexes == 0 && !keepEmpty ) {
 				R_ReallyFreeStaticTriSurf( newTri );
 				return NULL;
 			}
@@ -1171,7 +1173,7 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 		R_ResizeStaticTriSurfIndexes( newTri, numIndexes );
 	}
 
-	if ( !numIndexes ) {
+	if ( !numIndexes && !keepEmpty ) {
 		R_ReallyFreeStaticTriSurf( newTri );
 		return NULL;
 	}
@@ -1181,6 +1183,37 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 	newTri->bounds = bounds;
 
 	return newTri;
+}
+
+// Store both choices before backend resource admission. Changing quality
+// switches or failing a native descriptor allocation must not change classic
+// triangle coverage. A zero-index classic surface is retained when PBR can
+// still illuminate it, so entirely back-facing geometric normals work too.
+static void R_CreateInteractionLightTris( const idRenderEntityLocal *ent,
+		const idRenderLightLocal *light, surfaceInteraction_t *sint ) {
+	bool needsPBR = false;
+#if defined( OPENQ4_RENDERER_VK_MODULE )
+	needsPBR = sint->shader->HasPBR() && !light->lightShader->IsAmbientLight()
+		&& !light->lightShader->IsFogLight() && !light->lightShader->IsBlendLight()
+		&& !R_LightIncludesBackFaces( ent, light, sint->shader );
+#endif
+	sint->lightTris = R_CreateLightTris( ent, sint->ambientTris, light,
+		sint->shader, sint->cullInfo, false, needsPBR );
+	if ( needsPBR && sint->lightTris != NULL
+			&& sint->lightTris->numIndexes != sint->ambientTris->numIndexes ) {
+		sint->pbrLightTris = R_CreateLightTris( ent, sint->ambientTris, light,
+			sint->shader, sint->cullInfo, true );
+		if ( sint->pbrLightTris != NULL ) {
+			// The PBR set contains the classic set. Use its bounds for view
+			// admission without changing the classic draw's actual indexes.
+			sint->lightTris->bounds = sint->pbrLightTris->bounds;
+		}
+	}
+	if ( sint->lightTris != NULL && sint->lightTris->numIndexes == 0
+			&& sint->pbrLightTris == NULL ) {
+		R_ReallyFreeStaticTriSurf( sint->lightTris );
+		sint->lightTris = NULL;
+	}
 }
 
 /*
@@ -1338,6 +1371,10 @@ void idInteraction::FreeSurfaces( void ) {
 				}
 				sint->lightTris = NULL;
 			}
+			if ( sint->pbrLightTris != NULL ) {
+				R_FreeStaticTriSurf( sint->pbrLightTris );
+				sint->pbrLightTris = NULL;
+			}
 			if ( sint->shadowTris ) {
 				// if it doesn't have an entityDef, it is part of a prelight
 				// model, not a generated interaction
@@ -1485,6 +1522,7 @@ int idInteraction::MemoryUsed( void ) {
 		surfaceInteraction_t *inter = &surfaces[i];
 
 		total += R_TriSurfMemory( inter->lightTris );
+		total += R_TriSurfMemory( inter->pbrLightTris );
 		total += R_TriSurfMemory( inter->shadowTris );
 	}
 
@@ -1717,7 +1755,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		// Fog and blend lights follow the separate `noFog` interaction path.
 		if ( R_SurfaceShaderCreatesLightTris( shader, lightShader ) ) {
 			if ( tri->ambientViewCount == tr.viewCount ) {
-				sint->lightTris = R_CreateLightTris( entityDef, tri, lightDef, shader, sint->cullInfo );
+				R_CreateInteractionLightTris( entityDef, lightDef, sint );
 			} else {
 				// this will be calculated when sint->ambientTris is actually in view
 				sint->lightTris = LIGHT_TRIS_DEFERRED;
@@ -2055,7 +2093,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			// make sure we have created this interaction, which may have been deferred
 			// on a previous use that only needed the shadow
 			if ( sint->lightTris == LIGHT_TRIS_DEFERRED ) {
-				sint->lightTris = R_CreateLightTris( vEntity->entityDef, sint->ambientTris, vLight->lightDef, sint->shader, sint->cullInfo );
+				R_CreateInteractionLightTris( vEntity->entityDef, vLight->lightDef, sint );
 				R_FreeInteractionCullInfo( sint->cullInfo );
 			}
 
@@ -2153,6 +2191,19 @@ void idInteraction::AddActiveInteraction( void ) {
 					}
 
 					// add the surface to the light list
+					// Borrow this frame's ambient vertex cache in a frame copy.
+					// The heap-owned PBR indexes survive until FreeSurfaces; frame
+					// cache handles must never survive there, especially for MD5R.
+					srfTriangles_t *pbrLightGeo = NULL;
+					if ( sint->pbrLightTris != NULL ) {
+						pbrLightGeo = (srfTriangles_t *)R_FrameAlloc( sizeof( *pbrLightGeo ) );
+						*pbrLightGeo = *sint->pbrLightTris;
+						pbrLightGeo->ambientCache = lightTris->ambientCache;
+						pbrLightGeo->tempAmbientCache = lightTris->tempAmbientCache;
+						pbrLightGeo->indexCache = NULL;
+						pbrLightGeo->gpuSkinningJointPaletteAlloc = NULL;
+						pbrLightGeo->numGpuSkinningJointPaletteAllocJoints = 0;
+					}
 
 					const idMaterial *surfaceShader = sint->shader;
 					const bool materialNoSelfShadow = surfaceShader->TestMaterialFlag( MF_NOSELFSHADOW );
@@ -2168,13 +2219,13 @@ void idInteraction::AddActiveInteraction( void ) {
 					// swaps the shader that will actually be drawn for the light pass.
 					if ( surfaceCoverage == MC_TRANSLUCENT ) {
 						R_LinkLightSurf( &vLight->translucentInteractions, lightTris, 
-							vEntity, lightDef, shader, lightScissor, false );
+							vEntity, lightDef, shader, lightScissor, false, pbrLightGeo );
 					} else if ( !lightDef->parms.noShadows && materialNoSelfShadow ) {
 						R_LinkLightSurf( &vLight->localInteractions, lightTris, 
-							vEntity, lightDef, shader, lightScissor, false );
+							vEntity, lightDef, shader, lightScissor, false, pbrLightGeo );
 					} else {
 						R_LinkLightSurf( &vLight->globalInteractions, lightTris, 
-							vEntity, lightDef, shader, lightScissor, false );
+							vEntity, lightDef, shader, lightScissor, false, pbrLightGeo );
 					}
 				}
 			}

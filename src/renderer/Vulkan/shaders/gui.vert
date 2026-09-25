@@ -19,7 +19,7 @@ layout(push_constant) uniform GuiPushConstants {
     vec4 texMatrixS;
     vec4 texMatrixT;
     // x: color mode (0 ignore, 1 modulate, 2 inverse, 3 native emission)
-    // y: alpha-test enable, z: alpha-test reference, w: texture matrix enable
+    // y: alpha test (3 filtered / 4 hard PBR), z: reference, w: texture matrix enable
     vec4 params;
 } pc;
 

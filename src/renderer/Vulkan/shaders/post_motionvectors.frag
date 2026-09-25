@@ -8,7 +8,7 @@
 layout(set = 0, binding = 0) uniform sampler2D DepthBuffer;
 
 layout(std140, set = 6, binding = 0) uniform MotionVectorBlock {
-    vec4 params;			// xy: viewportSize
+    vec4 params;			// xy: viewportSize; z: scene-depth Y flip for TAA
 } block;
 
 #define viewportSize		block.params.xy
@@ -18,9 +18,8 @@ layout(location = 1) in vec4 previousClipPosition;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-	if ( currentClipPosition.w <= 0.00001 || previousClipPosition.w <= 0.00001 ) {
-		outColor = vec4( 0.0 );
-		return;
+	if ( currentClipPosition.w <= 0.00001 ) {
+		discard;
 	}
 
 	vec2 currentUV = currentClipPosition.xy / currentClipPosition.w * 0.5 + 0.5;
@@ -28,7 +27,8 @@ void main() {
 		discard;
 	}
 
-	float sceneDepth = texture( DepthBuffer, currentUV ).x;
+	vec2 depthUV = vec2( currentUV.x, mix( currentUV.y, 1.0 - currentUV.y, block.params.z ) );
+	float sceneDepth = texture( DepthBuffer, depthUV ).x;
 	if ( sceneDepth >= 0.99999 ) {
 		discard;
 	}
@@ -36,6 +36,11 @@ void main() {
 	float depthTolerance = max( 0.00008, sceneDepth * 0.00005 );
 	if ( abs( sceneDepth - gl_FragCoord.z ) > depthTolerance ) {
 		discard;
+	}
+	if ( previousClipPosition.w <= 0.00001 ) {
+		// Only visible fragments without a previous clip position reject history.
+		outColor = vec4( 0.0, 0.0, 1.0, 0.0 );
+		return;
 	}
 
 	vec2 previousUV = previousClipPosition.xy / previousClipPosition.w * 0.5 + 0.5;

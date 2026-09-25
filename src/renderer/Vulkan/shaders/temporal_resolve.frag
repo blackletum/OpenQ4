@@ -3,6 +3,7 @@
 layout(set = 0, binding = 0) uniform sampler2D currentScene;
 layout(set = 1, binding = 0) uniform sampler2D sceneDepth;
 layout(set = 2, binding = 0) uniform sampler2D historyScene;
+layout(set = 3, binding = 0) uniform sampler2D objectMotion;
 
 layout(std140, set = 6, binding = 0) uniform TemporalResolveBlock {
     // xy = inverse scene extent; zw = native output extent.
@@ -27,9 +28,9 @@ layout(std140, set = 6, binding = 0) uniform TemporalResolveBlock {
     // xy = current jitter in native normalized coordinates;
     // z = use history; w = debug mode.
     vec4 temporalParams;
-    // x = use object velocity (currently zero on Vulkan);
+    // x = use object velocity;
     // y = camera reprojection valid; z = depth valid;
-    // w = recenter the current jitter for capture/spatial fallback.
+    // w = flags: recenter jitter (1), flip scene/depth/history Y (2/4/8).
     vec4 motionParams;
     // Conservative current-frame regions whose packet motion domains lack an
     // exact Vulkan velocity stream. Invalid entries have non-positive extent.
@@ -47,6 +48,11 @@ vec2 TextureToCameraUV(vec2 uv) {
 
 vec2 CameraToTextureUV(vec2 uv) {
     return vec2(uv.x, 1.0 - uv.y);
+}
+
+vec2 StoredTextureUV(vec2 uv, int bit) {
+    return (int(temporal.motionParams.w + 0.5) & bit) != 0
+        ? vec2(uv.x, 1.0 - uv.y) : uv;
 }
 
 float ViewZFromDepth(float depth) {
@@ -123,13 +129,13 @@ bool ScreenEffectEnabled(float bitValue) {
 }
 
 float SceneDepthAt(vec2 cameraUV) {
-    return texture(sceneDepth, CameraToTextureUV(clamp(cameraUV,
-        vec2(0.0), vec2(1.0)))).r;
+    return texture(sceneDepth, StoredTextureUV(CameraToTextureUV(clamp(cameraUV,
+        vec2(0.0), vec2(1.0))), 4)).r;
 }
 
 vec3 SceneColorAt(vec2 cameraUV) {
-    return texture(currentScene, CameraToTextureUV(clamp(cameraUV,
-        vec2(0.0), vec2(1.0)))).rgb;
+    return texture(currentScene, StoredTextureUV(CameraToTextureUV(clamp(cameraUV,
+        vec2(0.0), vec2(1.0))), 2)).rgb;
 }
 
 vec3 CurrentViewPosition(vec2 cameraUV, float depth) {
@@ -314,11 +320,11 @@ vec3 ApplyFroxelVolumetrics(vec3 baseColor, vec2 cameraUV, float depth) {
 void main() {
     vec2 outputCameraUV = TextureToCameraUV(fragUV);
     vec2 sceneCameraUV = clamp(outputCameraUV
-        - temporal.temporalParams.xy * temporal.motionParams.w,
+        - temporal.temporalParams.xy * float(int(temporal.motionParams.w + 0.5) & 1),
         vec2(0.0), vec2(1.0));
     vec2 sceneTextureUV = CameraToTextureUV(sceneCameraUV);
-    vec4 current = texture(currentScene, sceneTextureUV);
-    float centerDepth = texture(sceneDepth, sceneTextureUV).r;
+    vec4 current = texture(currentScene, StoredTextureUV(sceneTextureUV, 2));
+    float centerDepth = texture(sceneDepth, StoredTextureUV(sceneTextureUV, 4)).r;
     if (temporal.currentViewOrigin.w > 0.5) {
         vec3 centerPosition = centerDepth < 0.99999
             ? CurrentViewPosition(sceneCameraUV, centerDepth)
@@ -343,32 +349,37 @@ void main() {
                 + vec2(float(x), float(y)) * temporal.sceneOutputExtent.xy,
                 vec2(0.0), vec2(1.0));
             vec2 sampleTextureUV = CameraToTextureUV(sampleCameraUV);
-            vec3 sampleColor = texture(currentScene, sampleTextureUV).rgb;
+            vec3 sampleColor = texture(currentScene, StoredTextureUV(sampleTextureUV, 2)).rgb;
             neighborhoodMin = min(neighborhoodMin, sampleColor);
             neighborhoodMax = max(neighborhoodMax, sampleColor);
-            float sampleDepth = texture(sceneDepth, sampleTextureUV).r;
+            float sampleDepth = texture(sceneDepth, StoredTextureUV(sampleTextureUV, 4)).r;
             depthMin = min(depthMin, sampleDepth);
             depthMax = max(depthMax, sampleDepth);
         }
     }
 
-    // Vulkan currently has no dedicated rigid/skinned velocity target. Keep
-    // the object-valid branch in the shared contract disabled and rely on
-    // camera reprojection plus conservative rejection for moving geometry.
-    bool objectValid = false;
+    // Vectors use bottom-up camera coordinates and scene-pixel units. The
+    // scene/history targets use top-down texture coordinates.
+    vec4 objectVelocity = temporal.motionParams.x > 0.5
+        ? texture(objectMotion, sceneCameraUV) : vec4(0.0);
+    bool objectValid = objectVelocity.a > 0.5;
     bool cameraValid = temporal.motionParams.y > 0.5
         && temporal.motionParams.z > 0.5;
     vec2 previousCameraUV = cameraValid
         ? CameraPreviousUV(sceneCameraUV, centerDepth)
         : outputCameraUV;
+    if (objectValid) {
+        previousCameraUV = outputCameraUV
+            - objectVelocity.xy * temporal.sceneOutputExtent.xy;
+    }
     bool inside = previousCameraUV.x >= 0.0
         && previousCameraUV.y >= 0.0
         && previousCameraUV.x <= 1.0
         && previousCameraUV.y <= 1.0;
     bool historyUsable = temporal.temporalParams.z > 0.5
-        && inside && (objectValid || cameraValid);
+        && inside && (objectValid || cameraValid) && objectVelocity.b < 0.5;
     vec3 historyRaw = historyUsable
-        ? texture(historyScene, CameraToTextureUV(previousCameraUV)).rgb
+        ? texture(historyScene, StoredTextureUV(CameraToTextureUV(previousCameraUV), 8)).rgb
         : current.rgb;
     vec3 historyClamped = clamp(historyRaw, neighborhoodMin, neighborhoodMax);
     float colorDelta = MaxComponent(abs(current.rgb - historyRaw));
