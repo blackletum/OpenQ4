@@ -1,9 +1,14 @@
 # openQ4 UI Visual Design
 
-Specification version: 1.0, 8 September 2026. Status: implementation target;
-the replacement has not shipped. Applies to every player-facing GUI and to the
-visual editor's Quake 4 preview. Implementation and evidence are tracked in
-[the replacement plan](plans/idtech5-ui.md).
+Specification version 1.1, 26 September 2026 (1.0: 8 September 2026). Status:
+implementation target; the replacement has not shipped. Applies to every
+player-facing GUI and to the visual editor's Quake 4 preview. Implementation and
+evidence are tracked in [the replacement plan](plans/idtech5-ui.md).
+
+Version 1.1 adds measured references from a survey of the effective retail GUI
+scripts, interface art, fonts and materials, and corrects anatomy that did not
+match them. [Appendix C](#appendix-c-version-11-change-record) lists every
+changed value and the requirement-register rows that quote the old ones.
 
 ## 1. Purpose, authority and reference
 
@@ -39,6 +44,34 @@ material references for the Marine menu family. Use each original HUD,
 terminal and vehicle GUI for that family's distinct appearance. Do not apply
 the Marine olive menu palette indiscriminately to Strogg and diegetic displays.
 
+The effective copy of a stock file is the one in the last archive in load
+order. `guis/mainmenu.gui` exists in nine retail archives, and the copy in
+`pak025.pk4` wins. Survey the effective copy, never the first one found.
+
+### Measuring stock sources
+
+Stock GUIs author every rectangle on a 640x480 virtual canvas. Record stock
+measurements in source units (`u`) on that canvas and convert them last: at
+the 1280x720 dp reference, `1 u = 1.5 dp` on both axes. The stock 4:3 canvas
+maps to the central 960x720 dp; aspect expansion supplies the remaining width.
+
+- Interface bitmaps are stretched non-uniformly into window rectangles; a
+  512x32 texel row plate is drawn at 377x25 u. Measure proportions in the
+  texture (visible bounds, cut length, rail width, fade span) and scale them by
+  the drawn rectangle. A proportion survives the stretch; a texel count does not.
+- A `textscale` of `s` draws an em of `48 s` u, which is `72 s` dp at the
+  reference, from the 12, 24 or 48 point atlas (`s` up to 0.30, up to 0.60,
+  above). Take cap and x-heights from glyph ink: `.fontdat` rectangles include
+  a one-texel border on every side.
+- Record colours together with their material blend. The same texture looks
+  different under `blend add` or a darkening blend (section 4).
+- Record motion from `transition` durations (optional accel/decel times give a
+  trapezoidal velocity profile), absolute and `+N` relative `onTime` keys,
+  `guitable_*` pulse tables, and material `scroll` and `rotate` stages.
+- Record numbers and descriptions only. Extracted art, fonts and captures stay
+  outside tracked source. [Appendix A](#appendix-a-stock-survey-method)
+  describes the 1.1 survey.
+
 ## 2. Visual identity
 
 Quake 4 menus resemble military instrumentation: dark translucent plates,
@@ -53,23 +86,95 @@ rainbow gradients, gratuitous neon, indiscriminate glass blur and blank spacer
 areas. A panel's shape, contents and ornament are deliberately composed. Do
 not obtain fidelity by putting a low-resolution screenshot into a vector box.
 
+### Recognition traits
+
+These measured traits make an interface read as Quake 4. A reconstruction of
+a stock screen that drops one of them is not visually complete.
+
+1. **A lit instrument field.** The menu backdrop is dark scene imagery under an
+   additive olive light band (peak `#616F26`, applied at 70%), black top and
+   bottom vignettes, a `+` reticle grid on a 30 u (45 dp) pitch at 4% opacity
+   and drifting static grain at about 2.4%.
+2. **Framing bands.** Opaque black bands frame the screen. Their inner edges
+   step through 45-degree risers and three raised notches, and a soft olive rim
+   light traces every inner edge. The bands move between the home and page
+   states.
+3. **Open plates.** Action plates carry rails on the leading edge, the cut and
+   the bottom edge only. There is no top rail, no trailing rail and no closed
+   outline. Fill and bottom rail dissolve toward the trailing end.
+4. **The lower-leading cut.** Every action plate loses its lower-leading corner
+   to a 45-degree cut through roughly half of its visible height.
+5. **The ◥ marker.** A small right triangle filling the upper-trailing half of
+   its square, with a soft halo, precedes action labels inside their cap band.
+   Flipped vertically, it marks sort direction.
+6. **Two faces, graded text.** Marine small capitals carry navigation, actions
+   and titles; Lowpixel carries rows, values, lists and body text. Labels are
+   white at 80%, setting values amber-yellow at 80%, titles white at 50% and
+   headings white at 40%.
+7. **Warm, instant response.** Hover or focus turns label and marker orange,
+   brightens the plate and grows the label about 3%, all at once. Value rows
+   brighten only their plate. Release returns over 300 ms.
+8. **Asymmetric panels.** Cards cut two diagonally opposite corners deeply and
+   the other two slightly. Modals are dark silhouettes over an additive glow
+   field, with a recessed title slot and a deep lower-leading chamfer.
+9. **Meaningful colour.** Faction marks, team colours and the weapon and item
+   colour code carry gameplay information and never serve as decoration.
+
+### Divergences to avoid
+
+The survey also found recurring departures from the stock vocabulary in newer
+screens. Do not introduce them or carry them into the replacement:
+
+- closed outlines around fields, rows or buttons, including bordered
+  rectangles used as furniture;
+- centred labels on action plates; stock action labels lead, after the marker;
+- identical cuts on all four corners, rounded rectangles and pill shapes;
+- a large page heading; the stock screen title is a quiet caption in the
+  top band, and the navigation carries the hierarchy;
+- orange setting values; orange means interaction, values are amber-yellow;
+- text below the type ramp's floor (section 5);
+- extra accent hues outside the family palette, such as a second orange;
+- a flat grey-green panel fill where the stock uses black plates or
+  olive-tinted light plates.
+
 ### Families
 
 | Family | Identity | Required fidelity |
 | --- | --- | --- |
-| Marine menus | Olive/black plates, orange focus, Marine title face | Stepped rails, cut buttons, triangular markers, original scene imagery |
-| Marine HUD | Tactical overlays, bright critical values, compact instruments | Weapon/ammo/health/armor hierarchy, feedback and original spatial relationships |
+| Marine menus | Olive/black plates, orange focus, yellow values, Marine title face | Stepped/notched bands, open cut plates, triangular markers, additive light, original scene imagery |
+| Marine HUD | Tactical overlays, bright critical values, compact instruments | Weapon/ammo/health/armor hierarchy, sheared gauges, feedback and original spatial relationships |
 | Strogg HUD and terminals | Original alien glyphs, mechanical paths and family colors | Each source's geometry and animation; never generic Marine panels |
 | World terminals | Local device panel and in-world illumination | Surface mapping, interaction targets, stateful scripts and intended viewing distance |
+| Weapon displays | Gun-mounted ammo counters on green, amber and red state fields | Digit legibility at view-model distance, per-weapon art, state colours and pulse cadence |
+| Objectives (PDA) | Pale-green objective panels over the darkened view | Objective imagery, flicker-in cadence, Marine and Strogg variants |
 | Vehicles and turrets | Weapon-specific reticles, gauges and status | Cockpit alignment, targeting, damage and cooldown states |
 | Scopes | Optical/technical marks in source shape and color | Exact aim center, FOV relationship, masks and tick cadence |
 | Loading/cinematic overlays | Restrained frame, level identity and progress | Background composition, subtitle safe area, fades and cinematic bars |
+| Credits and intros | Rune-to-Latin decode reveals, additive orange credit bars | Reveal choreography, rune/Latin pairing, logo light-up |
 | Multiplayer overlays | Tactical tables with team and spectator identity | Score sorting, timers, join choices and authoritative match state |
 
 Family tokens extend shared geometry, motion and interaction tokens. Their
 colors and motifs must be measured from their sources and recorded in their
 migration entries before implementation. An invented palette applied to all
 terminals does not satisfy full GUI replacement.
+
+### Family reference values
+
+Measured from the effective sources named in each row. These values seed the
+family tokens; individual terminals and vehicles still need per-source entries.
+
+| Family (sources) | Measured palette | Type (stock `textscale`) | Geometry and motion |
+| --- | --- | --- | --- |
+| Marine menus (`mainmenu`, `mpmain`, `buymenu`, `restart`, `msg`, `netmenu`) | Section 4 Marine tokens | Marine, Lowpixel; Profont for tabular detail | Section 6 vocabulary; section 8 choreography |
+| Marine HUD (`hud`) | Readouts `#DDEBC3`; gauge fill `#B3D06E` at 20–50% over black 50%; icons `#A8A360` at 60%; weapon name `#B0C891`; selected weapon `#FF8000` | Chain 0.50 numerals, trailing-aligned; Marine labels | Rounded gauge plates with a stepped foot, notched fills, 10-cell armor gauge, 0.22 forward shear; scrolling EKG; 2 Hz alarm |
+| Strogg HUD (`hud_strogg`) | Readouts `#FCFFC8`; gauge fill `#FF9000` at 20–35%; icons `#FFCC00` at 60%; unselected weapon `#F59512` | R_Strogg 0.40–0.50 numerals | Irregular 28–35° shoulders and small notches; 0.22 backward shear |
+| Multiplayer (`mphud`, `scoreboard`, `summary`, `spawn`) | Marine team `#6AA42B`; Strogg team `#FF7B04`; spectators `#999999`; notices `#FFFF8D`; Tourney `#3E57B7`, `#5EB987`; MP health icon `#FA2B05`, armor icon `#F7C004` | Lowpixel 0.16–0.36 | Team-tinted header bands, faction emblems, award medals |
+| World terminals (`guis/maps`, `monitors`, `common`, `movers`) | Per source. Common Strogg values: teal `#59AD87`, orange `#E6540F`, amber `#F0960D`, cyan `#2ECCCC`. Marine devices: `#7A9957`, `#BFE375` | R_Strogg and Strogg on Strogg devices; Marine on Marine devices | CRT surface stack (section 6); heavy shear, rotation and mirroring; `guisound_beep2` |
+| Weapon displays (`guis/weapons/*_ammo`) | Normal `#73A640`; low `#CA8F15`, 3 Hz shimmer 80–100%; empty `#C72C1B`, 2 Hz pulse 100–50%; idle flicker 92–100% at 3 Hz | Marine digits at very large size, tight tracking | Per-weapon background art |
+| Scopes (`guis/weapons/*_scope`) | Railgun marks `#00FFFF` at 50%; ammo cells `#99FFFF` | — | Mirrored quadrant glows, diamond zoom-in, slow ring rotation |
+| Objectives (`wristcomm`, `wristcomm_strogg`) | Frames `#B0CD6B`; text `#D0DEB6`, `#D9E7BF`; accent `#FF8000` | Marine 0.14–0.25; Lowpixel 0.20 | Objective shots; 20–150 ms flicker-in steps |
+| Loading (`guis/loading`) | Bands black 80% plus additive `#181D0A`; corner brackets additive `#3A3A3A`; progress `marine.progress` | Marine 0.36 level name, 0.40 status | Stepped bands with one 45-degree riser each; four corner brackets |
+| Credits and intros (`cinematic`, `gameover`, `intro`) | Text `#CCFF99` at 40%; credits `#D5FFA7`; logos `#A2C550`; credit bars additive `#FF8000` | Strogg runes paired with Lowpixel | 60 u letterbox bars; decode reveal (section 8) |
 
 ## 3. Coordinates, density and aspect expansion
 
@@ -116,6 +221,24 @@ transition preserves progress/current values. UI renders at output resolution
 after world upscaling; dynamic world resolution cannot blur text or change
 input targets. Clamping extreme scale settings must preserve a reachable reset.
 
+### Stock grid
+
+| Stock element | Source | Reference |
+| --- | --- | --- |
+| Canvas | 640x480 u | Central 960x720 dp |
+| Navigation plate: pitch / visible plate | 30 / 24.4 u | 45 / 37 dp |
+| Settings row: pitch / visible plate | 24 / 19.5 u | 36 / 29 dp |
+| Action button (Back, Yes, No): rectangle / visible plate | 30 / 23.4 u | 45 / 35 dp |
+| List row: standard / server browser | 20 / 18 u | 30 / 27 dp |
+| Hover-card list row | 12–15 u | 18–22 dp |
+| Background `+` grid pitch | 30 u | 45 dp |
+| Stock hit strips: navigation / rows / Back | 26 / 20 / 23 u | 39 / 30 / 35 dp |
+
+In every stock action list the visible plate fills about 80% of its pitch;
+keep that ratio. The 36 dp minimum target equals the stock settings pitch.
+Stock hit strips were separate windows shorter than the pitch; they are not a
+precedent for smaller targets, and the replacement's target is the full pitch.
+
 ## 4. Color, alpha and contrast
 
 These are sRGB authoring colors; alpha is independent. Renderer adapters must
@@ -142,20 +265,80 @@ samples. Validate their composited contrast in all backgrounds. Team colors
 and family overrides come from gameplay/source tokens; color is never the
 only distinction between teams, enabled states or errors.
 
-| Layer | Rest opacity | Interaction |
+`surface.panel`, `surface.inset`, `text.secondary` and `text.tertiary` are
+openQ4 tokens for cards and dense data that need a solid readable backing.
+Stock Marine plates are black or olive-tinted white, and stock supporting text
+is white at reduced alpha.
+
+### Measured Marine tokens
+
+| Token | sRGB hex / source value | Use |
 | --- | --- | --- |
-| Primary action plate | 0.62 | 1.00 hover/focus |
-| Secondary action plate | 0.28 | 0.62 hover, 1.00 active edge |
-| Structural frame rail | 0.95 | Stable while contents animate |
-| Header wash | 0.16 | Stable; no perpetual pulsing |
-| Separators | 0.20–0.30 | Never compete with labels |
-| Rest marker | 0.40 | 1.00 hover/focus |
+| `marine.value` | `#FFBE23` / 1, 0.745, 0.137, alpha 0.80 | Setting values, slider ticks and thumb, key names, editable values |
+| `marine.rail.dark` | `#CCCC51`, baked into dark plates | Rails of navigation plates and chat box |
+| `marine.rail.card` | `#A0A040`, baked into card frames | Card and tooltip frame rail |
+| `marine.rim` | `#626934`, alpha 0.36 falling to 0 across 18 u | Rim light outside framing band edges |
+| `marine.glow` | `#616F26` peak, applied at 70% | Additive backdrop light band |
+| `marine.glow.modal` | `#46501B` peak | Additive glow field behind modals |
+| `marine.list` | `#FF9C00` | List hover band 16%, selection band 42%, row rule 50% |
+| `marine.list.alt` | `#9A9C6E`, alpha 0.29 | Server-browser hover band |
+| `marine.check` | `#586A08` | Filled square of a set check or radio box |
+| `marine.sort` | `#9BA545` | Sortable column hover highlight |
+| `marine.plinth` | `#3E4A21`, alpha 0.30 | Plinth under the secondary links |
+| `marine.progress` | `#E06C00`; track 30%, fill 50% | Loading and refresh progress |
+| `marine.scrim` | `#000000`, alpha 0.94 | Front-end modal scrim |
+| `text.title` | `#FFFFFF`, alpha 0.50 | Screen titles, secondary links |
+| `text.heading` | `#FFFFFF`, alpha 0.40 | Section and column headings |
+
+Olive-tinted light plates are white art multiplied by `marine.olive`; dark
+plates are black art with `marine.rail.dark` rails. Both rest at 40%.
+
+### Opacity
+
+| Layer | Rest | Interaction |
+| --- | --- | --- |
+| Action and navigation plate, light or dark | 0.40 | Hover or focus: 0.80 for primary navigation and action buttons, 1.00 for section navigation and value rows; 1.00 for the current page |
+| Marker | 0.40 `marine.marker` | 1.00 `marine.orange`, with the label |
+| Action label | 0.80 white | 1.00 `marine.orange`; about 3% larger |
+| Screen title | 0.50 white | Stable |
+| Section and column headings | 0.40 white | Stable |
+| Secondary link | Label 0.50, marker 0.40, no plate | Label and marker orange |
+| Separators | 0.26–0.32 olive in menus; 0.10–0.20 white in MP tables | Never compete with labels |
+| Card frame | 0.94 black body inside its rail | Stable |
+| Modal frame | 0.70 black silhouette over the glow field | Stable |
+| Modal scrim | 0.94 black | Fades in over 200 ms, out over 250 ms |
+| Framing bands | 1.00 in the front end; 0.40 in the in-game MP menu | Move; never fade |
+| Table header band | 0.60 olive | Stable; no perpetual pulsing |
+
+The stock marks a primary action by size, not opacity: START GAME is a
+356x43 u light plate with a 24 dp label. openQ4's in-game join card rests its
+primary action at 0.62, secondary actions at 0.28 and its header wash at 0.16
+so the live scene stays readable; that variant is limited to in-game partial
+panels.
 
 Node opacity applies to the completed node and its descendants as one isolated
 group. Overlapping controls, text, washes and rails must retain their internal
 appearance throughout a fade. Nested opacity composes inside-out; paint alpha
 remains intrinsic to each primitive. Crossing opacity 1 cannot reorder siblings.
 Editor previews use the same composition and clipping rules as gameplay.
+
+### Light and composition modes
+
+Stock menus are lit, not only painted. Measured material blends:
+
+- **Additive** (`blend add`): the backdrop light band, the modal glow field,
+  the Quake 4 wordmark, loading-band light and corner brackets, credit bars,
+  and terminal scanlines, glows and reflections.
+- **Darkening** (`GL_ZERO, GL_ONE_MINUS_SRC_COLOR`): the Q emblem on the home
+  screen multiplies the backdrop by the inverse of its colour, so it reads as a
+  shadow cast in the light band.
+- **Straight alpha**: plates, rails, markers, text and everything else.
+
+The vector renderer provides additive and darkening composition per primitive
+or layer on every backend. Group opacity scales a layer's contribution without
+changing its blend equation. Do not bake light into opaque colour: an additive
+band must brighten the imagery beneath it. Opaque accessibility backing
+replaces the light only behind the text it supports.
 
 Shaped content clipping and reveals use editable vector alpha masks in the
 owning node's border-box coordinates. Masks move and scale with that node;
@@ -171,7 +354,9 @@ Body text must remain readable over the brightest permitted scene. Target
 essential control boundaries. If stock opacity fails, strengthen the local
 plate or use the existing text-backing accessibility setting. Preserve the
 original look where it meets the target. High-contrast mode uses opaque local
-backing and independently strengthens rails, selection and focus.
+backing and independently strengthens rails, selection and focus. The stock
+40% and 50% text roles (headings, titles, secondary links) are the likeliest
+failures over the additive band; measure them first.
 
 ## 5. Typography and language
 
@@ -180,20 +365,63 @@ for supporting text where available. Preserve the Marine small-cap character.
 Resolve fonts from installed assets; do not copy proprietary faces into Git.
 Scalable fallback faces require a compatible licence and explicit attribution.
 
-| Role | Size / line height | Behavior |
-| --- | --- | --- |
-| Screen title | 28 / 34 dp | Marine; fixed hierarchy |
-| Panel title | 20 / 26 dp | Marine; leading marker |
-| Button | 18 / 24 dp | Marine; metric-based vertical centering |
-| Body/form value | 16 / 23 dp | Lowpixel/source-equivalent face |
-| Supporting metadata | 14 / 20 dp | Never an essential action |
-| Table heading | 14 / 20 dp | Distinguished by tint and rule |
-| HUD readout | Source-derived and recorded per group | Stable digit alignment |
+### Faces
 
-Use slightly tight measured font-relative tracking as in stock menus; do not
-import a fixed bitmap texel offset. Baselines and cap height determine label/
-icon alignment. Rasterize glyphs for their output size; snapping cannot destroy
-kerning. Scale animations use sufficient atlas density for their largest size.
+| Face | Character | Stock use |
+| --- | --- | --- |
+| Marine | Wide, extended geometric small capitals; lower case renders as small capitals | Titles, navigation, action labels, loading titles |
+| Lowpixel | Bold neo-grotesque, mixed case | Row labels and values, lists, body, notices |
+| Profont | Monospaced | Tabular server detail |
+| Chain | Condensed square technical face; its retail space has zero advance | Marine HUD numerals |
+| R_Strogg | Angular all-capital Latin | Strogg HUD numerals and Strogg terminals |
+| Strogg | Alien runes mapped onto Latin | Strogg devices; credit and intro decode reveals |
+
+Measured ink cap height per em: Marine 0.50, Lowpixel 0.75, Chain 0.63,
+Profont 0.75, R_Strogg 0.67. Size tokens are ems; compare faces by cap height.
+
+### Type ramp
+
+| Role | Face | Size / line height (dp) | Stock `textscale` | Colour |
+| --- | --- | --- | --- | --- |
+| Screen title | Marine | 18 / 22 | 0.25 | `text.title` |
+| Primary navigation | Marine | 24 / 28 | 0.33 | `text.primary` |
+| Section navigation | Marine | 22 / 26 | 0.31 | `text.primary` |
+| Action button, modal title | Marine | 20 / 24 | 0.28 | `text.primary` |
+| Action row | Marine | 19 / 23 | 0.26 | `text.primary` |
+| Secondary link | Marine | 16 / 20 | 0.22 | `text.title` |
+| Row label, value, modal body | Lowpixel | 17 / 21; wrapped 17 / 22 | 0.24 | `text.primary`; values `marine.value` |
+| List row | Lowpixel | 16 / 20 in a 30 dp row | 0.22 | `text.primary` |
+| Section heading | Lowpixel | 14 / 18, upper case | 0.20 | `text.heading` |
+| Column heading, metadata | Lowpixel | 13 / 16 | 0.18 | `text.heading` |
+| Tabular detail | Profont | 13 / 16 | 0.18 | `text.primary` |
+| Loading level name, status | Marine | 26 / 30, 29 / 34 | 0.36, 0.40 | White 0.80, 1.00 |
+| HUD readout | Chain (Marine), R_Strogg (Strogg) | Source-derived and recorded per group; Marine health and ammo 36 dp | 0.50 | Family readout colour; stable digit alignment |
+
+Screen titles read as paths, for example `SETTINGS - SYSTEM`. Stock line
+spacing is a font cell of about 1.17 em; the ramp opens it slightly for larger
+displays and long translations. 13 dp is the floor for essential text; stock
+0.16 captions (11.5 dp) rise to it.
+
+### Tracking, case and alignment
+
+Use each face's own spacing by default; 94% of stock main-menu text does.
+Modal titles and dense hover-card lines tighten by 1 u per glyph (about
+-0.075 em for Marine titles, -0.1 em for small Lowpixel lines), and the
+loading level name by 2 u (about -0.1 em). Express tracking in em; do not
+import a fixed bitmap texel offset.
+
+Navigation and action strings are upper case in the language tables; setting
+labels and values use sentence case; section headings are upper-case Lowpixel.
+Marine renders lower case as small capitals, so mixed-case translations stay
+consistent.
+
+Stock labels lead (99% of main-menu text). Numerals align to the trailing
+edge of fixed boxes. Centred text is reserved for overlay notices, the HUD
+weapon name and cinematic credits. Never centre an action label on a plate.
+
+Baselines and cap height determine label/icon alignment. Rasterize glyphs for
+their output size; snapping cannot destroy kerning. Scale animations use
+sufficient atlas density for their largest size.
 
 All display strings use the language system, including editor menus, tooltips,
 validation and accessibility labels. Preserve `#str_*` keys, format arguments,
@@ -215,37 +443,174 @@ geometry remains continuous. Diagonals/curves need coverage antialiasing at all
 scales. Stroke width uses dp with a one-physical-pixel lower bound for essential
 rails. Tessellation error is measured after transforms in output pixels.
 
+### Stock furniture vocabulary
+
+Every element below is reconstructed as editable vector geometry from the
+measured construction. Appendix B holds the texel measurements.
+
+Plates and markers:
+
+| Element (stock art) | Measured construction |
+| --- | --- |
+| Light plate (`b3_light`, `b4_light`, `b6_light`) | Visible band 25/32 of the rectangle height; lower-leading 45-degree cut through 56% of the band; one-texel rails on the leading edge, cut and bottom; fill 49%; fill and bottom rail full to 33–50% of the width, then linear to zero at the trailing end; white art tinted `marine.olive` |
+| Dark plate (`b1_dark`, `b2_dark`, `b5_dark`) | Visible band 30/64 of the rectangle height; cut through 47% of the band; opaque black fill to 40–57% of the width, zero at 78–94%; rails in `marine.rail.dark` |
+| Header band (`header`, `scoreheader`) | Upper-leading cut of about 8 u; top and leading rails; fill 49%, fading from 60% of the width; olive at 0.60 in menus, team colours on scoreboards |
+| Link plinth (`bg2`) | Solid band with a lower-leading cut and a trailing end cut at 45 degrees, parallel to it; `marine.plinth` |
+| Marker (`corner`) | Right triangle filling the upper-trailing half of its square (◥), legs half the tile, halo about 20% of the tile beyond the solid; mirrored vertically (◢) as the sort marker |
+
+Frames and bands:
+
+| Element (stock art) | Measured construction |
+| --- | --- |
+| Card frame (`tooltip_edge`, `tooltip_mid`) | Black body at 0.94; 1 u `marine.rail.card` rail on every edge; 2 u top-leading cut and 8 u top-trailing cut; the bottom cap is the top cap rotated 180 degrees |
+| Modal frame (`popup_top`, `popup_mid`, `popup_btm`, `popup_bg`) | Black silhouette at 0.70 over an additive glow column; leading tooth, recessed title slot and raised trailing section along the top; deep lower-leading chamfer; square trailing corners; no rails |
+| Tab strip (`ctrls_tab*`, `admin_tab*`, `summ_tab*`) | Baseline rail; the active tab rises about 22 u with a small leading fillet and a 12 u 45-degree trailing shoulder; olive fill fading downward over about two tab heights |
+| Chat box (`chatbox_edge`, `chatbox_mid`) | Rail on the top and leading edges in `marine.rail.dark`, a 2 u chamfer at the top-leading corner, translucent black fill |
+| Framing bands (`topbar`, `btmbar`) | Opaque black silhouettes (Appendix B.2) with `marine.rim` light |
+| Loading edges (`load_top_edge`, `load_btm_edge`, `*_edgeadd`, `load_corner`) | Black 0.80 bands with one 45-degree riser each and additive olive light; 52 u corner brackets at the picture's corners |
+| Separators (`horiz_line2`, `vert_line`, `vert_line2`) | One- or two-texel line centred in a 5–6 u strip |
+
+Fields, lists and backdrop:
+
+| Element (stock art) | Measured construction |
+| --- | --- |
+| Slider (`slider_bg`, `slider_bar`) | Tick ramp: alternating tall and short ticks rising from 2 to 9 u across the 71 u range above a baseline; 4x8 u bar thumb with a bright border and 40% interior; `marine.value` |
+| Check or radio box (`box`, `box_check`) | Square outline, stroke 1/16 of the box (18 dp box in stock); set state is an inset filled square 69% of the box in `marine.check` |
+| Scrollbar (`scrollbar_*`) | 16 u gutter; bevelled grey arrow buttons with black triangles; bracket thumb with top, bottom and trailing rails and an open leading side; trough of one light line with a faint fill |
+| List bands (`bg_hover`, `bg_focus`, `bg_line`, `*2`) | `marine.list` band at 16% (hover) or 42% (selection) with soft ends and a 50% hairline rule under every row; server-list variants fade across 20% at both ends |
+| Progress (`load_bar`, `load_bar3`) | Cylindrical shading with a bright centre line; `load_bar` carries a lower-leading cut; `marine.progress` |
+| Backdrop (`screen`, `bg_darkgrad*`, `bg_grid`, `static1`) | Additive light band peaking at half its height; vertical vignette from 97% black at top and bottom to clear at the middle; `+` grid of 20 u one-texel crosses; page backing clear across its leading 19%, full from about 35%, applied at 60% |
+
+### Plate and button anatomy
+
+Action plates are open shapes. Rails run along the leading edge, around the
+lower-leading cut and along the bottom; there is no top or trailing rail, and
+the fill and bottom rail dissolve toward the trailing end, so a plate never
+reads as a closed box. Rails are 1.5 dp at the reference, never thinner than
+one physical pixel.
+
+| Measure | Navigation plate | Action button | Settings row |
+| --- | --- | --- | --- |
+| Construction | Dark plate | Light plate | Light plate |
+| Visible plate / target | 37 / 45 dp | 35 / 45 dp | 29 / 36 dp |
+| Lower-leading cut | 17 dp (47%) | 20 dp (56%) | 16 dp (56%) |
+| Marker | 9 dp | 8 dp | None on value rows; 9 dp on action rows |
+| Label | Marine 24 or 22 dp after the marker | Marine 20 dp after the marker | Lowpixel 17 dp, 21 dp in; value column at 64% of the row; action rows Marine 19 dp after the marker |
+
+Minimum width is 112 dp. The marker's legs sit inside the label's cap band,
+its visible leading edge 12–14 dp after the plate's leading rail; the label
+follows 4 dp after the marker, with at least 16 dp before the fade region. A
+45-degree cut always has equal horizontal and vertical extent after layout.
+Stock bitmaps skew it whenever a plate is stretched; reconstruct the 45 degrees.
+Plate, marker and label form one semantic control and one target. Widen the
+straight span without deforming the cut.
+
+At rest the plate is 0.40, the marker olive 0.40 and the label white 0.80.
+Hover raises the plate (section 4) and turns label and marker orange, and the
+label grows about 3% (stock +0.01 `textscale`) through a local transform that
+never reflows neighbours. The current page keeps the same treatment with its
+plate at 1.00. Value rows brighten only their plate; their label and value
+keep their colours. Focus adds a fine orange inset rail and solid marker,
+which keeps keyboard focus distinct from the current page; the stock drew both
+identically. Press briefly emphasizes the inner edge and moves contents 1 dp
+inward; release restores current focus/hover state. Movement never changes
+layout or the hit target.
+
 ### Panel anatomy
 
-Standard panel: 12 dp 45-degree upper corner cuts, 8 dp lower cuts, 1 dp outer
-olive rail, subdued inner rail offset 3 dp and translucent inset plate. Small
-popovers use 6 dp cuts; major bands use 16–24 dp cuts. A 45-degree cut always
-has equal horizontal/vertical extent after layout. Never stretch a corner to
-a different angle.
+Choose the panel construction by purpose, not size.
 
-Content inset: 24 dp normal, 16 dp compact. Header height: 40 dp, with a 1 dp
-rule below and an 8 dp triangle before its title. Header wash fades toward
-the trailing edge. Body height follows content; scroll regions clip inside
-the rail. Footer actions have 16 dp separation and align to the action edge.
+**Card** (hover cards, tooltips, in-game partial panels such as the join card):
+a black body at 0.94 inside a single `marine.rail.card` rail; 12 dp 45-degree
+cuts at the top-trailing and bottom-leading corners and 3 dp cuts at the
+top-leading and bottom-trailing corners. Small popovers keep this construction
+with 6 dp major cuts. Content inset is 24 dp, 16 dp in compact mode and
+10 dp on hover cards (stock 6–7 u). A panel header is 40 dp, with a 1 dp
+rule below and an 8 dp triangle before its title; the header wash fades
+toward the trailing edge. Body height follows content; scroll regions clip
+inside the rail. Footer actions have 16 dp separation and align to the
+action edge.
 
-Main top/bottom framing follows the shipped stepped/notched silhouette, long
-restrained rails and asymmetric technical detailing. Reconstruct measured
-silhouettes as paths; a generic beveled rectangle is not a substitute for every
-frame. Keep ornaments as named paths so expansion lengthens straight spans
-while preserving corner/notch dimensions.
+**Modal** (front-end confirmations, warnings and advanced-settings dialogs):
+the `marine.scrim` covers the screen; an additive glow column peaking in
+`marine.glow.modal` stands behind the dialog; the dialog is a black 0.70
+silhouette. Along its top edge a 6 dp leading tooth, a title slot recessed
+17 dp across about 73% of the width with 45-degree flanks, and a raised
+trailing section; a 38 dp lower-leading chamfer; square trailing corners; no
+rail lines, because the glow outlines the silhouette. The title (Marine 20 dp,
+tracking -0.075 em) sits in the slot; body text is inset 33 dp; the
+affirmative action leads and the negative action trails. The stock dialog is
+480 dp wide.
 
-### Button anatomy
+**Band**: the framing bands and loading edges below.
 
-Default height 40 dp, minimum width 112 dp, 12 dp lower-left cut. Leading and
-bottom rails fade toward the trailing edge. An 8 dp marker sits at a 12 dp
-leading inset; label follows with 8 dp gap and 16 dp trailing padding. Plate,
-marker and label form one semantic control and one target. Widen the straight
-span without deforming the cut.
+Card, with minor cuts at the top-leading and bottom-trailing corners and major
+cuts at the other two (the outline is rotationally symmetric):
 
-Focus adds a fine orange inset rail and solid marker. Hover strengthens the
-plate and warms label/marker. Press briefly emphasizes the inner edge and moves
-contents 1 dp inward; release restores current focus/hover state. Movement
-never changes layout or the hit target.
+```text
+  ______________________
+ /                      \
+|                        \
+|                         \
+|                          |
+ \                         |
+  \                        |
+   \______________________/
+```
+
+Modal silhouette, with the title set in the recessed slot and no rails:
+
+```text
+ _   LOAD DEFAULTS      _______
+| \____________________/       |
+|                              |
+|                              |
+ \                             |
+  \                            |
+   \___________________________|
+```
+
+### Framing bands
+
+The home and page states use the same two band paths in different positions
+(Appendix B.2). The top band's inner edge runs straight, rises through three
+9 u notches with 45-degree flanks (36 u across the top, 97 u pitch), and
+steps up by 35 u at a 45-degree riser. The bottom band's inner edge rises
+30 u, later drops 43 u, and carries two 9 u steps near its ends, all at
+45 degrees. `marine.rim` light falls from 36% to zero across 18 u outside
+every inner edge.
+
+Keep notches, risers and steps as named path segments so expansion lengthens
+only the straight spans. On wide displays the flat spans extend to the
+viewport edges while notches, risers and steps keep their stock positions
+relative to the 4:3 content region. A generic bevelled rectangle is not a
+substitute for these silhouettes. The stock art already reaches 400 u beyond
+the canvas's leading edge; openQ4's bitmap menus repeat edge tiles, which the
+vector bands replace.
+
+### HUD and diegetic geometry
+
+The 45-degree motif belongs to the Marine menus. Other families keep their
+own measured geometry:
+
+- **Marine HUD gauges**: a backing plate at black 0.50 with corner radii of
+  about 1 u and a foot along the trailing quarter of its bottom edge, reached
+  by a short diagonal step; a fill plate inset about 4 u with a soft inner
+  glow and a concave quarter-round notch cut from its lower-trailing corner,
+  where the item icon sits; the armor fill is divided into ten equal cells;
+  the health gauge masks a scrolling EKG trace. All three gauges are sheared
+  by 0.22, about 12 degrees, so their tops lean toward the trailing edge.
+- **Strogg HUD gauges**: irregular silhouettes with 28–35 degree shoulders and
+  small notches, sheared the opposite way.
+- **Weapon-select strip**: 26 u slots with about 1 u corner radii on a 30 u
+  pitch, centred, with the weapon name centred below.
+- **World terminals**: a layered CRT surface of content, additive scanlines
+  drifting 0.2 texture heights per second, dirt and scratches, static, a bezel
+  vignette with a thin bright edge, and an additive glass reflection.
+
+Shear and rotation apply about the GUI origin in virtual space. Reproduce the
+drawn geometry and verify it against captures instead of re-deriving it from
+authored rectangles.
 
 ### Icons and paths
 
@@ -262,6 +627,28 @@ Vector source stays editable; compiled geometry is derived. Preserve holes,
 cutouts, gradients and important asymmetry. The editor exposes path nodes,
 handles, joins, stroke alignment, fills and gradient stops.
 
+| Symbol (stock art) | Stock form | Meaning |
+| --- | --- | --- |
+| Marker (`corner`) | ◥ with halo | Action and section marker; ◢ sort direction |
+| Arrow (`common/arrow6`) | Filled downward triangle | Spinner arrows when rotated 90 degrees on dark squares |
+| Chevrons (`common/arrow1`, `arrow5`) | Thick single chevron; double-stroke outline chevron | Back and next; expand |
+| Go (`icon_arrow`) | Shaft and head with bevel shading | Leave, exit, go |
+| Create (`createserver_arrow`) | Arrow entering a bracket | Create server, launch |
+| Gear (`common/gear1`, `gear1_still`) | Toothed ring | Settings; the animated variant turns once per 10 s |
+| Favorite (`icon_favorite`) | Gold star with a red rim glow | Server list |
+| Locked (`icon_locked`) | Shaded padlock | Password required |
+| Dedicated (`icon_dedserver`) | Server case with a green power light | Dedicated server |
+| Repeater (`icon_repeater`) | Television with antennas and colour bars | Q4TV repeater |
+| PunkBuster (`icon_pb`) | Service mark | Discontinued service; no replacement column required |
+| Faction marks (`marinelogo`, `strogglogo`) | Hexagonal spearhead; winged lightning emblem | Teams |
+| Quake emblem (`q4logo`) | Flat Q emblem | Home-screen watermark (darkening) |
+| Pointer (`guicursor_arrow`, `guicursor_hand`) | Shaded arrow; hand | Pointer states |
+| HUD and items (`gfx/guis/hud/icons`, `simpleicons`) | Silhouettes | Health, armor, ammo, weapons, powerups, flags |
+
+Server-list symbols sit on a small grey tile with a cut upper-leading corner;
+the tile is part of the symbol. Multi-colour symbols keep their colours. The
+weapon and item colour code (Appendix B.4) is gameplay information.
+
 ### Bitmap exceptions
 
 Only complex pictorial content uses bitmaps/video: levelshots, scene backdrops,
@@ -270,6 +657,18 @@ whose character depends on textured content. Resolve installed assets and
 sample at appropriate quality. Logos/diagrams require individual classification;
 complexity, not convenience, justifies an exception. Simple logo outlines,
 frames, reticles and checkboxes require vector work.
+
+| Stock content | Classification |
+| --- | --- |
+| Levelshots, backdrop images, save previews, objective shots | Bitmap exception |
+| MP award medals; publisher logos (id, Raven, Activision, Miles) | Bitmap exception |
+| Quake 4 wordmark (`q4text`) | Classify individually: textured glowing letterforms; its glow may become vector light |
+| Quake emblem, faction marks, simple HUD silhouettes | Vector |
+| CRT dirt, scratches, glass reflections | Bitmap exception |
+| Static grain | Procedural noise; a bitmap only where the look depends on the stock grain |
+| Light bands, vignettes, page backing, list bands, progress shading | Vector gradients |
+| Scanlines, reticle grid, tick ramps, EKG and waveform traces | Vector or procedural patterns |
+| Frames, plates, markers, boxes, arrows, scrollbars, tabs | Vector |
 
 Record each exception with purpose and source in the migration inventory.
 Generated glyph coverage atlases are a text-rendering detail, not permission
@@ -297,10 +696,10 @@ navigation steps.
 | Component | Visual and behavior contract |
 | --- | --- |
 | Action | Cut plate, marker, clear verb; one activation per action; disabled reason where useful |
-| Checkbox | Cut outline, vector tick; shared label/box target; mixed state is a dash |
-| Radio | Source-appropriate angular enclosure, filled center; one selected, directional group navigation |
-| Slider | Recessed track, filled span, cut thumb, numeric value; keyboard increments and precise entry |
-| Choice/dropdown | Recessed field, chevron; constrained scrollable popup; selected value visible |
+| Checkbox | Square outline and inset filled square (the stock mark); shared label/box target; mixed state is an inset bar |
+| Radio | The same square box; a set option fills its box; one selected, directional group navigation |
+| Slider | Tick-ramp track, bar thumb, numeric value in `marine.value`; openQ4 drops ticks past the thumb to 40% to show the filled span; keyboard increments and precise entry |
+| Choice/dropdown | Value in the value column that cycles in place; openQ4 dropdowns add a chevron and a constrained scrollable popup; selected value visible |
 | Text/numeric field | Recessed plate, caret/selection/composition; errors preserve edit and explain correction |
 | Key binding | Keycap/controller glyph; distinct capture state; cancel and explicit conflict resolution |
 | Tabs | Shared rail, active notch/marker; inactive pages receive no input; focus differs from selection |
@@ -319,6 +718,27 @@ ownership; new messages cannot steal inspection position. Scoreboards identify
 teams/spectators/local player with text or geometry as well as color. Empty,
 offline, disconnected and failed states cannot be unstyled debug output.
 
+### Stock control conventions
+
+| Control | Stock construction |
+| --- | --- |
+| Setting row | Light plate; Lowpixel label 21 dp in; value in `marine.value` at 64% of the row |
+| Boolean or enumeration | A value that cycles on activation and steps back on the secondary action; no arrows, no checkbox |
+| Filter spinner | Value between ◀ and ▶ arrows (`arrow6`, orange 0.80) on 0.40 black squares |
+| Exclusive pair (Internet/LAN, Player/Clan) | Square boxes; the set option fills its box |
+| Slider | Tick ramp at the value column, numeric value after it at 85% of the row |
+| Text field | Dark plate without an outline; save names in white 0.80, setting values in `marine.value` |
+| Key binding | Key names in `marine.value` in the value column |
+| List | Lowpixel column headings at 40% above an olive rule; 30 dp rows with `marine.list` hover and selection bands and a rule under every row |
+| Server list | Olive 0.60 header band holding 28 dp column symbols; 27 dp rows; sortable columns highlight in `marine.sort`; flipped marker beside the sort notice; progress bar under the list |
+| Hover card | Card frame at 0.94 that appears at once and follows the pointer 6 dp away, moving to the pointer's leading side near the trailing edge; Lowpixel 14 dp and Profont 13 dp content |
+| Tooltip | Stock sort hints sit 12 dp right of and 15 dp below the pointer, appear after 1000 ms and fade in over 250 ms; the replacement shortens the delay (table above) |
+
+Stock hit targets were invisible windows separate from the art. The replacement
+makes each control one target spanning its full pitch. The stock drew the
+current page's navigation plate exactly like hover; keep that for selection and
+add the focus rail for keyboard and gamepad focus.
+
 ## 8. Motion, transitions and sound
 
 Use a continuous monotonic presentation clock sampled each rendered frame.
@@ -326,25 +746,78 @@ Motion continues while gameplay is paused and cannot inherit simulation tick
 rate. Game-state events retain authoritative time. Keys specify time, property,
 value and easing; interpolate continuously at 144/240 Hz as well as 60 Hz.
 
+`trapezoid(a, d)` is the stock accel/decel profile: constant acceleration for
+`a` ms, constant speed, then constant deceleration for the final `d` ms.
+Unmarked stock transitions are linear.
+
 | Motion token | Timing | Curve / use |
 | --- | --- | --- |
-| `hover.enter` | 0–60 ms | Immediate marker/label response; optional brief plate fade |
-| `hover.leave` | 300 ms | Cubic ease-out; stock asymmetric release |
-| `press` | 60 ms | Fast ease-out, 1 dp inset movement |
-| `focus` | 80 ms | Ease-out rail/marker; never delay navigation |
-| `page.enter` | 220 ms | Cubic (0.16, 1, 0.3, 1); 12 dp slide and opacity |
-| `page.leave` | 140 ms | Cubic (0.4, 0, 1, 1); 8 dp departure and opacity |
-| `modal.enter` | 180 ms | Ease-out opacity and 0.985→1 local scale |
-| `modal.leave` | 120 ms | Ease-in opacity; deliberate focus ownership transfer |
-| `row.reveal` | 120 ms | Opacity, optional 15 ms stagger capped at 90 ms total |
+| `hover.enter` | 0 ms | Plate, label and marker respond at once (stock) |
+| `hover.leave` | 300 ms | Linear return (stock) |
+| `press` | 60 ms | Fast ease-out, 1 dp inset movement (openQ4) |
+| `focus` | 80 ms | Ease-out rail/marker; never delay navigation (openQ4) |
+| `frame.dock` | 500 ms | `trapezoid(150, 150)`; framing bands move between home and page positions (stock) |
+| `screen.depart` | 500 ms | `trapezoid(150, 150)`; home content sweeps toward the trailing edge (stock) |
+| `screen.return` | 300 ms | Linear; a page sweeps toward the leading edge on Back (stock) |
+| `content.out` | 250 ms | Linear fade of departing plates, labels and markers (stock) |
+| `content.in` | 150 ms | Linear fade of arriving title, backing, actions and home content (stock) |
+| `page.enter` | 220 ms | Cubic (0.16, 1, 0.3, 1); 12 dp slide and opacity, between sibling pages of one screen (openQ4) |
+| `page.leave` | 140 ms | Cubic (0.4, 0, 1, 1); 8 dp departure and opacity (openQ4) |
+| `modal.enter` | 200 ms | Scrim to 0.94, glow field brightens from black, frame to 0.70, actions fade in over 150 ms; no scale (stock) |
+| `modal.leave` | 50 + 250 ms | Contents hide at once; after 50 ms scrim and glow fade over 250 ms, frame 200 ms, actions 150 ms (stock) |
+| `light.up` | 150 ms in, 250 ms out | Logos and glow fields fade from and to black rather than transparency (stock) |
+| `row.reveal` | 120 ms | Opacity, optional 15 ms stagger capped at 90 ms total (openQ4) |
 | `value.change` | 100 ms | Local emphasis; no perpetual blinking |
 | `tooltip` | 100 ms | Opacity after initial delay |
 
 These are authored defaults. Story-driven timing, terminal sequences, weapon
-reticles and scripted effects remain faithful to sources. Major transitions
-may choreograph frame/content groups, normally totaling less than 300 ms.
-Stock hover growth (0.26→0.27) can use a local transform without reflowing the
-button or moving neighbors.
+reticles and scripted effects remain faithful to sources. Marine menu screen
+changes follow the stock choreography below; other major transitions may
+choreograph frame/content groups, normally totaling less than 300 ms. Stock
+hover growth (+0.01 `textscale`, about 3%) uses a local transform without
+reflowing the button or moving neighbors.
+
+### Stock choreography
+
+**Home to page.** At 0 ms the home content fades out (`content.out`) and the
+wordmark and emblem fade to black (`light.up`). At 50 ms the home content
+sweeps toward the trailing edge while both framing bands move to their page
+positions (`frame.dock`). At 550 ms the page is placed, and its title (to
+0.50), backing (to 0.60) and Back action fade in (`content.in`). **Back**
+reverses it: the page sweeps toward the leading edge (`screen.return`) while
+the bands return (`frame.dock`); when they settle at 500 ms the home content
+fades in (`content.in`) and the wordmark and emblem light up from black.
+Sibling pages inside a screen, such as settings categories, switched instantly
+in stock with a 150 ms title fade; `page.enter` and `page.leave` now cover them.
+
+The stock blocked all input for the whole choreography and re-enabled it
+only once the new content had faded in. The replacement stays responsive:
+input during a transition retargets it instead of being dropped, and a
+control that is not yet, or no longer, presented never activates.
+Reduced motion places bands and pages at their destinations and cross-fades
+content within 80 ms.
+
+**Decode reveal** (credits and intros): the rune line fades in over 500 ms;
+the Latin line then wipes open from the centre over 1000 ms while settling
+from white to its colour, and the rune line fades out over the same 1000 ms.
+
+### Ambient loops and alarms
+
+| Stock loop | Measured | Treatment |
+| --- | --- | --- |
+| Backdrop levelshots | Cross-fade over 2000 ms every 5000 ms, four images | Decorative |
+| Static grain | Scrolls 1 texture width and 5 texture heights per second at 2.4% | Decorative |
+| Animated gear | One turn per 10 s | Decorative |
+| Terminal scanlines | Drift 0.2 texture heights per second | Decorative |
+| EKG trace | Scrolls 0.2 texture widths per second | Instrument; its information stays under reduced motion |
+| Idle display flicker | 92–100% at 3 Hz | Decorative |
+| Warning shimmer (low ammo) | 80–100% at 3 Hz | Alarm |
+| Alarm pulse (no ammo, low health, boss shield) | 100–50% at 2 Hz | Alarm |
+| Settings notice | 100–50% at 1 Hz | Alarm |
+
+Alarms keep their stock cadence, all at or below 3 Hz, and always pair with a
+static cue. Reduced motion stops decorative loops and replaces alarm pulses
+with a steady emphasized state. No loop runs on essential text.
 
 Retarget interrupted animations from current sampled values. Reversal cannot
 jump to an endpoint. Different properties can animate concurrently; the most
@@ -353,10 +826,14 @@ completion and teardown semantics. Modal input ownership starts before its
 first visible frame. Handle rapid back/forward, repeated clicks, resizing,
 theme changes and map shutdown.
 
-Use `main_menu_mouseover` and `main_menu_selection` through existing sound
-declarations where appropriate. Play once per semantic event. Gamepad focus
-gets equivalent feedback without duplicate hover sounds. Never sound each
-animation frame or server-list refresh.
+Stock menus play `main_menu_mouseover` on each hover entry of an enabled
+control and `main_menu_selection` on each activation, including value cycling,
+sorting and closing a modal. Nothing plays on hover exit or during animation.
+World terminals play `guisound_beep2` on actions. The front end plays
+`main_menu` music and the in-game menu `main_menu_gameplay`. Use these through
+existing sound declarations where appropriate. Play once per semantic event.
+Gamepad focus gets equivalent feedback without duplicate hover sounds. Never
+sound each animation frame or server-list refresh.
 
 Reduced motion removes translation, scale, stagger, shake and decorative loops;
 use immediate state changes or opacity fades up to 80 ms. Preserve essential
@@ -373,9 +850,10 @@ where needed and offer a recoverable video-mode confirmation countdown.
 
 Pause retains the world and correct semantics: SP may pause; MP must not pretend
 to pause the server. Partial in-game panels use established scene softening
-rather than an indiscriminate full-screen dimmer. Effect ownership survives
-stacked panels and releases on every exit/shutdown. Offer opaque local backing
-as an accessibility alternative.
+rather than an indiscriminate full-screen dimmer. Front-end confirmation
+modals keep the stock `marine.scrim`. Effect ownership survives stacked panels
+and releases on every exit/shutdown. Offer opaque local backing as an
+accessibility alternative.
 
 Save/load shows slot title, timestamp and complex preview, with overwrite/delete
 confirmation. Preserve selection through refresh and show failures in context.
@@ -391,6 +869,70 @@ World GUIs preserve per-entity instances, named events, input-ray mapping,
 trigger commands, save/restore and visibility. Port instrument/game widgets as
 functional components. Screenshots or decorative approximations do not count.
 Inspect ordinary and story-critical terminal flows in gameplay.
+
+### Stock screen reference
+
+Positions are source units on the 4:3 canvas. Expansion follows section 3.
+
+**Main menu, home state.** The top band's inner edge runs at 104 u, rises to
+95 u across three notches (41–77, 138–173 and 234–268 u) and steps up to
+68.5 u through a riser between 315 and 352 u. The bottom band's inner edge
+runs at 400 u from the leading edge to 345 u, drops to 444 u by 390 u and
+rises to 435 u between 583 and 592 u. The wordmark (additive) sits at 6,119 u
+(376x92 u) and the emblem watermark (darkening) at 380,125 u (260x260 u) on
+the trailing side. Navigation plates bleed off the leading edge on a 30 u
+pitch from 202 u, marker at 32 u, label at 44 u. In game, SAVE GAME and QUIT
+CURRENT GAME replace NEW GAME and MULTIPLAYER, and RETURN TO GAME adds a fifth
+plate. The message of the day sits at 44,364 u. Secondary links (MODS,
+UPDATES, CREDITS, EXIT; EXIT alone in game) stand on the plinth at
+401–426 u.
+
+**Page state.** The top band moves 323 u toward the trailing edge and 63 u up;
+the bottom band moves 373 u toward the trailing edge and 35 u down. The top
+band then carries the screen title at 39,19 u and its notches over the
+content column; the bottom band's raised trailing section holds Back at
+532,441 u (109x30 u).
+
+**Settings.** Section navigation plates run from 14 u across 208 u on a 30 u
+pitch from 172 u. The content column starts at 228 u: section headings at
+259 u, 14 u above their first row; rows on a 24 u pitch; labels at row +31 u;
+values at row +240 u; slider ramps at row +244 u with the numeric value at row
++322 u; action rows with markers follow the rows of their group. The page
+backing darkens the content column fully and fades across the navigation
+column. openQ4 adds a scrollbar at the content column's trailing edge.
+
+**New game.** Difficulty choices use section navigation plates beside a
+description paragraph; START GAME is the enlarged primary plate.
+
+**Save and load.** A 183x137 u preview with a 1 u olive border (`#414624`)
+and its date and time below it on the leading side; the list on the trailing
+side under Lowpixel column headings and an olive rule; Load and Delete as
+section navigation plates.
+
+**Server browser.** Header band (587x37 u) with column symbols, 18 u rows
+across 604 u, a sort notice with the flipped marker and a CLEAR SORTING
+action under the list, then a full-width refresh progress bar.
+
+**Modal.** 320 u wide and centred, body text at +22 u, actions of 120x30 u
+at the leading and trailing ends.
+
+**Loading.** Full-bleed levelshot; top band thick on the leading side with its
+riser near the middle, bottom band thick on the trailing side; the level name
+trails at the top (Marine 26 dp, tracking -0.1 em) over a gradient that fades
+toward the leading side; progress bar from 235 to 640 u at 431 u with
+`LOADING` trailing-aligned across it; corner brackets at the four corners of
+the picture; the `+` grid over everything.
+
+**Cinematic.** Black bars of 60 u top and bottom frame a 16:9 picture on the
+4:3 canvas. Preserve that picture aspect rather than the bar height.
+
+**Marine HUD.** Ammo (13 u), health (190 u) and armor (326 u) gauges, each
+125x59 u at 420 u, with trailing-aligned numerals and 16 u icons beneath
+them; the weapon-select strip centred at 370 u with the weapon name centred
+below at 392 u.
+
+**In-game multiplayer menu.** The Marine menu vocabulary with framing bands at
+0.40, so the match stays visible.
 
 ## 10. Visual editor
 
@@ -468,6 +1010,13 @@ Validate monitor changes, viewport offsets, fractional strokes, pointer mapping
 and IME. Test motion at 30/60/144/240 Hz, interruption and pause using measured
 samples and visual captures. OS input control requires specific user permission.
 
+For each translated stock screen, compare the replacement with the stock GUI at
+the same 4:3 output. Plate bands, cuts, markers, rails, baselines and band
+silhouettes agree within 1.5 dp; flat fills agree within 2/255 per channel
+away from edges and light layers; stock-derived timings agree within one frame
+at 60 Hz. Record every deliberate departure with its section of this
+specification.
+
 Gameplay covers SP HUD/scopes/vehicles/terminals/checkpoints/manual saves; MP
 join/team/scoreboard/chat/buy/arena/Match Control; loading/cinematics; and editor
 round trips. Follow existing Linux/macOS/Android-GLES workflows. Missing platform
@@ -486,5 +1035,121 @@ vectors, all states, motion timing/rationale, language/scale behavior, output
 captures, behavior verification and remaining gaps. Evidence includes exact
 revisions. Keep retail extractions and temporary captures out of tracked source.
 
+Cite the measured value used for every stock-derived dimension, colour and
+timing, either from this specification or from a newer measurement recorded
+with its method. A disputed value is re-measured from the installed archives,
+not estimated from a screenshot.
+
 Stages can contain unfinished work but cannot mark it visually accepted or
 rewrite this specification around its current limitations.
+
+## Appendix A. Stock survey method
+
+The 1.1 survey read the 30 installed `q4base` archives of the Steam 1.4.2
+release in load order and took the effective copy of every path: 264 GUI files
+(two of them includes), the `gfx/guis` interface art, the 12, 24 and 48 point
+`.fontdat` atlases of six faces, and the material and table declarations. It
+parsed every window's rectangle, background, colours, font, `textscale`,
+`textspacing`, alignment, shear and rotation, and every event's transitions,
+`onTime` keys and sound commands. It measured alpha and colour profiles of each
+furniture texture (visible bounds, cuts, rails, fades, baked rail colours),
+traced the framing-band silhouettes column by column, took glyph ink from the
+atlases, and read blend modes, `scroll`/`rotate` stages and `guitable_*` pulse
+tables from the materials. Static composites of the stock settings page, home
+screen and modal, built from the measured values, were compared against engine
+captures of openQ4's current bitmap menus.
+
+The 1.1 numbers came from one-off measurement scripts over those archives;
+no extracted data is tracked. Re-measure from the installed archives when a
+value is disputed, and record the method with the new value.
+
+## Appendix B. Measured stock geometry
+
+### B.1 Furniture textures
+
+Rows are texel measurements. Divide by the texture size and multiply by the
+drawn rectangle to obtain source units.
+
+| Texture | Size | Visible rows | Cut | Rails | Fill and fade |
+| --- | --- | --- | --- | --- | --- |
+| `b3_light` | 512x32 | 3–27 | Rows 14–27, lower leading | Leading, cut, bottom; 1 texel, white | 0.49 to 50% width, then linear to 0 |
+| `b4_light` | 128x32 | 3–27 | Rows 14–27, lower leading | As `b3_light` | 0.49 to 33% width, then linear to 0 at 95% |
+| `b6_light` | 256x32 | 3–27 | Rows 14–27, lower leading | As `b3_light` | 0.49 to 33% width, then linear to 0 |
+| `b1_dark` | 512x64 | 16–45 | Rows 32–45, lower leading | Leading, cut, bottom; `#CCCC51` | Opaque to 44% width, half at 62%, 0 at 88% |
+| `b2_dark` | 256x64 | 16–45 | Rows 32–45, lower leading | As `b1_dark` | Opaque to 57% width, half at 72%, 0 at 94% |
+| `b5_dark` | 256x64 | 16–45 | Rows 32–45, lower leading | As `b1_dark` | Opaque to 44% width, half at 55%, 0 at 78% |
+| `header` | 512x32 | 11–28 | 7 texels, upper leading | Top and leading | 0.49 to 60% width, then linear to 0 |
+| `scoreheader` | 512x32 | 2–28 | 7 texels, upper leading | Top and leading | As `header` |
+| `tooltip_edge` | 256x16 | From row 2 | 2 texels upper leading, 8 texels upper trailing | 1 texel `#A0A040`, top and sides | Opaque black |
+| `popup_top` | 512x32 | From row 4 | Tooth at 7–13, slot from 14 to 388 narrowing 1 texel per row to row 22, full width from row 23 | None | White art, drawn black at 0.70 |
+| `popup_btm` | 512x64 | 0–57 | Leading edge moves 1 texel per row from row 14 to row 57 | None | As `popup_top` |
+| `ctrls_tab1` | 512x64 | Tab rows 1–26 | Leading fillet 3 texels; trailing shoulder 14 texels at 45 degrees | Outline and baseline at row 26 | Alpha 1.0 at top to 0.02 by row 52 |
+| `corner` | 32x32 | Solid rows 8–24, columns 8–23 | Hypotenuse from upper leading to lower trailing | Halo to rows 1–29, columns 3–30 | White |
+| `box`, `box_check` | 32x32 | Outline rows and columns 1–30 | None | 2-texel stroke | Inset square, rows and columns 5–26 |
+| `bg_grid` | 512x512 | Crosses every 32 texels | None | 1-texel arms spanning 21 texels | White |
+
+### B.2 Framing band silhouettes
+
+Band-local source units; both band rectangles are 1045x129 u. Diagonal
+segments between listed vertices are 45-degree flanks; the coordinates carry
+the stock texels' rounding.
+
+Top band inner edge (x, y): (0, 89.7), (102.1, 89.7), (116.3, 103.8),
+(430.7, 103.8), (440.9, 94.7), (476.6, 94.7), (485.8, 103.8), (527.6, 103.8),
+(537.8, 94.7), (572.5, 94.7), (581.7, 103.8), (623.5, 103.8), (633.7, 94.7),
+(668.4, 94.7), (677.6, 103.8), (715.4, 103.8), (752.1, 68.5), (1045, 68.5).
+
+Bottom band inner edge (x, y): (0, 70.5), (166.3, 70.5), (176.5, 79.6),
+(370.4, 79.6), (401.1, 49.4), (743.9, 49.4), (788.8, 92.7), (981.7, 92.7),
+(990.9, 83.6), (1045, 83.6).
+
+| State | Top band origin | Bottom band origin |
+| --- | --- | --- |
+| Home | -400, 0 | -399, 351 |
+| Page | -77, -63 | -26, 386 |
+
+### B.3 Text size conversion
+
+| Face | `textscale` | Em (dp) | Cap height (dp) |
+| --- | --- | --- | --- |
+| Marine | 0.22 / 0.25 / 0.26 / 0.28 / 0.31 / 0.33 / 0.36 / 0.40 | 15.8 / 18.0 / 18.7 / 20.2 / 22.3 / 23.8 / 25.9 / 28.8 | 7.9 / 9.0 / 9.4 / 10.1 / 11.2 / 11.9 / 13.0 / 14.4 |
+| Lowpixel | 0.16 / 0.18 / 0.20 / 0.22 / 0.24 / 0.31 | 11.5 / 13.0 / 14.4 / 15.8 / 17.3 / 22.3 | 8.6 / 9.7 / 10.8 / 11.9 / 13.0 / 16.7 |
+| Chain | 0.32 / 0.40 / 0.50 | 23.0 / 28.8 / 36.0 | 14.4 / 18.0 / 22.5 |
+| Profont | 0.18 | 13.0 | 9.7 |
+| R_Strogg | 0.40 / 0.50 | 28.8 / 36.0 | 19.2 / 24.0 |
+
+### B.4 Weapon and item colour code
+
+| Item | Colour | Item | Colour |
+| --- | --- | --- | --- |
+| Machinegun | 1, 1, 0 | Rocket launcher | 1, 0.2, 0 |
+| Shotgun | 1, 0.5, 0 | Railgun | 0, 1, 0 |
+| Hyperblaster | 0, 0.45, 1 | Lightning gun | 1, 1, 0.73 |
+| Grenade launcher | 0.2, 0.56, 0.07 | Dark Matter gun | 0.77, 0, 1 |
+| Nailgun | 0.6, 0.8, 0.8 | Gauntlet | 0, 0.85, 1 |
+| Health shard / small / large / mega | 0.5, 1, 0.5 / 1, 1, 0.2 / 1, 0.5, 0 / 0, 0.5, 1 | Armor shard / small / large | 0, 0.5, 1 / 1, 1, 0 / 1, 0, 0 |
+
+## Appendix C. Version 1.1 change record
+
+| Area | 1.0 | 1.1 | Basis |
+| --- | --- | --- | --- |
+| Panels | Equal 12 dp upper and 8 dp lower cuts; 1 dp rail plus 3 dp inset rail; popovers 6 dp; bands 16–24 dp | Card: 12 dp and 3 dp cuts on diagonally opposite corners, one rail, no inset rail; modal silhouette; popovers keep 6 dp; bands follow measured silhouettes | `tooltip_edge`, `popup_*`, `topbar`, `btmbar` |
+| Buttons | 40 dp high; 12 dp cut; 8 dp label gap | Visible plate 35–37 dp in a 45 dp target (29 dp in a 36 dp row); cut 47–56% of the plate; 4 dp label gap; 112 dp minimum width and 12 dp marker inset kept | `b*_light`, `b*_dark`, stock placements |
+| Marker | 8 dp at 12 dp inset | 8 dp, 9 dp beside 24 dp navigation labels; inside the label's cap band | `corner` placements |
+| Checkbox | Cut outline, vector tick | Square outline, inset filled square; settings use cycling values | `box`, `box_check`, settings pages |
+| Slider | Recessed track, filled span, cut thumb | Tick ramp, bar thumb; ticks past the thumb at 40% | `slider_bg`, `slider_bar` |
+| Type ramp | Title 28, panel 20, button 18, body 16, metadata and table 14 dp | Table in section 5; screen title 18 dp at 50% | Glyph ink, stock `textscale` |
+| Tracking | Slightly tight everywhere | Face spacing by default; tightened for listed roles | Stock `textspacing` use |
+| Opacity | Primary 0.62, secondary 0.28, rail 0.95, header wash 0.16 | Stock ladder; join-card values kept for in-game partial panels | Stock rest and hover values |
+| Motion | `hover.leave` cubic; `modal.enter` 180 ms with scale; `modal.leave` 120 ms | Linear `hover.leave`; stock modal choreography; stock screen choreography tokens | Stock timelines |
+| Added | — | Measured tokens and family values, composition modes, stock grid, band geometry, HUD geometry, symbol inventory, bitmap classification, stock screen reference | Survey |
+
+The [product requirement register](ui/product-requirements.json) quotes 1.0
+values in ART-004 (panel cuts and inset rail), ART-006 (button height, cut and
+label gap), WID-002 (tick) and WID-004 (slider track and thumb). Its validator
+freezes requirement text, so these rows need a recorded supersession before
+their quoted numbers are used as acceptance criteria. This version's values
+are the visual contract. Quoted values that still hold include ART-005 (panel
+header and 8 dp marker), WID-012 (tooltip timing) and LAY-005 and LAY-007
+(margins and targets). The register's hash binding to this file is re-bound at
+the next requirement audit.

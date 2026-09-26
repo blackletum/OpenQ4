@@ -8,6 +8,19 @@ supersede the historical restrictions below for the `idtech5-ui` project.
 The rules every openQ4 menu, panel and in-game GUI follows, so that anything we
 add looks like it shipped with Quake 4 rather than like a mod bolted on top.
 
+> **Measured corrections, 26 September 2026.** A survey of the effective retail
+> GUIs found that several statements below overgeneralize. Stock text keeps the
+> face's own spacing except modal titles and dense tooltip lines
+> (`textspacing -1` on 6% of main-menu text). Stock plates rest at 0.4 and rise
+> to 0.8 (main navigation, action buttons) or 1 (section navigation, value rows)
+> on hover; the 0.28-0.62 range is the join card's own. `b4_light` is the stock
+> action button, `b3_light` the settings row and `b1_dark`/`b2_dark` the
+> navigation plates; `b6_light` serves larger single actions such as START
+> GAME, the in-game multiplayer menu's buttons and the restart dialog.
+> Front-end confirmation modals do dim the screen (black 0.94); the no-dimming
+> rule applies to in-game partial panels. The measured values are in
+> [UI Visual Design](ui-visual-design.md), sections 4-8 and Appendix B.
+
 The reference is Quake 4's own main menu and settings screens. Read this before
 authoring a new `.gui`, and check a change against `guis/mainmenu.gui` and the
 `p_quickjoin` panel in `guis/mpmain.gui`, which are the worked examples.

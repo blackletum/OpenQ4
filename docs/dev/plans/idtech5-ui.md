@@ -16,6 +16,12 @@ high-quality UI product at an id Tech 5 standard.
 The [product requirement register](../ui/product-requirements.md) tracks the
 full normative scope, milestone ownership and acceptance evidence.
 
+[Visual specification 1.1](../ui-visual-design.md) (26 September 2026) records
+measured stock geometry, palette, type, motion and composition from the
+effective retail GUIs, and corrects plate, panel, checkbox and slider anatomy.
+Register rows ART-004, ART-006, WID-002 and WID-004 quote superseded 1.0 values
+and need a recorded supersession; see the specification's change record.
+
 The [17 September implementation audit](../ui/masked-input-review.md) refreshes
 delivery priorities and repairs vector-mask pointer/focus eligibility. The
 complete runtime/editor/corpus scope and every remaining stage gate stay open.
