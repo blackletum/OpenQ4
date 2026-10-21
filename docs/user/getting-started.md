@@ -110,6 +110,13 @@ openQ4 needs the installed game's `q4base/` data. It does not read a GOG setup
 from your own Windows installation, or extract a supported offline installer on
 the Mac using [innoextract](https://constexpr.org/innoextract/).
 
+For a graphical option, [Mac Source Ports Extractor](https://www.macsourceports.com/utility/extractor/)
+opens and extracts supported GOG installers without Terminal. Keep the `.exe`
+and its matching `.bin` files together, then extract the installer into a new
+folder. A player [confirmed this route for Quake 4](https://github.com/themuffinator/openQ4/issues/185#issuecomment-6253641976);
+the exact installer filename was not recorded, so this is not a guarantee for
+every installer version. The same `q4base/` placement instructions below apply.
+
 If you use Homebrew, its [innoextract package](https://formulae.brew.sh/formula/innoextract)
 can be installed with `brew install innoextract`. Keep the setup `.exe` and all
 matching `.bin` parts together with their original filenames. From a new empty

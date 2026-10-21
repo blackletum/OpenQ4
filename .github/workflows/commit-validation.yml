@@ -1166,11 +1166,25 @@ jobs:
           retention-days: 14
           include-hidden-files: true
 
+      - name: Publish Windows ARM64 native regression logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: commit-windows-arm64-native-regressions
+          path: |
+            .tmp/validation/pr-builddir/game-regression-logs
+            .tmp/validation/pr-builddir/meson-logs
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
   linux-sanitizer:
     name: Linux x64 ASan+UBSan Commit Validation
     runs-on: ubuntu-24.04
     needs: script-smoke
-    timeout-minutes: 90
+    # The instrumented build alone can take over 80 minutes. Leave time for
+    # native tests, staging, the Wayland smoke and its evidence upload.
+    timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       ASAN_OPTIONS: halt_on_error=1:detect_leaks=0

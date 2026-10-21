@@ -10,6 +10,18 @@ completed release material here and publish curated notes in `releases/`.
 
 ## Post-0.14.000 corrections
 
+- [x] Document the reporter-confirmed Mac Source Ports Extractor route for GOG
+  offline installers (#185). The player can extract retail data with a graphical
+  app, then use the same external `q4base/` placement as the command-line route.
+  The separate language-reset symptom remains open as #199.
+
+- [ ] Integrate the reviewed startup-command copy fix (#197) with the parallel
+  validation runner (#191) under CORE-04/GOV-02. A native Windows control loses
+  commands 17 and 33 on `cbe967f2` and passes on `4acf4f1d`. Give the sanitizer
+  lane time for tests/staging after its long build, and retain Windows ARM64
+  native regression output. Fresh complete CI remains the integration gate;
+  existing timeouts and ARM64 failures are not passes.
+
 - [ ] Run every startup command again (regression from f15a41f0).
   `idList::Append` now copies its argument before growing, and `idCmdArgs` had
   no copy constructor, so the implicit copy kept `argv` pointing into the

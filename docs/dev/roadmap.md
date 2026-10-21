@@ -1,6 +1,6 @@
 # openQ4 development roadmap
 
-Updated 18 October 2026. Stage-one implementation and tested source:
+Updated 21 October 2026. Stage-one implementation and tested source:
 `7674acef91c2653e8c6153ae11e7b158c05e52ff`. The
 [baseline evidence record](baseline-evidence.md) binds current native tests,
 windowed gameplay and original-content controls to their exact source, binaries
@@ -54,7 +54,7 @@ future work and decisions are coordinated here.
 
 ## Report and contribution traceability
 
-Reviewed 18 October 2026. These links connect the open reports and contributions
+Reviewed 21 October 2026. These links connect the reports and contributions
 to the existing workstreams; they do not create separate schedules or promise a
 release. GitHub remains the source for subsequent discussion and PR/check state.
 
@@ -64,15 +64,24 @@ release. GitHub remains the source for subsequent discussion and PR/check state.
 | [#169: resolution scaling affects menus](https://github.com/themuffinator/openQ4/issues/169) | REN-04/UI-07: reproduce the recorded softened/cropped UI in current stock and retained routes; require native-resolution 2D output through scale changes and restart. |
 | [#170: weapon effects, sound and reload animation](https://github.com/themuffinator/openQ4/issues/170) | Q4-03/AUD-01/HF-04: preserve the merged BSE sound-diversity fix; identify and qualify each remaining weapon/effect/animation symptom separately. |
 | [#181: rebuilt hub2 cannot load](https://github.com/themuffinator/openQ4/issues/181) | CORE-05: the compiler allocation crash was fixed by #182; oversized runtime surfaces and silhouette warnings remain. |
-| [#183: machinegun transparency](https://github.com/themuffinator/openQ4/issues/183) | Q4-01/VK-04/REN-08: establish exact version, backend, settings and assets before assigning a rendering cause; qualify matching GL/Vulkan views. |
-| [#184: Tech Li at the hangar1 lift](https://github.com/themuffinator/openQ4/issues/184) | Q4-02: #189 addresses an unreachable-patient stall, but the reporter's exact save and progression still need confirmation. |
-| [#185: GOG offline installation on macOS](https://github.com/themuffinator/openQ4/issues/185) | PLAT-04/REL-01: provide extraction/path guidance and qualify the reporter's installer/package combination; do not imply that openQ4 imports Windows installers. |
+| [#183: machinegun transparency](https://github.com/themuffinator/openQ4/issues/183) | Q4-01/VK-04/REN-08: reporter supplied a save and reproduced on GL/Vulkan with 0.13.2/0.14.000 and stock assets. Reproduce that save on current source and qualify matching backend views; it is no longer awaiting reporter evidence. |
+| [#184: Tech Li at the hangar1 lift](https://github.com/themuffinator/openQ4/issues/184) | Q4-02: contributor traced the supplied save to Turbo shortening the lift's scripted timing. #198 prevents the fresh-sequence race; existing stuck saves need separate recovery qualification. #189 addresses a different unreachable-patient stall. |
+| [#185: GOG offline installation on macOS](https://github.com/themuffinator/openQ4/issues/185) | PLAT-04/REL-01: closed after the reporter confirmed extraction with Mac Source Ports Extractor and successful startup. The guide records that scoped result; the language-persistence symptom is preserved in #199. |
 | [#186: subtitles](https://github.com/themuffinator/openQ4/issues/186) | AUD-07/UI-02/UI-04: define supported dialogue text, timing, localization and accessible display coverage. |
 | [#187: dialogue volume](https://github.com/themuffinator/openQ4/issues/187) | AUD-06/UI-01: independent spoken-dialogue gain with real mixer classification and persistent settings. |
+| [#192: saves stop loading](https://github.com/themuffinator/openQ4/issues/192) | Q4-05/Q4-07: #193 addresses the weapon GUI event backlog with a reproduced synthetic save. Integrate the fix and qualify the reporter's failure; the report remains open. |
+| [#194: shadow-mapping request](https://github.com/themuffinator/openQ4/issues/194) | REN-08/VK-04: closed as already implemented; the specific door-frame example uses authored `noSelfShadow`. Existing shadow-map qualification and documented stencil fallback remain open. |
+| [#195: question marks after language switching](https://github.com/themuffinator/openQ4/issues/195) | UI-01: closed after reporter confirmation of the cached-label reload fix in `3b8534d3`; separate from language persistence across launches. |
+| [#196: Vulkan video-restart crash](https://github.com/themuffinator/openQ4/issues/196) | VK-01: closed after reporter confirmation on 0.14 and a supplied log; backend-aware restart is in `b87b703b`. This does not change release availability. |
+| [#199: macOS language resets on launch](https://github.com/themuffinator/openQ4/issues/199) | UI-01/PLAT-04: preserve the installation reporter's separate language-persistence defect; establish the build, startup overrides and writable configuration before choosing a fix. |
 | [#173: high-DPI menu cursor PR](https://github.com/themuffinator/openQ4/pull/173) | UI-02/PLAT-05: preserve controller-to-mouse handoff and console ownership; requalify against current routing. |
 | [#180: GUI save migration PR](https://github.com/themuffinator/openQ4/pull/180) | Q4-05/Q4-07/UI-09: preserve scripted values and evaluation flags through subsequent GUI updates; validate both legacy and retained presentation. |
 | [#189: medic approach watchdog PR](https://github.com/themuffinator/openQ4/pull/189) | Q4-02: bounded stall recovery, SP/MP parity, restore behavior and normal heal/progression regression; does not by itself prove #184 resolved. |
 | [#190: numeric clipboard harness PR](https://github.com/themuffinator/openQ4/pull/190) | CORE-04/GOV-02: mock-interface fix merged; the subsequent atlas math-include fix passes locally. Complete fresh CI without suppressing checks; neither fixture fix alone qualifies the full product. |
+| [#191: parallel validation PR](https://github.com/themuffinator/openQ4/pull/191) | CORE-04/GOV-02: preserve the complete check list and failure aggregation while reducing serial CI time. Qualify together with #197, retain native regression diagnostics and allow sanitizer tests to finish. |
+| [#193: weapon GUI save backlog PR](https://github.com/themuffinator/openQ4/pull/193) | Q4-05/Q4-07: keep GUI-less weapons from accumulating undeliverable events and restore existing bounded backlogs without changing the save writer. |
+| [#197: queued command copy PR](https://github.com/themuffinator/openQ4/pull/197) | CORE-04/GOV-02: local native negative control reproduces lost commands 17/33 on `cbe967f2`; `4acf4f1d` preserves them. Complete integrated CI with #191; timed-out or skipped jobs remain unqualified. |
+| [#198: Turbo scripted movers PR](https://github.com/themuffinator/openQ4/pull/198) | Q4-02: retain authored plain `func_mover` timing while preserving Turbo behavior for other mover classes; qualify the lift sequence and preserve the already-stuck-save limitation. |
 
 ## Current baseline to preserve
 
