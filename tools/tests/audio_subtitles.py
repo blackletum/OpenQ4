@@ -15,7 +15,7 @@ def main():
     # The transcript lookup the overlay and the s_logSpeech audit share, then the cue selection.
     (target / 'SoundSubtitlesUnderTest.inc').write_text('\n'.join(body(source, signature) for signature in (
         'static const rvDeclLipSync* SoundDeclaredLipSync(', 'static const char* SoundTranscriptText(',
-        'int idSoundWorldLocal::GetSubtitles(')))
+        'int idSoundWorldLocal::GetSubtitles(', 'void SoundDialogueVoices_f(')))
     compiler = os.environ.get('CXX', 'clang++')
     for name in ('SoundSubtitlesTest', 'SubtitlePagingTest'):
         exe = target / (name + ('.exe' if os.name == 'nt' else ''))

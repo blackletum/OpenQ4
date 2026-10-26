@@ -1201,6 +1201,91 @@ The subtitle document test (5,959 checks, now with the split layout), the paging
 `voice_capture_lifecycle.py` (with stubs for the test cvar), `mvd_seek_debris_contract.py`
 (six controls) and all 34 source tests that read the SDL backend pass.
 
+## Progression-audit recovery, 26 October 2026
+
+The unfinished `--progress` experiment from the previous session completed its
+four chains, but three failed. Only stock chain B passed every check. Chain A
+changed from `recomp` to `putra`; chain C changed maps inside `tram1b`, `process2`
+and `putra`. The audit had excluded exit trigger chains but a teleport could
+still touch an overlapping exit or start an indirect exit sequence. Its raw
+2,625 dialogue starts are therefore not accepted as complete campaign coverage.
+The original reports and engine logs are retained under
+`.tmp/audio-voice-continuation/initial/`, including their failed checks and
+runtime hashes; they have not been rewritten as passes.
+
+The other failures labelled `grunt/rush1`, `grunt/rush2` and
+`network_guardian/alert` as dialogue whenever any channel had used that sample
+as dialogue earlier in the map. A sample is not a routing identity. The new
+`s_dialogueVoices` diagnostic reports each channel's current sample,
+production dialogue classification and OpenAL source. Probes join the audible
+sources to those current channels; missing attribution fails the check rather
+than silently counting an unknown voice as an effect. The diagnostic prints
+identifiers and transcript status, never transcript text. It retains allocated
+voices through the final frame before the mixer retires them.
+
+The progression planner now rejects malformed/nonfinite origins and triggers
+that cannot react to the player, and removes `target_endlevel` entities only in
+the disposable test session. This also blocks overlapping exit volumes.
+Attempted teleports and missing entities remain separate counts: this does not
+establish that every trigger activated or reproduce normal gameplay order.
+
+Eleven harness regression tests cover shared samples, reused source IDs, real mute
+leaks, missing attribution, probe boundaries, route ordering, exit suppression
+streams that stop before the final residency snapshot, and entity names beginning
+with a digit (which must be quoted for the engine console).
+The native subtitle harness also executes the production diagnostic, covering
+music exclusion, leadin/loop changes, sample reuse, transcript privacy and
+hardware-voice retirement. Client/dedicated builds and staging pass on Windows.
+
+An initial diagnostic probe timed out before finishing; it remains failed
+evidence. A complete two-map rerun (`mcc_landing`, `network2`) then passed the
+dialogue checks: 110 full/muted probe pairs, no unattributed source and no mute
+leak. Both `grunt_rush` variants were effects, and `network_guardian_alert`
+appeared with both dialogue and effect routing on different channels. That
+rerun still failed its streaming gate because `network2` had stopped its last
+stream before the final snapshot. Stream observations are now taken throughout
+each scene, still requiring a playing stream on a later map's recycled voices.
+The failed report is retained rather than reinterpreted as a complete pass.
+
+The next six-map stock run passed every audio and map-transition check, including
+streams observed on later maps, but missed one planned step: the console split
+`2wavfinal_berserker_trig` into `2` and `wavfinal_berserker_trig` in both `echo` and
+`teleport`. Entity arguments and log markers are now quoted. The six-map report
+remains failed on traversal completeness; the focused `recomp` rerun records the
+correction independently.
+
+The corrected `recomp` run passes all 14 checks (53 planned steps, 58 full/muted
+probe pairs). Both Awakening cases, `m02_trianfac` and `m08_cryofac`, pass all 14
+checks together (133 steps, 143 probe pairs). Taking the five complete stock maps
+from the six-map run, replacing only `recomp` with its corrected rerun, and adding
+those two Awakening maps gives this explicitly limited follow-up:
+
+| Measure | Eight affected maps |
+| --- | ---: |
+| Attempted teleports | 466 |
+| Targets absent when visited | 23 |
+| Dialogue starts | 761 |
+| Distinct dialogue shaders / with transcripts | 168 / 114 |
+| Full/muted probe pairs | 506 |
+| Mute leaks / unattributed sources / unexpected map changes | 0 / 0 / 0 |
+
+These per-map results do not turn the failed six-map report into a pass. Reports,
+configs, engine logs, build/stage logs, hashes and the per-map selection are kept
+under `.tmp/audio-voice-continuation/`; `summary.json` states the selection and
+`evidence-manifest.json` identifies the retained copies. The runtime is the prior
+session's `009f5815e` checkout with this diagnostic added (Windows x64,
+debugoptimized, OpenAL Soft wave output, hidden windowed SP). The final executable
+SHA-256 is `41f31c039570eac10f8070b074e96a6a3edf5df254109a2bb9ddacca43f52b7e`.
+
+The planner inventories 1,362 stock and 605 Awakening candidate triggers and 46
+level-end targets across all 42 maps; only the eight affected maps were rerun.
+Teleportation can telefrag nearby actors or doors and provoke script null-entity
+warnings, so these are routing probes, not clean gameplay or an ordered
+playthrough. Awakening also retains its existing duplicate material declarations.
+No host input or microphone was used. Physical-device, mobile, macOS,
+independent-machine voice and VR subtitle gates remain open, as does missing
+transcript and full campaign coverage.
+
 ## Other verification and limitations
 
 - `sound_settings.py --no-mutations`: 35,807 checks pass.

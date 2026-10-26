@@ -87,5 +87,8 @@
   tablet gives when memory runs low, which now frees audio once instead of twice.
   `s_logSpeech 1` lists every line of speech as it starts, with whether Dialogue
   Volume and subtitles reach it.
+- `s_dialogueVoices` identifies the current dialogue channels and their output
+  gains, so developers can distinguish a muted conversation from an effect
+  that reuses the same audio file.
 - Lines whose transcript is declared for the voice file, rather than for the
   sound's name, now show their subtitle when a character speaks them.

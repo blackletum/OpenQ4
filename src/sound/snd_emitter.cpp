@@ -698,6 +698,44 @@ int idSoundWorldLocal::GetSubtitles( soundSubtitle_t* cues, int capacity ) {
 	return count;
 }
 
+// Report routing for the channel playing now. A sample can be dialogue on one
+// channel and an effect on another; a map-wide list of speech samples cannot
+// establish whether the Dialogue Volume control muted the right voices.
+void SoundDialogueVoices_f( const idCmdArgs& args )
+{
+	(void)args;
+	idSoundWorldLocal* world = static_cast<idSoundWorldLocal*>( soundSystemLocal.GetSoundWorldFromId( SOUNDWORLD_GAME ) );
+	int count = 0;
+	if( world != NULL ) {
+		const int now = world->GetSoundTime();
+		for( int e = 0; e < world->emitters.Num(); ++e ) {
+			idSoundEmitterLocal* emitter = world->emitters[e];
+			if( emitter == NULL ) continue;
+			for( int c = 0; c < emitter->channels.Num(); ++c ) {
+				idSoundChannel* channel = emitter->channels[c];
+				// Include a logically completed channel until the next mix retires
+				// its hardware voice: OpenAL may still report it playing now.
+				if( channel == NULL || channel->soundShader == NULL || channel->leadinSample == NULL ||
+					channel->hardwareVoice == NULL ) continue;
+				const idSoundSample* sample = channel->leadinSample;
+				if( channel->loopingSample != NULL && SoundChannelPlaybackTimeMsec( channel, now ) >= sample->LengthInMsec() ) {
+					sample = channel->loopingSample;
+				}
+				const bool authored = ( channel->parms.soundShaderFlags & ( SSF_IS_VO | SSF_VO_FOR_PLAYER ) ) != 0;
+				const bool dialogue = SoundIsDialogue( SoundUsesMusicVolume( channel->parms ), authored, sample->GetName() );
+				SoundTranscript transcript = SoundTranscript::Undeclared;
+				if( dialogue ) SoundTranscriptText( channel->soundShader, sample, sample == channel->leadinSample, &transcript );
+				idLib::Printf( "SOUND_DIALOGUE emitter=%d channel=%d shader=%s sample=%s dialogue=%d transcript=%s\n",
+					emitter->Index(), channel->logicalChannel, channel->soundShader->GetName(), sample->GetName(),
+					dialogue ? 1 : 0, SoundTranscriptName( transcript ) );
+				soundSystemLocal.hardware.PrintDistanceInfo( channel->hardwareVoice );
+				++count;
+			}
+		}
+	}
+	idLib::Printf( "SOUND_DIALOGUE_END channels=%d\n", count );
+}
+
 void idSoundChannel::UpdateVolume( int currentTime )
 {
 	idSoundWorldLocal* soundWorld = emitter->soundWorld;

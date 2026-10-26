@@ -1689,6 +1689,14 @@ Sources: [audio implementation and remaining limits](audio-modernization.md),
   probes while effects continue; Dialogue Volume's 0.6 holds across a real save and load
   on Windows and Linux. Lines that wait on the player moving or fighting, and physical
   devices, remain open.
+  October 26: the progression audit now distinguishes dialogue from effects that
+  reuse the same sample by joining each audible source to its current channel.
+  Candidate contact triggers exclude non-player/activation-only cases, and level-end
+  targets are suppressed in disposable sessions so nearby or delayed exits cannot
+  invalidate the scene chain. The previous run's three failed chains are retained
+  as failures. Attempts and missing entities remain explicit; these probes do not
+  replace an ordered playthrough or physical listening.
+  [Progression-audit evidence](audio-voice-evidence.md#progression-audit-recovery-26-october-2026).
 - [ ] **AUD-07 — P1, decision, implementation and qualification: dialogue subtitles.**
   Address [#186](https://github.com/themuffinator/openQ4/issues/186) with UI-02/UI-04.
   Inventory dialogue-to-text/localization data available from installed assets and
@@ -1744,6 +1752,11 @@ Sources: [audio implementation and remaining limits](audio-modernization.md),
   moving or fighting and physical stereo-HUD qualification remain open; the installed
   game has transcripts in English only, so other languages show English captions.
   [Two-speaker evidence](audio-voice-evidence.md#two-speakers-at-the-largest-text).
+  October 26: progression probes pair current-channel dialogue attribution with
+  subtitle identifiers and transcript status, without recording proprietary text.
+  Interrupted map chains are not accepted as full scene coverage. Complete
+  gameplay-order coverage and physical stereo-HUD placement remain open.
+  [Progression-audit evidence](audio-voice-evidence.md#progression-audit-recovery-26-october-2026).
 
 ## Desktop platforms and packaging
 
