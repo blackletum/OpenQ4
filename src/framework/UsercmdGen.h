@@ -190,12 +190,17 @@ public:
 	// Queue a one-shot impulse for the next generated usercmd.
 	virtual void		TriggerImpulse( int impulseNum ) = 0;
 
-	// Presentation-frame view sampling groundwork (in_presentationView):
-	// drains pending mouse input under the async lock and reports the
-	// accumulated, not-yet-consumed view rotation in degrees. The input is
-	// not consumed; the next 60 Hz usercmd still receives the full movement.
-	// Returns false when disabled or inhibited.
-	virtual bool		GetPresentationViewDelta( float &yawDelta, float &pitchDelta ) = 0;
+	// Late look (in_presentationView): the view angles, in degrees, that the
+	// generator would put in its next usercmd if it were built now. That is
+	// the last built usercmd plus mouse/gyro motion not yet consumed and the
+	// elapsed share of held look keys and stick deflection. Comparing it with
+	// the angles of the usercmd the game last applied gives every input the
+	// game has not seen, including usercmds buffered but not yet run, so
+	// nothing is shown twice or skipped. Nothing is consumed: the next
+	// usercmd still receives all of it. Returns false when disabled, inhibited,
+	// temporally filtered (m_smooth/m_filter), replaying commands, in VR, or
+	// while a radial selector owns the look input.
+	virtual bool		GetPresentationViewAngles( float &yaw, float &pitch ) = 0;
 };
 
 extern idUsercmdGen	*usercmdGen;

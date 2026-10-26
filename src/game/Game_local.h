@@ -2,6 +2,7 @@
 #define	__GAME_LOCAL_H__
 
 #include "../framework/PresentationClock.h"
+#include "../framework/PresentationLook.h"
 
 // RAVEN BEGIN
 // jsinger: attempt to eliminate cross-DLL allocation issues
@@ -115,7 +116,6 @@ const int MAX_SAVEGAME_LEVEL_TRIGGERS					= 256;
 const int MAX_SAVEGAME_PICKUP_ITEMS						= 512;
 const int MAX_SAVEGAME_OBJECTIVES						= 256;
 const int MAX_SAVEGAME_AAS_LOCATIONS					= 128;
-const int MAX_SAVEGAME_GUI_EVENTS						= 256;
 const int MAX_SAVEGAME_SPAWNER_ACTIVE					= 512;
 const int MAX_SAVEGAME_SPAWNER_POINTS					= 512;
 const int MAX_SAVEGAME_SPAWNER_CALLBACKS				= 256;
@@ -447,6 +447,7 @@ public:
 	idLinkList<idEntity>	spawnedEntities;		// all spawned entities
 	idLinkList<idEntity>	activeEntities;			// all thinking entities (idEntity::thinkFlags != 0)
 	idLinkList<idEntity>	presentationEntities;	// entities re-anchored on presentation frames (render-only)
+	idLinkList<rvClientEntity>	presentationClientEntities;	// unbound client debris drawn between tics (render-only)
 	int						numEntitiesToDeactivate;// number of entities that became inactive in current frame
 	bool					sortPushers;			// true if active lists needs to be reordered to place pushers at the front
 	bool					sortTeamMasters;		// true if active lists needs to be reordered to place physics team masters before their slaves
@@ -506,6 +507,10 @@ public:
 	int						mHz;					// hertz
 	mutable openq4::PresentationClock presentationClock;
 	float					presentationClockSample;	// one high-resolution phase for every draw consumer
+	int						presentationGameplayCount;	// gameplay entry points reached inside a prepared draw (diagnostic)
+	int						presentationRendererDepth;	// inside the renderer's scene work for a draw
+	int						presentationRendererEffectCount;	// effects BSE started there (diagnostic)
+	double					presentationPrepStartTicks;	// when this draw's preparation began (diagnostic)
 	float					presentationSceneFraction;	// frozen camera/root fraction for the active Draw
 	bool					presentationMenuPaused;		// authoritative scene clock during a single-player menu Draw
 	int					presentationAnimationTime;	// previous-to-current skeletal sample held only during Draw
@@ -821,6 +826,9 @@ public:
 	void					RecordPresentationClockSample( void );
 	int						GetPresentationTimeMsec( void ) const;
 	int						GetPresentationAnimationTimeMsec( void ) const { return presentationAnimationTime; }
+	bool					IsPresentationSceneActive( void ) const { return presentationClockSample >= 0.0f; }
+	void					NotePresentationGameplay( const char *what );
+	void					NotePresentationEffect( void );
 	void					EndPresentationSceneForRender( void );
 	float					GetPresentationInterpolationFraction( void ) const;
 	idMat3					InterpolatePresentationAxis( const idMat3 &from, const idMat3 &to, float fraction ) const;
@@ -1375,6 +1383,14 @@ private:
 //============================================================================
 
 extern idGameLocal			gameLocal;
+
+// The renderer's own scene work inside a prepared draw (RenderScene), where BSE
+// services its effects; see idGameLocal::NotePresentationEffect.
+class idPresentationRendererScope {
+public:
+							idPresentationRendererScope( void ) { gameLocal.presentationRendererDepth++; }
+							~idPresentationRendererScope( void ) { gameLocal.presentationRendererDepth--; }
+};
 bool						OpenQ4_TurboModeActive( void );
 // RAVEN BEGIN
 // jsinger: animationLib changed to a pointer to prevent it from allocating memory

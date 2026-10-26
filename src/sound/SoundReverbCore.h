@@ -482,4 +482,19 @@ inline void SoundReverb_SourceSends( int roomMB, int occlusionMB, soundReverbSou
 	out.areaGainHF = 1.0f;
 }
 
+// The send attenuation OpenAL gives a spatialized source for a reverb's room
+// rolloff (AL_INVERSE_DISTANCE_CLAMPED, no maximum distance): the reference
+// distance over the reference plus the rolloff times the distance beyond it.
+// OpenAL spatializes no multichannel buffer, so a voice playing direct 5.1
+// channels to the centre speaker gets none of it; the engine applies this to
+// that voice's sends. Stock presets have no room rolloff and return 1.
+inline float SoundReverb_RoomRolloffGain( float distance, float reference, float roomRolloff ) {
+	if ( !( reference > 0.0f ) || !( roomRolloff > 0.0f ) || reference > FLT_MAX || roomRolloff > FLT_MAX || distance != distance ) {
+		return 1.0f;
+	}
+	const float clamped = distance > FLT_MAX ? FLT_MAX : distance;
+	const float beyond = clamped > reference ? clamped - reference : 0.0f;
+	return SoundReverb_Clamp( reference / ( reference + roomRolloff * beyond ), 0.0f, 1.0f );
+}
+
 #endif /* !__SOUND_REVERB_CORE_H__ */

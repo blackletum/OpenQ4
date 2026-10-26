@@ -1,5 +1,7 @@
 # Client Settings Guide
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 This guide helps players find the most useful openQ4 settings without digging through every advanced option.
 
 ## Best Places to Start
@@ -40,9 +42,9 @@ Most player-facing options are available directly in the in-game menus:
 
 ## Modern and Classic Screens
 
-The modern interface is the default (`ui_retained 1`). Existing saved preferences are preserved: if an earlier version saved the classic UI, enter `seta ui_retained 1` in the console to enable the modern UI.
+Current source builds default to the modern interface (`ui_retained 1`) for new profiles. The [0.14.000 release](../dev/releases/v0.14.000.md) shipped with the classic interface (`ui_retained 0`); the modern default was restored afterward. Existing saved preferences are preserved, so upgrading does not change an interface choice already saved in your profile.
 
-The modern UI replaces the title screen and its pages (Single Player with the campaign and difficulty choice and the Arena ladder, Load Game, Save Game, Restart Level, Demos, Credits, the MODS list, and Multiplayer with its server browser and Create Server), the single-player pause menu, the screen after a death, loading screens, the multiplayer join card and match summary, and the gameplay HUD. HUD coverage includes crosshairs, objectives, radio, powerups, boss and vehicle displays, multiplayer scores/chat/summary panels and Awakening overlays. See [Gameplay Status Bar](gameplay-settings.md#gameplay-status-bar) for the centered ammo/health/armor bar's independent size and safe-inset settings. Settings (including `Settings -> System`), Player Setup and the in-match multiplayer menu keep the classic Quake 4 look for now.
+The modern UI replaces the title screen and its pages (Single Player with the campaign and difficulty choice and the Arena ladder, Load Game, Save Game, Restart Level, Demos, Credits, the MODS list, and Multiplayer with its server browser and Create Server), the single-player pause menu, the screen after a death, loading screens, the multiplayer join and in-match menus, the match summary, and the gameplay HUD. HUD coverage includes crosshairs, objectives, radio, powerups, boss and vehicle displays, multiplayer scores/chat/summary panels and Awakening overlays. See [Gameplay Status Bar](gameplay-settings.md#gameplay-status-bar) for the centered ammo/health/armor bar's independent size and safe-inset settings. Settings (including `Settings -> System`) and Player Setup keep the classic Quake 4 look for now.
 
 - Enter `seta ui_retained 1` for the modern UI or `seta ui_retained 0` for classic. The choice is saved. An explicit launch option overrides the saved choice; the VS Code retained-UI configurations explicitly enable it for development testing.
 - If a modern screen can't be shown, openQ4 shows the classic one instead, with nothing to fix on your side. This happens when a mod brings its own main menu, or when a modern screen's files are missing or damaged.

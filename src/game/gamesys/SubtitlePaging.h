@@ -10,10 +10,20 @@
 // not word alignment: retail lipSync declarations do not supply word times.
 namespace OpenQ4Subtitles {
 // Cinematic letterboxes occupy y=0..60 and 420..480 in the centred 640x480
-// artwork below 4:3. Keep captions inside that picture, including portrait.
-inline float CanvasBottom(float aspect, bool cinematic) {
+// artwork below 4:3, and captions keep to the lower third of that picture. A
+// narrower screen (portrait) has room under the artwork, which spans 360 +/-
+// 270 * aspect of the 720-high canvas. That picture is too short for enlarged
+// captions, which then covered the title text cinematics draw in it, so when
+// two lines of the given pitch fit there captions hang from the artwork's
+// lower edge instead. The panel is 12 + pitch * lines high; deciding on two
+// lines keeps the position still while a caption's line count changes.
+inline float CanvasBottom(float aspect, bool cinematic, float pitch = 0.0f, int lines = 1) {
 	if (!cinematic) return 570.0f;
-	return aspect <= 4.0f / 3.0f ? 348.0f + 202.5f * aspect : 640.0f;
+	if (!(aspect <= 4.0f / 3.0f)) return 640.0f;
+	const float below = 360.0f + 270.0f * aspect + 12.0f;
+	if (std::isfinite(pitch) && pitch > 0.0f && below + 12.0f + 2.0f * pitch <= 708.0f)
+		return below + 12.0f + pitch * std::clamp(lines, 1, 2);
+	return 348.0f + 202.5f * aspect;
 }
 struct Page { std::string lines[2]; int end = 0; };
 template<class Glyph> std::vector<Page> Paginate(const char* text, float width, int rows, Glyph glyph) {

@@ -540,6 +540,104 @@ inline bool Split( const char *text, char *host, size_t hostSize, endpointParts_
 	return CopyHost( text, textEnd, host, hostSize );
 }
 
+// The resolvers report families with the socket headers' constants; this
+// header has no socket dependency, so callers translate to these.
+const int ADDRESS_FAMILY_IPV4 = 4;
+const int ADDRESS_FAMILY_IPV6 = 6;
+
+// The most resolver records ordered, and the most of them a connection tries.
+// A host name with more records still connects; the extra records are simply
+// never tried.
+const int MAX_RESOLVER_RESULTS = 32;
+const int MAX_RESOLVED_CANDIDATES = 8;
+
+// Orders resolver results for connection attempts. The first entry keeps the
+// historical single-address choice - the first IPv4 record when preferIPv4 is
+// set, otherwise the resolver's first record - so a host that answers on its
+// first address connects exactly as before. The rest alternate address
+// families (RFC 8305 section 4) and keep the resolver's order, which already
+// follows RFC 6724 destination selection, within each family, so one
+// unreachable family cannot hold every attempt on the other behind it.
+// Returns how many indices were written to order.
+inline int OrderCandidates( const int *families, int count, bool preferIPv4, int *order, int maxOrder ) {
+	if ( families == NULL || order == NULL || count <= 0 || maxOrder <= 0 ) {
+		return 0;
+	}
+	if ( count > MAX_RESOLVER_RESULTS ) {
+		count = MAX_RESOLVER_RESULTS;
+	}
+
+	bool used[MAX_RESOLVER_RESULTS] = {};
+	int first = 0;
+	if ( preferIPv4 ) {
+		for ( int i = 0; i < count; i++ ) {
+			if ( families[i] == ADDRESS_FAMILY_IPV4 ) {
+				first = i;
+				break;
+			}
+		}
+	}
+
+	int written = 0;
+	int lastFamily = families[first];
+	order[written++] = first;
+	used[first] = true;
+	while ( written < maxOrder ) {
+		const int wanted = ( lastFamily == ADDRESS_FAMILY_IPV4 ) ? ADDRESS_FAMILY_IPV6 : ADDRESS_FAMILY_IPV4;
+		int pick = -1;
+		for ( int i = 0; i < count && pick < 0; i++ ) {
+			if ( !used[i] && families[i] == wanted ) {
+				pick = i;
+			}
+		}
+		for ( int i = 0; i < count && pick < 0; i++ ) {
+			if ( !used[i] ) {
+				pick = i;
+			}
+		}
+		if ( pick < 0 ) {
+			break;
+		}
+		order[written++] = pick;
+		used[pick] = true;
+		lastFamily = families[pick];
+	}
+	return written;
+}
+
+// How many unanswered challenges a connection spends on one resolved address
+// before it moves to the next. Challenges go out once a second, so a slow but
+// live server still has three seconds to answer.
+const int CONNECT_CHALLENGES_PER_CANDIDATE = 3;
+
+struct connectFailover_t {
+	int		count;		// resolved candidates for this connection
+	int		index;		// the candidate currently being challenged
+	int		sent;		// challenges already sent to it
+};
+
+inline void FailoverReset( connectFailover_t &state, int count ) {
+	state.count = count > 0 ? count : 1;
+	state.index = 0;
+	state.sent = 0;
+}
+
+// Call once before each challenge is sent. Returns true when this challenge
+// goes to a different candidate than the previous one. After the last
+// candidate it starts over at the first, so a connection that was never
+// answered keeps trying as the single-address loop always did, but no address
+// holds it for longer than its share of the cycle.
+inline bool FailoverBeforeChallenge( connectFailover_t &state ) {
+	bool moved = false;
+	if ( state.count > 1 && state.sent >= CONNECT_CHALLENGES_PER_CANDIDATE ) {
+		state.index = ( state.index + 1 ) % state.count;
+		state.sent = 0;
+		moved = true;
+	}
+	state.sent++;
+	return moved;
+}
+
 } // namespace idNetworkEndpoint
 
 #endif /* !__NETWORK_ENDPOINT_H__ */

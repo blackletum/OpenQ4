@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--map', default='game/airdefense1')
     parser.add_argument('--size', default='1280x720')
     parser.add_argument('--classic', action='store_true')
+    parser.add_argument('--timeout', type=int, default=600, help='Seconds; an Awakening map can take two minutes to load on a busy machine')
     args = parser.parse_args()
     root = args.output.resolve()
     if root.exists() or not root.is_relative_to((ROOT / '.tmp').resolve()):
@@ -106,7 +107,7 @@ def main():
         startup = subprocess.STARTUPINFO(); startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW; startup.wShowWindow = 0
         options.update(startupinfo=startup, creationflags=subprocess.CREATE_NO_WINDOW)
     with (root / 'process.log').open('w') as output:
-        run = subprocess.run(command, cwd=ROOT / '.install', stdout=output, stderr=subprocess.STDOUT, timeout=240, **options)
+        run = subprocess.run(command, cwd=ROOT / '.install', stdout=output, stderr=subprocess.STDOUT, timeout=args.timeout, **options)
     log = (game / 'logs/openq4.log').read_text(encoding='utf-8', errors='replace')
     phases = {}
     for name, section in re.findall(r'^SUBTITLE_(\w+)\s*\n(.*?)(?=^SUBTITLE_|\Z)', log, re.M | re.S):

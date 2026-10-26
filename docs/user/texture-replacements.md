@@ -1,5 +1,7 @@
 # DDS Texture Replacements
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 can use DDS texture-pack replacements without changing the original Quake 4 materials. This includes the stock game's `progimg/` image-program results, dhewm3-style `dds/` packs, and same-folder replacements used by some Quake 4 packs.
 
 ## Where files belong

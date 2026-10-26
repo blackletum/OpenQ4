@@ -1,5 +1,7 @@
 # Server and Remote-Console Security
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 uses an authenticated remote-console protocol, `rcon2`, by default.
 It replaces Quake 4's legacy packet, which sent the administration password
 verbatim over UDP. Gameplay, server discovery, the connection handshake's wire

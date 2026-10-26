@@ -21,6 +21,12 @@ struct ControlAction {
 	std::uint64_t proposalToken = 0;
 	std::uint64_t modalToken = 0; // Transient scope identity for every Back record.
 	std::uint64_t editSession = 0, editRevision = 0; // Number proposals only; never persisted.
+	// Non-numeric value controls carry the value from which this step was made.
+	// Queued steps chain through their predecessors; external changes invalidate
+	// a stale step instead of silently replacing the newly observed value.
+	std::optional<StateValue> proposalBaseline;
+	bool proposalBaselineMixed = false;
+	std::uint64_t contextToken = 0; // Button subject lifetime; transient, never restored.
 };
 struct ControlFeedback { std::string node, timeline; ControlState state = ControlState::Default; };
 struct InteractionSnapshot {
@@ -231,6 +237,10 @@ public:
 	InteractionSnapshot Capture() const;
 	bool Restore(const InteractionSnapshot& snapshot, std::string& error);
 	std::optional<WidgetViewState> Widget(const std::string& id) const;
+	// Any control's role, buttons included (Widget describes value controls).
+	std::optional<ControlRole> Role(const std::string& id) const {
+		const auto found = items.find(id); return found == items.end() ? std::nullopt : std::optional(found->second.control.role);
+	}
 	bool AcknowledgeProposal(const std::string& id, std::uint64_t token, bool accepted);
 	// Explicit local editing. Begin requires focused eligibility; repeated Begin
 	// preserves an existing non-conflicted buffer. No method writes accepted state.
@@ -344,7 +354,8 @@ private:
         double choiceOffsetDp = 0;
         std::uint64_t choiceRevision = 0, choiceReveal = 0, choiceLayoutRevision = 0;
 		std::optional<StateValue> pending, rejected;
-		std::uint64_t proposalToken = 0;
+		std::uint64_t proposalToken = 0, proposalStart = 0;
+		std::uint64_t contextToken = 0;
 		unsigned firstVisible = 0;
 		std::optional<NumberEditor> number;
 	};

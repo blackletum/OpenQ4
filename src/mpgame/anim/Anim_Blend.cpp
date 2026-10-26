@@ -3437,6 +3437,9 @@ idAnimator::idAnimator() {
 	numJoints				= 0;
 	joints					= NULL;
 	presentationJoints		= NULL;
+	presentationPrevAFJoints	= NULL;
+	presentationPrevAFTime	= -1;
+	authoritativeFrameTime	= -1;
 	lastTransformTime		= -1;
 	presentationJointsValid	= false;
 	lastPresentationJointModMat.Identity();
@@ -3484,7 +3487,7 @@ idAnimator::Allocated
 size_t idAnimator::Allocated( void ) const {
 	size_t	size;
 
-	size = jointMods.Allocated() + numJoints * sizeof( joints[0] ) + ( presentationJoints ? numJoints * sizeof( presentationJoints[0] ) : 0 ) + jointMods.Num() * sizeof( jointMods[ 0 ] ) + AFPoseJointMods.Allocated() + AFPoseJointFrameSize * sizeof( AFPoseJointFrame[0] ) + AFPoseJoints.Allocated();
+	size = jointMods.Allocated() + numJoints * sizeof( joints[0] ) + ( presentationJoints ? numJoints * sizeof( presentationJoints[0] ) : 0 ) + ( presentationPrevAFJoints ? numJoints * sizeof( presentationPrevAFJoints[0] ) : 0 ) + jointMods.Num() * sizeof( jointMods[ 0 ] ) + AFPoseJointMods.Allocated() + AFPoseJointFrameSize * sizeof( AFPoseJointFrame[0] ) + AFPoseJoints.Allocated();
 
 	return size;
 }
@@ -3694,6 +3697,10 @@ void idAnimator::FreeData( void ) {
 	Mem_Free16( presentationJoints );
 	presentationJoints = NULL;
 	presentationJointsValid = false;
+	Mem_Free16( presentationPrevAFJoints );
+	presentationPrevAFJoints = NULL;
+	presentationPrevAFTime = -1;
+	authoritativeFrameTime = -1;
 	numJoints = 0;
 
 	modelDef = NULL;
@@ -5011,6 +5018,26 @@ bool idAnimator::CreateFrame( int currentTime, bool force ) {
 #endif
 // RAVEN END
 
+	// An active articulated figure is posed from its physics bodies once per
+	// tic and cannot be evaluated at an earlier time. Keep the pose this
+	// evaluation replaces so a draw can blend between the two authoritative
+	// poses instead of stepping a ragdoll at 60 Hz. Presentation evaluations
+	// write elsewhere and never shift this history.
+	// lastTransformTime cannot date that pose: the AF calls ForceUpdate() every
+	// tic, which clears it, so the time of the pose in joints[] is kept apart.
+	if ( joints != presentationJoints ) {
+		if ( AFPoseJoints.Num() > 0 && joints != NULL && authoritativeFrameTime >= 0 && authoritativeFrameTime != currentTime ) {
+			if ( presentationPrevAFJoints == NULL ) {
+				presentationPrevAFJoints = ( idJointMat * )Mem_Alloc16( this->numJoints * sizeof( presentationPrevAFJoints[0] ), MA_ANIM );
+			}
+			SIMDProcessor->Memcpy( presentationPrevAFJoints, joints, this->numJoints * sizeof( presentationPrevAFJoints[0] ) );
+			presentationPrevAFTime = authoritativeFrameTime;
+		} else if ( AFPoseJoints.Num() == 0 ) {
+			presentationPrevAFTime = -1;
+		}
+		authoritativeFrameTime = currentTime;
+	}
+
 	lastTransformTime = currentTime;
 	stoppedAnimatingUpdate = false;
 
@@ -5295,6 +5322,9 @@ bool idAnimator::GetJointModDiagnostic( int index, int &jointnum, idMat3 &mat ) 
 	return true;
 }
 
+int idAnimator::presentationAFBlendCount = 0;
+int idAnimator::presentationAFFrameCount = 0;
+
 bool idAnimator::CreatePresentationFrame( int currentTime, idJointMat **jointsPtr ) {
 	if ( jointsPtr == NULL ) {
 		return false;
@@ -5318,6 +5348,31 @@ bool idAnimator::CreatePresentationFrame( int currentTime, idJointMat **jointsPt
 		canEvaluateAtPresentationTime = jointMods[i]->angularVelocity.GetStartTime() == 0;
 	}
 	if ( !canEvaluateAtPresentationTime ) {
+		// An active AF pose with its previous authoritative pose: blend the two
+		// model-space skeletons over the same interval as the root. Neither pose
+		// is re-evaluated, so the physics bodies stay untouched.
+		const int afInterval = authoritativeFrameTime - presentationPrevAFTime;
+		if ( AFPoseJoints.Num() > 0 ) {
+			presentationAFFrameCount++;
+		}
+		if ( AFPoseJoints.Num() > 0 && presentationPrevAFJoints != NULL && presentationPrevAFTime >= 0 &&
+			 afInterval > 0 && currentTime >= presentationPrevAFTime && currentTime < authoritativeFrameTime ) {
+			const float afLerp = static_cast<float>( currentTime - presentationPrevAFTime ) / static_cast<float>( afInterval );
+			idJointQuat *previousPose = ( idJointQuat * )_alloca16( numJoints * sizeof( previousPose[0] ) );
+			idJointQuat *currentPose = ( idJointQuat * )_alloca16( numJoints * sizeof( currentPose[0] ) );
+			int *blendIndex = ( int * )_alloca16( numJoints * sizeof( blendIndex[0] ) );
+			for ( int i = 0; i < numJoints; i++ ) {
+				blendIndex[i] = i;
+			}
+			SIMDProcessor->ConvertJointMatsToJointQuats( previousPose, presentationPrevAFJoints, numJoints );
+			SIMDProcessor->ConvertJointMatsToJointQuats( currentPose, joints, numJoints );
+			SIMDProcessor->BlendJoints( previousPose, currentPose, afLerp, blendIndex, numJoints );
+			SIMDProcessor->ConvertJointQuatsToJointMats( presentationJoints, previousPose, numJoints );
+			presentationAFBlendCount++;
+			presentationJointsValid = true;
+			*jointsPtr = presentationJoints;
+			return true;
+		}
 		SIMDProcessor->Memcpy( presentationJoints, joints, numJoints * sizeof( presentationJoints[0] ) );
 		presentationJointsValid = true;
 		*jointsPtr = presentationJoints;

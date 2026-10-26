@@ -136,4 +136,47 @@ static void LayoutReflow(){
         Check(body->GetScrollTop()==0,"later reflow cannot recover focus deliberately scrolled out of view");
     }
 }
-int main(int argc,char**){if(argc>1){View v(2);v.Focus();FullInset(v,"outer");return 0;}BasicAndNested();InputAndResize();LimitsAndHelper();HorizontalAndProjection();LayoutReflow();std::printf("PASS %u checks\n",checks);}
+// The triggers page lists (section 13.5): PageUp and PageDown move focus a
+// visible page through the scrolling list that holds it, Home and End to its
+// ends, preferring the focused row's column, skipping a disabled row and
+// revealing the row. Focus outside a list, or at its end, stays.
+// A plain button, as list rows usually are: no value, no parts.
+static void AddButton(Json::Value& source,Json::Value& node){const auto id=node["id"].asString();auto& c=node["control"];c["role"]="button";c["label"]="#str_label";c["event"]="pick";
+    for(const char* state:{"default","hover","focus","pressed","disabled"})c["states"][state]=id+"-feedback";
+    Json::Value timeline,track;timeline["id"]=id+"-feedback";timeline["durationMs"]=1;track["node"]=id;track["property"]="opacity";
+    for(unsigned time:{0u,1u}){Json::Value key;key["atMs"]=time;key["value"]=Typed("number",1);track["keys"].append(key);}timeline["tracks"].append(track);source["timelines"].append(timeline);
+}
+static std::string ListSource(bool buttons){
+    Json::Value source;source["format"]="openq4-ui";source["version"]=1;source["id"]="list-paging";source["state"]["flag"]["type"]="boolean";source["state"]["flag"]["initial"]=false;
+    auto root=Box("root",0,0,640,360),list=Box("list",40,40,280,150),content=Box("list-content",0,0,280,600);
+    list["properties"]["overflow"]=Typed("keyword","auto");
+    for(int i=0;i<20;++i){auto row=Box(("row-"+std::to_string(i)).c_str(),0,30.*i,200,30);if(buttons)AddButton(source,row);else AddControl(source,row);content["children"].append(row);}
+    if(buttons)source["events"]["pick"]=Json::Value(Json::arrayValue);
+    auto side=Box("side",210,0,60,30);AddControl(source,side);content["children"].append(side);
+    list["children"].append(content);root["children"].append(list);
+    auto outside=Box("outside",400,40,80,30);AddControl(source,outside);root["children"].append(outside);source["root"]=root;
+    Json::StreamWriterBuilder writer;writer["indentation"]="";return Json::writeString(writer,source);
+}
+static void ListPaging(){
+    for(bool buttons:{false,true})for(float density:{1.f,2.f}){
+        TestHost host;Runtime runtime{host};Viewport viewport;viewport.width=1280;viewport.height=720;viewport.displayScale=density;double time=1;
+        std::vector<Diagnostic> diagnostics;const bool parsed=runtime.LoadDocument(ListSource(buttons),"list-paging.q4ui",diagnostics);
+        for(auto& d:diagnostics)std::fprintf(stderr,"%s %s\n",d.pointer.c_str(),d.message.c_str());Check(parsed,"list fixture parses");runtime.Frame(viewport,time);
+        const auto press=[&](MenuInput input){time+=.05;runtime.MenuAction(input,true,time);runtime.MenuAction(input,false,time+.01);runtime.Frame(viewport,time+.02);return runtime.FocusedControl();};
+        Check(runtime.FocusControl("row-0",time),"focus the first row");runtime.Frame(viewport,time+=.01);
+        Check(press(MenuInput::PageDown)=="row-4","PageDown moves a visible page, to the farthest row that fits");
+        Check(press(MenuInput::PageDown)=="row-8","and again");
+        auto* context=Rml::GetContext(0);auto* list=context->GetDocument(0)->GetElementById("list");
+        Check(list->GetScrollTop()>0,"the paged row is revealed");
+        Check(press(MenuInput::PageUp)=="row-4","PageUp moves back a page");
+        Check(press(MenuInput::End)=="row-19","End reaches the list's last row");
+        Check(press(MenuInput::PageDown)=="row-19","PageDown at the end stays");
+        Check(press(MenuInput::Home)=="row-0","Home returns to the first row, the column's, not the side control");
+        Check(runtime.SetControlEnabled("row-4",false,time),"disable a row");
+        Check(press(MenuInput::PageDown)=="row-3","a disabled row is skipped");
+        Check(runtime.FocusControl("row-2",time)&&press(MenuInput::PageUp)=="row-0","PageUp near the top stops at the first row");
+        Check(runtime.FocusControl("outside",time)&&press(MenuInput::PageDown)=="outside","focus outside a list stays");
+        Check(runtime.TakeActions().empty()&&host.errors==0,"paging activates nothing");
+    }
+}
+int main(int argc,char**){if(argc>1){View v(2);v.Focus();FullInset(v,"outer");return 0;}BasicAndNested();InputAndResize();LimitsAndHelper();HorizontalAndProjection();LayoutReflow();ListPaging();std::printf("PASS %u checks\n",checks);}

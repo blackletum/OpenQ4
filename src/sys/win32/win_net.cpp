@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "win_local.h"
 #include "../NetworkEndpoint.h"
+#include "../NetworkImpairment.h"
 
 static WSADATA	winsockdata;
 static bool	winsockInitialized = false;
@@ -51,6 +52,10 @@ idCVar net_mcast6addr( "net_mcast6addr", "ff02::1", CVAR_SYSTEM | CVAR_ARCHIVE, 
 idCVar net_mcast6iface( "net_mcast6iface", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "IPv6 interface index used for LAN server discovery, 0 selects the default route" );
 idCVar net_forceLatency( "net_forceLatency", "0", CVAR_SYSTEM | CVAR_INTEGER, "milliseconds latency" );
 idCVar net_forceDrop( "net_forceDrop", "0", CVAR_SYSTEM | CVAR_INTEGER, "percentage packet loss" );
+// openQ4: the rest of a real link, for testing on one machine (NetworkImpairment.h).
+idCVar net_forceJitter( "net_forceJitter", "0", CVAR_SYSTEM | CVAR_INTEGER, "random extra milliseconds of latency per packet; packets closer together than this arrive out of order" );
+idCVar net_forceDuplicate( "net_forceDuplicate", "0", CVAR_SYSTEM | CVAR_INTEGER, "percentage of packets delivered twice" );
+idCVar net_forceSeed( "net_forceSeed", "0", CVAR_SYSTEM | CVAR_INTEGER, "seed for simulated loss, jitter and duplication when a port opens, 0 picks a new one" );
 
 // Retain the legacy CVars for configuration compatibility, but do not expose
 // the inherited SOCKS UDP relay as supported. It assumes one global IPv4
@@ -173,31 +178,31 @@ static bool Sys_IsAnyInterfaceName( const char *net_interface ) {
 
 /*
 =============
-Net_StringToSockaddr
+Net_ResolveSockaddrs
 
-Resolves an endpoint into a sockaddr of the requested family. AF_UNSPEC keeps
-the caller's grammar intact while preferring an A record so the legacy IPv4
-transports keep their historical behaviour for dual-stack hostnames.
+Resolves an endpoint into every usable sockaddr of the requested family, in
+the order a connection should try them (idNetworkEndpoint::OrderCandidates).
+AF_UNSPEC keeps the caller's grammar intact while putting an A record first so
+the legacy IPv4 transports keep their historical behaviour for dual-stack
+hostnames. Returns how many addresses were written.
 =============
 */
-static bool Net_StringToSockaddr( const char *text, struct sockaddr_storage *address, int *addressLen, bool doDNSResolve, int family = AF_UNSPEC, int defaultPort = 0, int socketType = SOCK_DGRAM ) {
-	if ( address == NULL || addressLen == NULL ) {
-		return false;
+static int Net_ResolveSockaddrs( const char *text, struct sockaddr_storage *addresses, int *addressLens, int maxAddresses, bool doDNSResolve, int family = AF_UNSPEC, int defaultPort = 0, int socketType = SOCK_DGRAM ) {
+	if ( addresses == NULL || addressLens == NULL || maxAddresses <= 0 ) {
+		return 0;
 	}
-	memset( address, 0, sizeof( *address ) );
-	*addressLen = 0;
 
 	char host[NI_MAXHOST];
 	idNetworkEndpoint::endpointParts_t endpoint;
 	if ( !idNetworkEndpoint::Split( text, host, sizeof( host ), endpoint ) ) {
-		return false;
+		return 0;
 	}
 
 	// An explicit endpoint port owns the result. Validate the default only when
 	// it is actually used so host:port can safely override an unused sentinel.
 	const int effectivePort = endpoint.hasPort ? endpoint.port : defaultPort;
 	if ( effectivePort < 0 || effectivePort > 65535 ) {
-		return false;
+		return 0;
 	}
 	char service[NI_MAXSERV];
 	idStr::snPrintf( service, sizeof( service ), "%d", effectivePort );
@@ -228,40 +233,67 @@ static bool Net_StringToSockaddr( const char *text, struct sockaddr_storage *add
 	struct addrinfo *results = NULL;
 	const int error = getaddrinfo( host, service, &hints, &results );
 	if ( error != 0 ) {
-		return false;
+		return 0;
 	}
 
-	const struct addrinfo *selected = NULL;
-	for ( const struct addrinfo *result = results; result != NULL; result = result->ai_next ) {
+	const struct addrinfo *usable[idNetworkEndpoint::MAX_RESOLVER_RESULTS];
+	int families[idNetworkEndpoint::MAX_RESOLVER_RESULTS];
+	int usableCount = 0;
+	for ( const struct addrinfo *result = results; result != NULL && usableCount < idNetworkEndpoint::MAX_RESOLVER_RESULTS; result = result->ai_next ) {
 		if ( result->ai_addr == NULL ) {
 			continue;
 		}
 		if ( result->ai_family != AF_INET && result->ai_family != AF_INET6 ) {
 			continue;
 		}
-		if ( result->ai_addrlen > sizeof( *address ) ) {
+		if ( result->ai_addrlen > sizeof( *addresses ) ) {
 			continue;
 		}
-
-		if ( selected == NULL || ( family == AF_UNSPEC && selected->ai_family != AF_INET && result->ai_family == AF_INET ) ) {
-			selected = result;
+		// A hosts file can list one address twice; trying it twice only
+		// spends another candidate's turn.
+		bool duplicate = false;
+		for ( int i = 0; i < usableCount && !duplicate; i++ ) {
+			duplicate = usable[i]->ai_addrlen == result->ai_addrlen && memcmp( usable[i]->ai_addr, result->ai_addr, result->ai_addrlen ) == 0;
 		}
-		// An explicit family takes the first usable record. AF_UNSPEC keeps
-		// looking only while it is still holding an AAAA record it could trade
-		// for an A record.
-		if ( family != AF_UNSPEC || result->ai_family == AF_INET ) {
-			break;
+		if ( duplicate ) {
+			continue;
 		}
+		usable[usableCount] = result;
+		families[usableCount] = result->ai_family == AF_INET ? idNetworkEndpoint::ADDRESS_FAMILY_IPV4 : idNetworkEndpoint::ADDRESS_FAMILY_IPV6;
+		usableCount++;
 	}
 
-	if ( selected != NULL ) {
-		memcpy( address, selected->ai_addr, selected->ai_addrlen );
-		*addressLen = static_cast<int>( selected->ai_addrlen );
+	// An explicit family takes its records in resolver order; AF_UNSPEC puts
+	// the first A record ahead of any AAAA record.
+	int order[idNetworkEndpoint::MAX_RESOLVER_RESULTS];
+	const int maxOrder = maxAddresses < idNetworkEndpoint::MAX_RESOLVER_RESULTS ? maxAddresses : idNetworkEndpoint::MAX_RESOLVER_RESULTS;
+	const int ordered = idNetworkEndpoint::OrderCandidates( families, usableCount, family == AF_UNSPEC, order, maxOrder );
+	for ( int i = 0; i < ordered; i++ ) {
+		const struct addrinfo *selected = usable[order[i]];
+		memset( &addresses[i], 0, sizeof( addresses[i] ) );
+		memcpy( &addresses[i], selected->ai_addr, selected->ai_addrlen );
+		addressLens[i] = static_cast<int>( selected->ai_addrlen );
 	}
-	const bool resolved = selected != NULL;
 
 	freeaddrinfo( results );
-	return resolved;
+	return ordered;
+}
+
+/*
+=============
+Net_StringToSockaddr
+
+Resolves an endpoint into the one sockaddr a single-address caller uses: the
+first of Net_ResolveSockaddrs' candidates.
+=============
+*/
+static bool Net_StringToSockaddr( const char *text, struct sockaddr_storage *address, int *addressLen, bool doDNSResolve, int family = AF_UNSPEC, int defaultPort = 0, int socketType = SOCK_DGRAM ) {
+	if ( address == NULL || addressLen == NULL ) {
+		return false;
+	}
+	memset( address, 0, sizeof( *address ) );
+	*addressLen = 0;
+	return Net_ResolveSockaddrs( text, address, addressLen, 1, doDNSResolve, family, defaultPort, socketType ) == 1;
 }
 
 /*
@@ -1391,6 +1423,44 @@ bool Sys_StringToNetAdr( const char *s, netadr_t *a, bool doDNSResolve ) {
 
 /*
 =============
+Sys_StringToNetAdrCandidates
+=============
+*/
+int Sys_StringToNetAdrCandidates( const char *s, netadr_t *candidates, int maxCandidates, bool doDNSResolve ) {
+	if ( candidates == NULL || maxCandidates <= 0 ) {
+		return 0;
+	}
+	if ( maxCandidates > idNetworkEndpoint::MAX_RESOLVED_CANDIDATES ) {
+		maxCandidates = idNetworkEndpoint::MAX_RESOLVED_CANDIDATES;
+	}
+
+	struct sockaddr_storage addresses[idNetworkEndpoint::MAX_RESOLVED_CANDIDATES];
+	int addressLens[idNetworkEndpoint::MAX_RESOLVED_CANDIDATES];
+	const int resolved = Net_ResolveSockaddrs( s, addresses, addressLens, maxCandidates, doDNSResolve );
+
+	int count = 0;
+	for ( int i = 0; i < resolved; i++ ) {
+		netadr_t &candidate = candidates[count];
+		memset( &candidate, 0, sizeof( candidate ) );
+		candidate.type = NA_BAD;
+		if ( !Net_SockadrToNetadr( reinterpret_cast<const struct sockaddr *>( &addresses[i] ), &candidate ) ) {
+			continue;
+		}
+		// Distinct sockaddrs can still name one endpoint, an IPv4-mapped AAAA
+		// record beside its A record for instance.
+		bool duplicate = false;
+		for ( int j = 0; j < count && !duplicate; j++ ) {
+			duplicate = Sys_CompareNetAdrBase( candidates[j], candidate ) && candidates[j].port == candidate.port;
+		}
+		if ( !duplicate ) {
+			count++;
+		}
+	}
+	return count;
+}
+
+/*
+=============
 Sys_NetAdrToString
 =============
 */
@@ -1545,34 +1615,75 @@ bool Sys_CompareNetAdrBase( const netadr_t a, const netadr_t b ) {
 //=============================================================================
 
 
-#define MAX_UDP_MSG_SIZE	1400
+/*
+==================
+Simulated network conditions
 
-typedef struct udpMsg_s {
-	byte				data[MAX_UDP_MSG_SIZE];
-	netadr_t			address;
-	int					size;
-	int					time;
-	struct udpMsg_s *	next;
-} udpMsg_t;
+openQ4: each port's two delay lines (NetworkImpairment.h) replace the inherited lag
+queue, which held datagrams of at most 1400 bytes - a larger one was silently
+dropped while net_forceLatency was set - released sends only when another send
+came along, and had no jitter, reordering or duplication.
+==================
+*/
+typedef idNetworkImpairment::port_t<netadr_t> netImpairmentPort_t;
 
-class idUDPLag {
-public:
-						idUDPLag( void );
-						~idUDPLag( void );
+static const int NET_MAX_IMPAIRED_PORTS = 8;
+static netImpairmentPort_t *net_impairedPorts[NET_MAX_IMPAIRED_PORTS];
 
-	udpMsg_t *			sendFirst;
-	udpMsg_t *			sendLast;
-	udpMsg_t *			recieveFirst;
-	udpMsg_t *			recieveLast;
-	idBlockAlloc<udpMsg_t, 64, 0> udpMsgAllocator;
-};
-
-idUDPLag::idUDPLag( void ) {
-	sendFirst = sendLast = recieveFirst = recieveLast = NULL;
+static idNetworkImpairment::settings_t Net_ImpairmentSettings( void ) {
+	return idNetworkImpairment::Sanitize( net_forceLatency.GetInteger(), net_forceJitter.GetInteger(),
+		net_forceDrop.GetInteger(), net_forceDuplicate.GetInteger() );
 }
 
-idUDPLag::~idUDPLag( void ) {
-	udpMsgAllocator.Shutdown();
+static netImpairmentPort_t *Net_OpenImpairment( int port ) {
+	netImpairmentPort_t *impairment = new netImpairmentPort_t;
+	impairment->port = port;
+	const unsigned int seed = net_forceSeed.GetInteger() != 0 ? static_cast<unsigned int>( net_forceSeed.GetInteger() ) :
+		static_cast<unsigned int>( Sys_Milliseconds() ) ^ ( static_cast<unsigned int>( port ) * 2654435761u );
+	impairment->Seed( seed );
+	for ( int i = 0; i < NET_MAX_IMPAIRED_PORTS; i++ ) {
+		if ( net_impairedPorts[i] == NULL ) {
+			net_impairedPorts[i] = impairment;
+			break;
+		}
+	}
+	return impairment;
+}
+
+static void Net_CloseImpairment( netImpairmentPort_t *impairment ) {
+	for ( int i = 0; i < NET_MAX_IMPAIRED_PORTS; i++ ) {
+		if ( net_impairedPorts[i] == impairment ) {
+			net_impairedPorts[i] = NULL;
+		}
+	}
+	delete impairment;
+}
+
+static void Net_PrintImpairmentLine( int port, const char *direction, const idNetworkImpairment::queue_t<netadr_t> &queue ) {
+	const idNetworkImpairment::stats_t &stats = queue.stats;
+	common->Printf( "NET_IMPAIR port=%d dir=%s offered=%llu dropped=%llu duplicated=%llu released=%llu reordered=%llu "
+		"overflowed=%llu discarded=%llu queued=%d maxQueued=%d\n", port, direction,
+		static_cast<unsigned long long>( stats.offered ), static_cast<unsigned long long>( stats.dropped ),
+		static_cast<unsigned long long>( stats.duplicated ), static_cast<unsigned long long>( stats.released ),
+		static_cast<unsigned long long>( stats.reordered ), static_cast<unsigned long long>( stats.overflowed ),
+		static_cast<unsigned long long>( stats.discarded ), queue.Depth(), stats.maxDepth );
+}
+
+/*
+==================
+Sys_NetImpairmentReport
+==================
+*/
+void Sys_NetImpairmentReport( void ) {
+	const idNetworkImpairment::settings_t settings = Net_ImpairmentSettings();
+	common->Printf( "NET_IMPAIR_SETTINGS latency=%d jitter=%d drop=%d duplicate=%d active=%d\n", settings.latencyMsec,
+		settings.jitterMsec, settings.dropPercent, settings.duplicatePercent, idNetworkImpairment::Active( settings ) ? 1 : 0 );
+	for ( int i = 0; i < NET_MAX_IMPAIRED_PORTS; i++ ) {
+		if ( net_impairedPorts[i] != NULL ) {
+			Net_PrintImpairmentLine( net_impairedPorts[i]->port, "receive", net_impairedPorts[i]->receive );
+			Net_PrintImpairmentLine( net_impairedPorts[i]->port, "send", net_impairedPorts[i]->send );
+		}
+	}
 }
 
 /*
@@ -1626,7 +1737,7 @@ bool idPort::InitForPort( int portNumber ) {
 	}
 #endif
 
-	platformData = new idUDPLag;
+	platformData = Net_OpenImpairment( bound_to.port );
 
 	return true;
 }
@@ -1638,7 +1749,7 @@ idPort::Close
 */
 void idPort::Close() {
 	if ( platformData != NULL ) {
-		delete static_cast<idUDPLag *>( platformData );
+		Net_CloseImpairment( static_cast<netImpairmentPort_t *>( platformData ) );
 		platformData = NULL;
 	}
 	if ( netSocket != INVALID_SOCKET ) {
@@ -1658,15 +1769,27 @@ idPort::GetPacket
 ==================
 */
 bool idPort::GetPacket( netadr_t &from, void *data, int &size, int maxSize ) {
-	udpMsg_t *msg;
 	bool ret;
-	idUDPLag *lag = static_cast<idUDPLag *>( platformData );
+	netImpairmentPort_t *impairment = static_cast<netImpairmentPort_t *>( platformData );
 	size = 0;
 	memset( &from, 0, sizeof( from ) );
 	from.type = NA_BAD;
-	if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || lag == NULL || data == NULL || maxSize <= 0 ) {
+	if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || impairment == NULL || data == NULL || maxSize <= 0 ) {
 		return false;
 	}
+
+	// Simulated conditions: sends that fell due since the last send leave now, so a
+	// quiet sender's last datagrams are not held back until it sends again.
+	const idNetworkImpairment::settings_t settings = Net_ImpairmentSettings();
+	const int now = Sys_Milliseconds();
+	if ( impairment->SendsQueued( settings ) ) {
+		const SOCKET ipv4Socket = netSocket;
+		const SOCKET ipv6Socket = netSocket6;
+		impairment->FlushSends( now, [ipv4Socket, ipv6Socket]( const netadr_t &to, const unsigned char *bytes, int length ) {
+			Net_SendUDPPacket( Net_SocketForAddress( ipv4Socket, ipv6Socket, to ), length, bytes, to );
+		} );
+	}
+	const bool queueReceives = impairment->ReceivesQueued( settings );
 
 	// Alternate which family is drained first so a busy socket cannot starve
 	// the other one. Seeding from this port's own read counter keeps the
@@ -1691,68 +1814,23 @@ bool idPort::GetPacket( netadr_t &from, void *data, int &size, int maxSize ) {
 			break;
 		}
 
-		if ( net_forceDrop.GetInteger() > 0 ) {
-			if ( rand() < net_forceDrop.GetInteger() * RAND_MAX / 100 ) {
-				continue;
-			}
-		}
-
-		packetsRead++;
-		bytesRead += size;
-
-		if ( net_forceLatency.GetInteger() > 0 ) {
-			if ( size > MAX_UDP_MSG_SIZE ) {
-				common->DPrintf( "idPort::GetPacket: packet exceeds latency queue capacity\n" );
-				continue;
-			}
-			msg = lag->udpMsgAllocator.Alloc();
-			memcpy( msg->data, data, size );
-			msg->size = size;
-			msg->address = from;
-			msg->time = Sys_Milliseconds();
-			msg->next = NULL;
-			if ( lag->recieveLast ) {
-				lag->recieveLast->next = msg;
-			} else {
-				lag->recieveFirst = msg;
-			}
-			lag->recieveLast = msg;
-		} else {
-			break;
-		}
-	}
-
-	if ( net_forceLatency.GetInteger() > 0 || lag->recieveFirst != NULL ) {
-
-		msg = lag->recieveFirst;
-		if ( msg && msg->time <= Sys_Milliseconds() - net_forceLatency.GetInteger() ) {
-			if ( msg->size > maxSize ) {
-				lag->recieveFirst = msg->next;
-				if ( !lag->recieveFirst ) {
-					lag->recieveLast = NULL;
-				}
-				lag->udpMsgAllocator.Free( msg );
-				size = 0;
-				memset( &from, 0, sizeof( from ) );
-				from.type = NA_BAD;
-				common->DPrintf( "idPort::GetPacket: delayed packet exceeds caller buffer capacity\n" );
-				return false;
-			}
-			memcpy( data, msg->data, msg->size );
-			size = msg->size;
-			from = msg->address;
-			lag->recieveFirst = lag->recieveFirst->next;
-			if ( !lag->recieveFirst ) {
-				lag->recieveLast = NULL;
-			}
-			lag->udpMsgAllocator.Free( msg );
+		if ( !queueReceives ) {
+			packetsRead++;
+			bytesRead += size;
 			return true;
 		}
-		return false;
-
-	} else {
-		return ret;
+		if ( impairment->receive.Offer( settings, now, from, data, size ) > 0 ) {
+			packetsRead++;
+			bytesRead += size;
+		}
 	}
+
+	if ( !queueReceives ) {
+		return false;
+	}
+	memset( &from, 0, sizeof( from ) );
+	from.type = NA_BAD;
+	return impairment->receive.Pop( now, from, data, maxSize, size );
 }
 
 /*
@@ -1783,10 +1861,9 @@ idPort::SendPacket
 ==================
 */
 void idPort::SendPacket( const netadr_t to, const void *data, int size ) {
-	udpMsg_t *msg;
-	idUDPLag *lag = static_cast<idUDPLag *>( platformData );
+	netImpairmentPort_t *impairment = static_cast<netImpairmentPort_t *>( platformData );
 
-	if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || lag == NULL ) {
+	if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || impairment == NULL ) {
 		return;
 	}
 	if ( to.type != NA_IP && to.type != NA_LOOPBACK && to.type != NA_BROADCAST && to.type != NA_IP6 && to.type != NA_MULTICAST6 ) {
@@ -1806,46 +1883,21 @@ void idPort::SendPacket( const netadr_t to, const void *data, int size ) {
 	packetsWritten++;
 	bytesWritten += size;
 
-	if ( net_forceDrop.GetInteger() > 0 ) {
-		if ( rand() < net_forceDrop.GetInteger() * RAND_MAX / 100 ) {
-			return;
-		}
+	const idNetworkImpairment::settings_t settings = Net_ImpairmentSettings();
+	if ( impairment->SendsQueued( settings ) ) {
+		const int now = Sys_Milliseconds();
+		impairment->send.Offer( settings, now, to, data, size );
+		// Each queued datagram is routed by its own family, which may
+		// differ from the datagram that filled the queue.
+		const SOCKET ipv4Socket = netSocket;
+		const SOCKET ipv6Socket = netSocket6;
+		impairment->FlushSends( now, [ipv4Socket, ipv6Socket]( const netadr_t &address, const unsigned char *bytes, int length ) {
+			Net_SendUDPPacket( Net_SocketForAddress( ipv4Socket, ipv6Socket, address ), length, bytes, address );
+		} );
+		return;
 	}
 
-	if ( net_forceLatency.GetInteger() > 0 || lag->sendFirst != NULL ) {
-		if ( size > MAX_UDP_MSG_SIZE ) {
-			common->Warning( "idPort::SendPacket: packet exceeds latency queue capacity - ignored" );
-			return;
-		}
-		msg = lag->udpMsgAllocator.Alloc();
-		if ( size > 0 ) {
-			memcpy( msg->data, data, size );
-		}
-		msg->size = size;
-		msg->address = to;
-		msg->time = Sys_Milliseconds();
-		msg->next = NULL;
-		if ( lag->sendLast ) {
-			lag->sendLast->next = msg;
-		} else {
-			lag->sendFirst = msg;
-		}
-		lag->sendLast = msg;
-
-		for ( msg = lag->sendFirst; msg && msg->time <= Sys_Milliseconds() - net_forceLatency.GetInteger(); msg = lag->sendFirst ) {
-			// Each queued datagram is routed by its own family, which may
-			// differ from the datagram that filled the queue.
-			Net_SendUDPPacket( Net_SocketForAddress( netSocket, netSocket6, msg->address ), msg->size, msg->data, msg->address );
-			lag->sendFirst = lag->sendFirst->next;
-			if ( !lag->sendFirst ) {
-				lag->sendLast = NULL;
-			}
-			lag->udpMsgAllocator.Free( msg );
-		}
-
-	} else {
-		Net_SendUDPPacket( socketForAddress, size, data, to );
-	}
+	Net_SendUDPPacket( socketForAddress, size, data, to );
 }
 
 

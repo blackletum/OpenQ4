@@ -1,5 +1,7 @@
 # Savegame Reliability
 
+> **Development status:** This document describes the current source tree and its evidence, not the contents of the latest available 0.13.2 package. The 0.14.0 release was withdrawn. See [release status](../user/release-status.md).
+
 This document describes the current openQ4 save/load reliability model. Format
 eligibility is defined separately in the
 [savegame compatibility policy](savegame-compatibility-policy.md).
@@ -987,7 +989,7 @@ without an error:
 
 | Saves | Result |
 | --- | --- |
-| 0.14.000, written by the rebuilt release (`1621aa215`) on Air Defense 1, Hangar 1, Storage 1, Tram 1B, Process 1 | 5 of 5 loaded (the unpatched build failed them) |
+| Withdrawn 0.14.000, written by the rebuilt historical release (`1621aa215`) on Air Defense 1, Hangar 1, Storage 1, Tram 1B, Process 1 | 5 of 5 loaded (the unpatched build failed them) |
 | 0.12.0 release saves (`%LOCALAPPDATA%`, 2026-08-26) | 3 of 3 loaded |
 | 0.10.0, 0.11.0 and 0.13.0 equivalents (re-stamped real saves of identical layout) | 5 of 5 loaded |
 | Development builds 691–1669, base game, including walker, tank and vehicle maps | 21 of 21 loaded |

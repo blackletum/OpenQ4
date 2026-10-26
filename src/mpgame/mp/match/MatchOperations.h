@@ -126,6 +126,11 @@ typedef struct mpOperationAdapterContext_s {
 	// it never confers a general team or roster capability.
 	bool actorCompetitionContestant;
 	int actorCompetitionSide;
+	// The actor's side in the unfinished series, from the resolver the published
+	// view also uses.  A team series can bind a seat to its series side or remap
+	// gameplay sides between maps, so the gameplay side is not the veto side.
+	// MP_MATCH_SIDE_NONE outside a series.
+	int actorSeriesSide;
 	// A failed adapter bootstrap leaves the previous aggregate resident only so
 	// its sealed evidence/checkpoint can be retried.  No typed operation may
 	// mutate that aggregate until a complete session is operational again.

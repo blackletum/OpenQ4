@@ -37,6 +37,28 @@ int main(int argc, char** argv) {
 		Check(frames > 0 && full, "reference decoder");
 		SoundVorbisStream stream;
 		Check(stream.Open(Input::Read, &input, static_cast<unsigned>(input.data.size())), "stream open");
+		// A fixture without length metadata: the final pages carry no position, or
+		// the file ends in other bytes. LoadOggStream counts it, then every decoder
+		// of the stream seeks with that count and the last positioned page.
+		const bool lengthless = std::strstr(argv[arg], "-lengthless") != nullptr;
+		stb_vorbis_openq4_granule_page page{};
+		if (lengthless) {
+			Check(stream.Frames() == 0, "lengthless fixture reports no length");
+			Check(!stream.Seek(static_cast<unsigned>(frames) / 2), "an uncounted stream cannot seek");
+			Check(stream.FindLastGranulePage(page) && page.granule <= static_cast<unsigned>(frames) &&
+				page.page_end > page.page_start && page.page_end <= input.data.size(), "last positioned page");
+			SoundVorbisStream counter;
+			Check(counter.Open(Input::Read, &input, static_cast<unsigned>(input.data.size())), "counting open");
+			short scratch[SoundVorbisStream::ChunkFrames * 2];
+			unsigned counted = 0;
+			while (int got = counter.Read(scratch, SoundVorbisStream::ChunkFrames)) counted += got;
+			Check(counted == static_cast<unsigned>(frames), "counted length matches a complete decode");
+			Check(!stream.SetCountedLength(0, page), "an empty count is refused");
+			Check(stream.SetCountedLength(counted, page), "counted length accepted");
+			Check(!stream.SetCountedLength(counted, page), "a length is supplied once");
+		} else {
+			Check(!stream.SetCountedLength(static_cast<unsigned>(frames), page), "a stream with a length keeps it");
+		}
 		Check(stream.Channels() == channels && stream.Rate() == rate && stream.Frames() == static_cast<unsigned>(frames), "metadata parity");
 		short block[SoundVorbisStream::ChunkFrames * 2];
 		int decoded = 0;
@@ -57,6 +79,7 @@ int main(int argc, char** argv) {
 		// A second voice must not move the first voice's decoder/cursor.
 		SoundVorbisStream other;
 		Check(other.Open(Input::Read, &input, static_cast<unsigned>(input.data.size())), "overlap open");
+		if (lengthless) Check(other.SetCountedLength(static_cast<unsigned>(frames), page), "second decoder reuses the count");
 		Check(stream.Seek(frames / 3) && other.Seek(frames / 5), "independent seeks");
 		int count = stream.Read(block, SoundVorbisStream::ChunkFrames);
 		Check(!std::memcmp(block, full + (frames / 3) * channels, count * channels * sizeof(short)), "overlap first voice");
@@ -73,6 +96,7 @@ int main(int argc, char** argv) {
 		Check(!stream.Open(Input::Read, &input, static_cast<unsigned>(input.data.size())), "read failure closes decoder");
 		Check(!stream.IsOpen(), "failed stream releases arena");
 		std::free(full);
-		std::printf("PASS %s: %d Hz, %d channels, %d frames; PCM, seek, overlap, EOF and read failures\n", argv[arg], rate, channels, frames);
+		std::printf("PASS %s: %d Hz, %d channels, %d frames%s; PCM, seek, overlap, EOF and read failures\n", argv[arg], rate, channels, frames,
+			lengthless ? " (counted, no length metadata)" : "");
 	}
 }

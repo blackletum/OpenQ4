@@ -62,6 +62,11 @@ public:
 	SettingsTransaction& operator=(const SettingsTransaction&) = delete;
 
 	SettingsResult Begin(std::uint64_t owner);
+	// Observe external changes while Editing. A clean session adopts the whole
+	// live snapshot; a dirty one retains both snapshots and reports Conflict.
+	// Read failures and pending effects never replace the baseline. This is an
+	// observation, not an operation: LastResult remains available to the caller.
+	SettingsResult Refresh(std::uint64_t owner);
 	SettingsResult Edit(std::uint64_t owner, const StateValues& partial);
  // A synchronous read-only producer builds a partial edit under this owner's
  // Editing/reentrancy guard. Generation, allocation, validation or attempted

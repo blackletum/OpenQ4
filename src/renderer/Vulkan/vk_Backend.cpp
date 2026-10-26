@@ -308,33 +308,61 @@ static bool VK_PrepareRenderDevice( void ) {
 		return false;
 	}
 
-	vkStartupDeviceStage = "device, surface or swapchain creation";
-	const bool deviceReady = VK_Device_Init( vkBackendServices );
-	// the loader's gate probe kept its instance so the drivers stayed loaded
-	// for this one; it has served its purpose either way
-	VK_Bringup_ReleaseHeldInstance();
-	if ( !deviceReady ) {
-		return false;
-	}
+	// A failure after admission belongs to that adapter: automatic selection
+	// resumes after it, a bounded number of times. An explicit r_vkDevice choice,
+	// and anything not specific to one GPU (loader, instance, surface, screen
+	// parameters), still fails over to OpenGL as before.
+	bool screenParmsApplied = false;
+	uint32_t firstCandidate = 0;
+	for ( int adapterAttempt = 1; ; adapterAttempt++ ) {
+		vkDeviceAttempt_t attempt;
+		vkStartupDeviceStage = "device, surface or swapchain creation";
+		bool ready = VK_Device_Init( vkBackendServices, firstCandidate, attempt );
+		// the loader's gate probe kept its instance so the drivers stayed loaded
+		// for this one; it has served its purpose either way
+		VK_Bringup_ReleaseHeldInstance();
 
-	vkStartupDeviceStage = "screen parameters";
-	if ( !VK_ApplyRequestedScreenParms( windowParms ) ) {
-		R_DisplayPresentationFailed( RDP_SCREEN_FAILED );
-		return false;
-	}
-	vkBackendServices->RefreshNativeWindowHandles( &windowInfo );
-	if ( windowInfo.pixelWidth > 0 && windowInfo.pixelHeight > 0
-			&& ( (uint32_t)windowInfo.pixelWidth != vkCtx.swapchainExtent.width
-				|| (uint32_t)windowInfo.pixelHeight != vkCtx.swapchainExtent.height ) ) {
-		// fullscreen/mode application changed the drawable size
-		vkStartupDeviceStage = "resized swapchain creation";
-		if ( !VK_Device_RecreateSwapchain() ) {
+		if ( ready && !screenParmsApplied ) {
+			vkStartupDeviceStage = "screen parameters";
+			if ( !VK_ApplyRequestedScreenParms( windowParms ) ) {
+				R_DisplayPresentationFailed( RDP_SCREEN_FAILED );
+				return false;
+			}
+			screenParmsApplied = true;
+		}
+		if ( ready ) {
+			vkBackendServices->RefreshNativeWindowHandles( &windowInfo );
+			if ( windowInfo.pixelWidth > 0 && windowInfo.pixelHeight > 0
+					&& ( (uint32_t)windowInfo.pixelWidth != vkCtx.swapchainExtent.width
+						|| (uint32_t)windowInfo.pixelHeight != vkCtx.swapchainExtent.height ) ) {
+				// fullscreen/mode application changed the drawable size; a
+				// failure here belongs to the window, not to the adapter
+				vkStartupDeviceStage = "resized swapchain creation";
+				if ( !VK_Device_RecreateSwapchain() ) {
+					return false;
+				}
+			}
+			vkStartupDeviceStage = "renderer resources";
+			ready = VK_GuiExecutor_PrepareStartup();
+		}
+		if ( ready ) {
+			if ( adapterAttempt > 1 ) {
+				common->Printf( "Vulkan: started on device %u '%s' after %d failed adapter attempt%s\n",
+						attempt.index, attempt.deviceName, adapterAttempt - 1, adapterAttempt > 2 ? "s" : "" );
+			}
+			return true;
+		}
+		if ( !attempt.admitted || !attempt.automatic || adapterAttempt >= VK_MAX_STARTUP_ADAPTER_ATTEMPTS ) {
+			if ( attempt.admitted && attempt.automatic ) {
+				common->Warning( "Vulkan: giving up after %d adapter attempts", adapterAttempt );
+			}
 			return false;
 		}
+		common->Warning( "Vulkan: device %u '%s' failed during %s; trying the next compatible device",
+				attempt.index, attempt.deviceName, vkStartupDeviceStage );
+		VK_Device_AbandonAdapter();
+		firstCandidate = attempt.index + 1;
 	}
-
-	vkStartupDeviceStage = "renderer resources";
-	return VK_GuiExecutor_PrepareStartup();
 }
 
 bool VK_PrepareStartupDevice( char *outReason, int reasonLength ) {
@@ -1081,7 +1109,10 @@ void RB_GetShaderTextureMatrix( const float *shaderRegisters, const textureStage
 }
 
 // --- draw_arb2 surface ---
-static const int VK_MAX_MATERIAL_PROGRAMS = 256;
+// Distinct ARB program names the loaded materials declare. Past this the
+// declaring stage loses that program (see R_FindARBProgram) instead of the
+// whole session ending, as it does on OpenGL at its smaller fixed table.
+static const int VK_MAX_MATERIAL_PROGRAMS = 1024;
 typedef struct vkMaterialProgramRecord_s {
 	unsigned int	target;
 	char			name[ MAX_OSPATH ];		// extension stripped, for matching
@@ -1168,8 +1199,13 @@ int R_FindARBProgram( unsigned int target, const char *program ) {
 		}
 	}
 	if ( vkNumMaterialPrograms >= VK_MAX_MATERIAL_PROGRAMS ) {
-		common->Error( "Vulkan R_FindARBProgram: VK_MAX_MATERIAL_PROGRAMS" );
-		return 0;
+		// Material parsing, not drawing. Zero would drop the program stage and
+		// draw it as a plain one, so return a nonzero handle that names no
+		// record: every lookup bounds-checks it, and the draw path skips the
+		// stage like any other unavailable program.
+		common->Warning( "Vulkan: ARB program table full (%d programs); '%s' is unavailable and its stages are skipped",
+				VK_MAX_MATERIAL_PROGRAMS, program );
+		return VK_MAX_MATERIAL_PROGRAMS + 1;
 	}
 	vkMaterialProgramRecord_t &record = vkMaterialPrograms[ vkNumMaterialPrograms ];
 	memset( &record, 0, sizeof( record ) );
@@ -1447,15 +1483,18 @@ void R_ReloadGLSLPrograms_f( const idCmdArgs &args ) {
 
 void R_ReportShaderPrograms_f( const idCmdArgs &args ) {
 	(void)args;
-	common->Printf( "Vulkan material programs: %d registered\n", vkNumMaterialPrograms );
+	common->Printf( "Vulkan material programs: %d of %d registered (r_vkARBTranslation %d)\n", vkNumMaterialPrograms,
+			VK_MAX_MATERIAL_PROGRAMS, cvarSystem->GetCVarInteger( "r_vkARBTranslation" ) );
 	VK_MaterialPrograms_Report();
+	// "translatable" means the program translates on its own; whether its
+	// pair compiles and draws is in the version list above.
 	for ( int i = 0; i < vkNumMaterialPrograms; i++ ) {
 		const vkMaterialProgramRecord_t &record = vkMaterialPrograms[ i ];
 		common->Printf( "  %3d  %s  %s  %s\n", i + 1,
 				record.target == GL_VERTEX_PROGRAM_ARB ? "vertex  " : "fragment",
-				record.supported ? "native     "
-					: VK_MaterialPrograms_ARBTranslatable( record.target, record.fileName ) ? "translated "
-					: "unsupported",
+				record.supported ? "native      "
+					: VK_MaterialPrograms_ARBTranslatable( record.target, record.fileName ) ? "translatable"
+					: "unsupported ",
 				record.name );
 	}
 }

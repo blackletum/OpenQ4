@@ -1,5 +1,7 @@
 # Authoring PBR materials
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 PBR is a material extension for new openQ4 content, on by default. It does not
 convert retail Quake 4 materials, so stock content looks exactly as it always
 has; only materials with a `pbr` block change. On OpenGL and Vulkan, each PBR surface

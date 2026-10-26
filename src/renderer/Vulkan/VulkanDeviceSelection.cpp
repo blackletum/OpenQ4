@@ -61,6 +61,8 @@ VkResult CheckCandidate( const vkDeviceSelectionApi_t &api, VkSurfaceKHR surface
 	bool swapchain = false;
 	for ( const auto &extension : extensions ) {
 		if ( std::strcmp( extension.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME ) == 0 ) { swapchain = true; }
+		if ( std::strcmp( extension.extensionName, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME ) == 0 ) { candidate.hasPortabilitySubset = true; }
+		if ( std::strcmp( extension.extensionName, VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME ) == 0 ) { candidate.hasSampleLocations = true; }
 	}
 	reason = "VK_KHR_swapchain unsupported";
 	if ( !swapchain ) { return VK_ERROR_EXTENSION_NOT_PRESENT; }
@@ -211,8 +213,10 @@ VkResult VK_SelectSurfaceFormat( PFN_vkGetPhysicalDeviceSurfaceFormatsKHR query,
 
 VkResult VK_SelectPhysicalDevice( const vkDeviceSelectionApi_t &api, VkInstance instance,
 		VkSurfaceKHR surface, int forcedIndex, vkDeviceSelection_t &selected,
-		vkDeviceRejection_t report, void *user ) {
+		vkDeviceRejection_t report, void *user, uint32_t firstIndex ) {
 	selected = {};
+	// An explicit choice that already failed has no substitute to resume with.
+	if ( forcedIndex >= 0 && firstIndex > 0 ) { return VK_ERROR_INITIALIZATION_FAILED; }
 	try {
 		std::vector<VkPhysicalDevice> devices;
 		VkResult result = Enumerate( [&]( uint32_t *count, VkPhysicalDevice *data ) {
@@ -222,7 +226,7 @@ VkResult VK_SelectPhysicalDevice( const vkDeviceSelectionApi_t &api, VkInstance 
 		if ( forcedIndex >= 0 && static_cast<size_t>( forcedIndex ) >= devices.size() ) {
 			return VK_ERROR_INITIALIZATION_FAILED;
 		}
-		for ( uint32_t i = 0; i < devices.size(); ++i ) {
+		for ( uint32_t i = firstIndex; i < devices.size(); ++i ) {
 			if ( forcedIndex >= 0 && i != static_cast<uint32_t>( forcedIndex ) ) { continue; }
 			vkDeviceSelection_t candidate = {};
 			candidate.device = devices[i];
@@ -266,6 +270,73 @@ VkResult VK_SelectProbeDevice( const vkDeviceSelectionApi_t &api, VkInstance ins
 		}
 		if ( best.physicalDevice == VK_NULL_HANDLE ) { return VK_ERROR_FEATURE_NOT_PRESENT; }
 		selected = best;
+		return VK_SUCCESS;
+	} catch ( const std::bad_alloc & ) {
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+	}
+}
+
+namespace {
+
+template<class T>
+VkResult FindNames( const std::vector<T> &list, const char *( *name )( const T & ),
+		const char *const *names, uint32_t count, bool *found ) {
+	for ( const auto &entry : list ) {
+		for ( uint32_t i = 0; i < count; ++i ) {
+			if ( std::strcmp( name( entry ), names[i] ) == 0 ) { found[i] = true; }
+		}
+	}
+	return VK_SUCCESS;
+}
+
+}
+
+VkResult VK_FindInstanceLayers( PFN_vkEnumerateInstanceLayerProperties query,
+		const char *const *names, uint32_t count, bool *found ) {
+	for ( uint32_t i = 0; i < count; ++i ) { found[i] = false; }
+	try {
+		std::vector<VkLayerProperties> layers;
+		const VkResult result = Enumerate( [&]( uint32_t *size, VkLayerProperties *data ) {
+			return query( size, data );
+		}, layers );
+		if ( result != VK_SUCCESS ) { return result; }
+		return FindNames<VkLayerProperties>( layers, []( const VkLayerProperties &layer ) -> const char * {
+			return layer.layerName;
+		}, names, count, found );
+	} catch ( const std::bad_alloc & ) {
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+	}
+}
+
+VkResult VK_FindInstanceExtensions( PFN_vkEnumerateInstanceExtensionProperties query,
+		const char *layer, const char *const *names, uint32_t count, bool *found ) {
+	for ( uint32_t i = 0; i < count; ++i ) { found[i] = false; }
+	try {
+		std::vector<VkExtensionProperties> extensions;
+		const VkResult result = Enumerate( [&]( uint32_t *size, VkExtensionProperties *data ) {
+			return query( layer, size, data );
+		}, extensions );
+		if ( result != VK_SUCCESS ) { return result; }
+		return FindNames<VkExtensionProperties>( extensions, []( const VkExtensionProperties &extension ) -> const char * {
+			return extension.extensionName;
+		}, names, count, found );
+	} catch ( const std::bad_alloc & ) {
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+	}
+}
+
+VkResult VK_QuerySurfacePresentModes( PFN_vkGetPhysicalDeviceSurfacePresentModesKHR query,
+		VkPhysicalDevice device, VkSurfaceKHR surface, uint32_t &modeMask ) {
+	modeMask = 0;
+	try {
+		std::vector<VkPresentModeKHR> modes;
+		const VkResult result = Enumerate( [&]( uint32_t *count, VkPresentModeKHR *data ) {
+			return query( device, surface, count, data );
+		}, modes );
+		if ( result != VK_SUCCESS ) { return result; }
+		for ( const VkPresentModeKHR mode : modes ) {
+			if ( static_cast<uint32_t>( mode ) < 32u ) { modeMask |= 1u << static_cast<uint32_t>( mode ); }
+		}
 		return VK_SUCCESS;
 	} catch ( const std::bad_alloc & ) {
 		return VK_ERROR_OUT_OF_HOST_MEMORY;

@@ -33,6 +33,8 @@ SUPPORT = r'''
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
 #include "DisplayPresentation.h"
+// The production present-mode query runs against the stub driver list below.
+#include "Vulkan/VulkanDeviceSelection.h"
 #include <cassert>
 #include <cstring>
 #include <type_traits>
@@ -132,6 +134,7 @@ static void VK_PBRProbes_BeginFrame(int){}
 static void VK_Exec_PrintStencilReadbacks(int){}
 static void VK_Exec_ConsumeHDRReadback(int){}
 static void VK_Exec_DiscardHDRReadback(int){calls.emplace_back("discard-hdr");}
+static void VK_Exec_DiscardStencilReadbacks(int){calls.emplace_back("discard-stencil");}
 static void VK_Exec_BakedBeginFrame(int){}
 static void VK_MaterialPrograms_BeginFrame(int){}
 struct { bool active=false; } vkSharedGeometryCheckpoint;
@@ -467,7 +470,7 @@ def main():
         cpp = temp / "presentation.cpp"
         cpp.write_text(source, encoding="utf-8")
         exe = temp / ("presentation.exe" if os.name == "nt" else "presentation")
-        subprocess.run([compiler, "-std=c++20", "-I", str(RENDERER), "-I", str(include), str(cpp), str(RENDERER / "DisplayPresentation.cpp"), "-o", str(exe)], check=True)
+        subprocess.run([compiler, "-std=c++20", "-I", str(RENDERER), "-I", str(include), str(cpp), str(RENDERER / "DisplayPresentation.cpp"), str(RENDERER / "Vulkan/VulkanDeviceSelection.cpp"), "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
     print("Display presentation: real tracker, GL swap/strict readback, Vulkan applied swap policy/restore/legacy handoff, scene/capture submit, hidden-window offscreen frames, bounded acquisition, present/recreate failures, upload dependencies and no-reuse latch passed")
 

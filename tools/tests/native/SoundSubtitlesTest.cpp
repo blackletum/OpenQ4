@@ -26,9 +26,10 @@ struct Cvar{bool value=true;bool GetBool()const{return value;}}s_useOcclusion;
 struct Parms{int soundShaderFlags=0,soundClass=0;float volume=1,minDistance=1,maxDistance=100;};
 struct idSoundSample {const char*name="sound/vo/test.wav";int length=1000;bool fallback=false;const char*GetName()const{return name;}int LengthInMsec()const{return length;}bool IsDefault()const{return fallback;}};
 struct Shader{const char*name="dialogue";int entries=1;int GetNumEntries()const{return entries;}const char*GetName()const{return name;}};
+using idSoundShader=Shader;
 struct idSoundChannel{Shader*soundShader=nullptr;idSoundSample*leadinSample=nullptr,*loopingSample=nullptr;int startTime=0,cursor=100;bool stopped=false,radio=false;Parms parms;Fade volumeFade;};
 struct idSoundEmitterLocal {List<idSoundChannel*>channels;int emitterId=5,index=2;Vec origin;float spatializedDistance=1;int Index()const{return index;}};
-struct rvDeclLipSync {const char*raw="text",*text="caption";const char*GetRawTranscribeText()const{return raw;}const char*GetSubtitleText()const{return text;}};
+struct rvDeclLipSync {const char*raw="text",*text="caption";bool implicit=false;const char*GetRawTranscribeText()const{return raw;}const char*GetSubtitleText()const{return text;}bool IsImplicit()const{return implicit;}};
 struct DeclManager{std::map<std::string,rvDeclLipSync>decls;const rvDeclLipSync*FindType(int,const char*n,bool){auto i=decls.find(n);return i==decls.end()?nullptr:&i->second;}}manager;
 auto*declManager=&manager;
 struct soundSubtitle_t {const char*text,*shader;int emitterIndex,speakerId,startTime,timeMsec,durationMsec;bool radio;};
@@ -69,5 +70,35 @@ int main(){
 	assert(world.GetSubtitles(cues,4)==2&&cues[0].startTime==80&&cues[1].radio);
 	third.stopped=true;assert(world.GetSubtitles(cues,4)==2&&cues[0].startTime==50&&cues[1].startTime==0);
 	assert(world.GetSubtitles(nullptr,4)==0&&world.GetSubtitles(cues,0)==0);
-	std::puts("Production subtitles: playback selection, stop, privacy, distance, mapping, loops and overlap passed");
+	// The status the s_logSpeech audit reports for each policy outcome.
+	{
+		manager.decls.clear();Shader single;idSoundSample line;line.name="sound/vo/line.wav";
+		SoundTranscript status=SoundTranscript::Text;
+		assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Undeclared);
+		manager.decls["dialogue"]={};
+		assert(std::string(SoundTranscriptText(&single,&line,true,&status))=="caption"&&status==SoundTranscript::Text);
+		assert(std::string(SoundTranscriptText(&single,&line,true,nullptr))=="caption");
+		// a same-name transcript maps a single-sample shader's leadin only
+		assert(!SoundTranscriptText(&single,&line,false,&status)&&status==SoundTranscript::Variant);
+		single.entries=3;assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Variant);
+		manager.decls["sound/vo/line"]={"raw","variant text"};
+		assert(std::string(SoundTranscriptText(&single,&line,true,&status))=="variant text"&&status==SoundTranscript::Text);
+		single.entries=1;manager.decls.erase("sound/vo/line");
+		manager.decls["dialogue"].raw="";assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::NoText);
+		manager.decls["dialogue"]={"raw","#str_100"};assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Unresolved);
+		manager.decls["dialogue"]={"raw","<DEFAULTED>"};assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Unresolved);
+		manager.decls["dialogue"]={"raw",""};assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Unresolved);
+		manager.decls["dialogue"]={"raw",nullptr};assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Unresolved);
+		// The game's made-up default for an undeclared speech name is not a declaration:
+		// it neither hides a sample-path transcript nor makes a variant.
+		manager.decls["dialogue"]={"","",true};
+		assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Undeclared);
+		manager.decls["sound/vo/line"]={"raw","sample text"};
+		assert(std::string(SoundTranscriptText(&single,&line,true,&status))=="sample text"&&status==SoundTranscript::Text);
+		manager.decls.erase("sound/vo/line");single.entries=3;
+		assert(!SoundTranscriptText(&single,&line,true,&status)&&status==SoundTranscript::Undeclared);
+		single.entries=1;
+		assert(std::string(SoundTranscriptName(SoundTranscript::Variant))=="variant");
+	}
+	std::puts("Production subtitles: playback selection, stop, privacy, distance, mapping, loops, overlap and transcript status passed");
 }

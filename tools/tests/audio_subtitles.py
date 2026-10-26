@@ -12,7 +12,10 @@ def main():
     target = ROOT / '.tmp/audio/subtitle-tests'
     target.mkdir(parents=True, exist_ok=True)
     source = (ROOT / 'src/sound/snd_emitter.cpp').read_text()
-    (target / 'SoundSubtitlesUnderTest.inc').write_text(body(source, 'int idSoundWorldLocal::GetSubtitles('))
+    # The transcript lookup the overlay and the s_logSpeech audit share, then the cue selection.
+    (target / 'SoundSubtitlesUnderTest.inc').write_text('\n'.join(body(source, signature) for signature in (
+        'static const rvDeclLipSync* SoundDeclaredLipSync(', 'static const char* SoundTranscriptText(',
+        'int idSoundWorldLocal::GetSubtitles(')))
     compiler = os.environ.get('CXX', 'clang++')
     for name in ('SoundSubtitlesTest', 'SubtitlePagingTest'):
         exe = target / (name + ('.exe' if os.name == 'nt' else ''))

@@ -614,6 +614,306 @@ covered separately by `voice_protocol_gating_contract.py`; production transport
 and capture-lifecycle tests pass. The player guide recommends matching releases
 and content without asserting that every different release pair is incompatible.
 
+## Output recovery, layout changes and memory pressure, 23 October 2026
+
+Implementation: [audio modernization](audio-modernization.md#output-changes-and-memory-pressure-october-23).
+Windows x64, MSVC debugoptimized, built from a detached worktree of `2f6c628a3`
+plus these changes and staged into that worktree's own `.install`, so peers'
+uncommitted work in the shared checkout is not in the binaries. Client SHA-256
+`e20c20f499df2bfdb01215dd34e27e51d24aebae5b06436e59b105b2339379b8`; each
+report records the modules, paks and harness hashes. The runs use the installed
+Steam 1.4.2 PK4s, generated tone fixtures in an isolated save path and OpenAL
+Soft's wave writer. No physical device, microphone or host input is used.
+
+### Output loss and paused resume
+
+`tools/tests/audio_output_recovery_runtime.py` plays a 60 s dialogue fixture
+(radio channel of a saved fixture entity) and an effect fixture on stereo
+output in `game/airdefense1`, then runs `s_testDeviceInterruption 1500`: every
+source stops, as OpenAL Soft does on disconnect, and no voice is allocated
+until the outage ends. During the outage `listSoundVoices` reports
+`connected=0` and no audible voice. Afterwards both fixtures play again; the
+dialogue's own OpenAL position moved 2,635 ms while the scene clock moved
+2,633 ms and stands at 5,152 ms, not at its start. Before this change the
+static, non-looping voices ended at the outage. The rendered WAV shows the
+440 Hz line, a silent gap of more than a second, then the line again. The
+dialogue was then paused and the output interrupted again. After the resume it
+continues from its paused position (5,173 ms, then 5,845 ms after 700 ms of
+scene time) instead of replaying from its first sample.
+
+The same run then plays two 60 s Ogg fixtures on separate channels: one whose
+final page lost its end-of-stream flag, which stb_vorbis still measures, and
+one whose last two pages carry no position, which the engine counts
+("counted; no length metadata" in the log). Both stream through bounded queues
+and both play again after a third, 700 ms outage. The run's only stream
+underruns are the queues stopped inside the three outages.
+
+### Live layout transitions
+
+The surround run starts the dialogue on 5.1 output, then changes
+`s_numberOfSpeakers` 6→2→6 and `s_openALHRTF` 0→2→0 while it plays. Each change
+logs "device reset in place" and an output change; no sound restart or sample
+reload occurs after the map has loaded. `listSoundVoices` reports the
+dialogue routed to the centre on 5.1 and unrouted on stereo and HRTF, playing
+in every phase, and the unrouted phases report its position following the scene
+clock (3.65 s, then 6.89 s, 3,237 ms apart over 3,233 ms of scene time). OpenAL
+reports HRTF enabled in the HRTF phase. The wave writer restarts its file at
+each reset, so the final recording is the last 5.1 phase. Its 440 Hz
+centre-to-surround ratio, compared within the windows where the line is loud,
+is 2.11 (2.27 is the value for `s_centerFractionVO` 0.75). The profile's own
+startup layout change, which used to trigger a second full sound restart, now
+resets in place too.
+
+### Low-memory trim
+
+`s_trimAudioMemory 0` in the same stereo run freed 1,128 of the level's samples
+(96.3 MB) and kept the 95 that channels referenced, including the playing
+fixtures and both streams. The blaster's `fire01`, loaded by the level and idle, reads
+`(PURGED)` after the trim, plays again on `testSound` and reads loaded. The
+operating-system path (`SDL_EVENT_LOW_MEMORY` from the lifecycle watch or the
+event loop) is covered by the Android lifecycle native test on the Android and
+desktop branches: one notice trims once, on the main thread. Delivery by a real
+Android or iOS device is not qualified.
+
+### Streams without length metadata
+
+`tools/tests/audio_streaming.py` derives four fixtures from original Ogg files:
+the last two pages without a position, and the file followed by 70,000 other
+bytes, each at 22.05 kHz mono and 48 kHz stereo. stb_vorbis reports no length
+for any of them. The production reader counts each one, finds its last
+positioned page and then decodes and seeks (start, first sample, middle, last
+sample, quarter) with exactly the PCM of a complete decode, for two
+independent decoders at once. The production queue test then runs leadin/loop,
+offset, routing and mixed static/streamed transitions over two of them. A
+stream with a length keeps it, and an uncounted one refuses to seek.
+
+### Envelope pass during level loads
+
+The airdefense1 load streams 38 tracks (21 cinematic sounds, five music tracks
+and stingers, nine ambience loops and two weapon sounds) and now builds their
+envelopes on job workers ("envelope on a job worker" in the log). Offline, a
+complete stb_vorbis decode of those 38 files (18.5 million frames) takes
+475–510 ms on this machine, the main-thread work that pass previously did
+inside the load. This is an offline measurement of the moved work, not an
+end-to-end load-time benchmark on an idle machine.
+
+### Native and harness coverage
+
+The new `openq4-sound-output-recovery` (201 checks) and
+`openq4-sound-memory-trim` (1,536 checks) tests cover every combination of the
+two decisions. The stream-queue test checks that a static voice stopped by a lost
+endpoint recovers while one stopped with its output present ends. The
+decode-budget harness checks that an envelope job joins without an upload or a
+reload and that a damaged one reloads. `sound_settings.py` (35,807 checks, all
+35 mutants rejected) and `sound_recovery.py` (42,348 cumulative checks, all 11
+mutants rejected), which extract the hardware update and render bodies, still
+pass. The Android lifecycle, OpenAL pause, stream budget, payload restore, memory,
+subtitle, screen-shake, reverb, macOS provider and Steam Deck harnesses pass.
+The full native Meson suite passes 278 of 279 tests on the rebased build. The
+remaining failure, the match-control projection contract, looks for the engine
+checkout at `../openQ4`, which a worktree under `.tmp` does not have; pointed at
+the worktree with `OPENQ4_ENGINE_REPO`, it passes.
+
+On the final build, the stock regression runs that exercise the voice update
+path also pass. `audio_dialogue.py --compressed --speakers 6 --decode-memory 16
+--audio-memory 192` passes 28 of 28 checks with no stream underrun and a centre
+ratio of 1.74. `audio_memory_runtime.py` passes 13 of 13 checks.
+
+## Dialogue routing audit
+
+`tools/tests/audio_dialogue_coverage.py` reads installed declarations in
+filesystem order, finds every reference to a speech shader (a same-name
+lip-sync declaration, a radio line or a `sound/vo` sample) in entity
+definitions, maps, scripts, BSE effects and GUIs, and classifies it with
+`SoundIsDialogue` compiled from the engine header. It writes identifiers, kinds
+and counts, never transcripts.
+
+| Content | Speech shaders | By sample path | Shader/source-kind pairs | Not dialogue |
+| --- | ---: | ---: | ---: | ---: |
+| Retail `q4base` | 3,672 | 3,672 | 3,495 | 0 |
+| `q4base` + Awakening `q4xbase` | 5,153 | 5,153 | 4,912 | 0 |
+
+Retail pairs: 2,780 NPC lip-sync keys, 146 other definitions, 484 map entities
+and 85 scripts; with Awakening layered, 3,830, 146, 533 and 403. No BSE effect
+or GUI names a speech shader, and 343
+retail and 811 combined speech shaders are not named by any scanned source (some
+are reached through computed names). Because every speech sample lives under
+`sound/vo`, the Dialogue Volume control reaches it whichever path plays it.
+This is a static routing result; audible scene coverage is still open.
+
+### Transcript languages
+
+The asset inventory now reports which installed language tables carry each
+mapped line. The Steam install's 2,268 mapped lines exist only in English
+tables (its French, Italian and Spanish tables hold three map-pack strings and
+no lip-sync text). Awakening's 1,512 mapped lines are literal English in their
+declarations. Other menu languages therefore show English captions; the player
+guide states this.
+
+## Authored scenes, centred reverb and portrait captions, 23 October 2026
+
+Implementation: [audio modernization](audio-modernization.md#authored-scenes-centred-reverb-and-portrait-captions-october-23).
+Windows x64, MSVC debugoptimized, built from a detached worktree of `8cb58aa4a`
+plus this round's changes and staged into that worktree's own `.install`. Client
+SHA-256 `347e6e15b9f15e48a49d2c176a61cef1bfd54c464b9763c4efd0f2389e68a50d`;
+each report records the modules, paks and harness hashes. Runs use the installed
+Steam 1.4.2 PK4s (Awakening from its separate content root), isolated save paths
+and OpenAL Soft's wave writer. No physical device, microphone or host input is
+used, and no report contains transcript text.
+
+### Centred sounds in mod reverbs
+
+`tools/tests/audio_mod_reverb.py` now also renders a centre-routed source, its
+noise in FC of a 5.1 buffer through direct channels, on a 5.1 loopback context.
+With room rolloff 1, OpenAL alone leaves its reverb send at the near-distance level
+at two and four times the minimum distance (ratio 1.0000), where a mono source
+falls to 0.5000 and 0.2500. With the engine's send gain the centre-routed source
+falls to 0.5000 and 0.2500 too, and to 0.1667 at room rolloff 2.5 and three times
+the minimum, matching the mono source to four places. The same holds with EAX
+reverb, and a stock preset (no room rolloff) keeps the centre send unchanged.
+All 20 checks pass, including the production source pins; the native reverb-core
+test checks the gain function's values and edge cases.
+
+### Streams on recycled voices
+
+The first gameplay run of this round found that a streamed track started on a
+voice whose source had played before never played. The stereo output run's second
+simulated outage left all four streams it was playing (two fixtures and two
+airdefense1 ambience loops) starting and stopping 39 times in 1.5 s. Its first
+outage had recovered only because those streams restarted on voices that had never
+played. An OpenAL loopback probe confirms the cause: a source that has played and
+been flushed reports `AL_STOPPED` with every newly queued buffer already processed,
+while a rewound one reports `AL_INITIAL` with none processed and then plays. The
+production queue test now models that state (a voice is played, flushed, and a
+stream queued on it must be playable). It fails without the rewind and passes with
+it.
+
+### Output recovery and Dialogue Volume
+
+The rerun of `tools/tests/audio_output_recovery_runtime.py` on this build passes all
+19 stereo and 12 surround checks. At Dialogue Volume 0.25 the line keeps that gain
+through a 600 ms outage and restarts on the new output serial, and both stream
+fixtures play again on the new serial. In the surround run Dialogue Volume 0.5
+holds through both in-place resets that follow it: HRTF on, then HRTF off, where
+the line moves back to the centre speaker (gain 1.0 before, then 0.5 and 0.5). The dialogue moved 2,645 ms over 2,633 ms of scene time across
+the first outage. The paused line moved 704 ms over 699 ms after its resume. The
+trim freed 1,128 samples and kept 95, and the only stream underruns (12) are the
+four streams' queues inside the three outages.
+
+### Portrait captions
+
+`tools/tests/audio_subtitles_runtime.py` (Awakening `game/m01_stranarus_trench1`,
+Turkish menus with English transcripts, 720×1280) passes all 16 checks on this
+build. Its captures were inspected. Default and enlarged two-line captions hang
+below the intro's lower letterbox band, clear of the "Planet Stroggos" title text
+the cinematic draws in its picture; before this change, enlarged captions covered
+it. The harness now waits up to 600 s by default, because the map took 110 s to
+load on the busy machine in a first attempt. The native placement test checks the
+rule at 9:16, 10:16 and 3:4 for four text sizes, and the unchanged placement at
+4:3, widescreen, in gameplay and for an unusable pitch.
+
+### Speech in authored scenes
+
+`tools/tests/audio_scene_audit.py` plays the first 30 s of each campaign map after it
+loads, chaining maps in one hidden client, with cinematics, AI and scripts running and
+god mode so the player survives. There is no other input, so scripted lines that wait
+for the player to move are not reached. `s_logSpeech` reports each start that may be
+speech. Every 3 s the harness lists the audible voices and subtitle cues, mutes
+Dialogue Volume for 150 ms, lists the voices again and restores it. After each opening
+it records the audio residency and the voices playing on bounded stream queues.
+
+All 29 stock maps run in three chains and all 13 Awakening maps in one, and every
+check passes in each:
+
+| Measure | Stock (29 maps) | Awakening (13 maps) |
+| --- | ---: | ---: |
+| Starts that may be speech | 256 | 633 |
+| Dialogue starts (distinct shaders) | 93 (62) | 55 (45) |
+| Declared or flagged speech not following Dialogue Volume | 0 | 0 |
+| Probe pairs; muted probes with a dialogue voice audible | 261; 0 | 117; 0 |
+| Dialogue starts with a transcript; without one | 26; 67 | 39; 16 |
+| Probes catching a transcribed line: cue shown; cue missing with a free slot | 24; 0 | 34; 0 |
+| Maps with streams playing after the opening | 27 | 12 |
+| Reserved audio after an opening: smallest, median, largest | 65.0, 124.6, 193.8 MiB | 71.7, 151.1, 242.1 MiB |
+| Process peak (admission budget 256 MiB); refusals | 255.4 MiB; 0 | 255.7 MiB; 0 |
+
+The largest openings are `mcc_landing`, `building_b` and `mcc_1`, and Awakening's
+`m09_valkaryne`. The process peak includes level changes, where the admission
+reclaims the previous level's samples as it approaches the budget. The only
+radio-channel starts that are not speech are two stock effect shaders. The
+voice-over-flagged starts that are not speech are radio static and interface
+clicks, 506 of them an NPC typing at a console in `m06_mcc_invasion`. None of them
+carries a lipSync declaration. The Strogg sentry's chatter counts as dialogue: it
+plays through the actor lipSync path, which flags its sound as voice-over.
+
+The first Awakening attempt did not complete. The machine was saturated that hour:
+the first map took 340 s to load where the rerun took 18 s, and OpenAL
+Soft's wave writer reported failed writes to its output file. The engine reopened
+the device after each one, as it would for a lost endpoint. The chain stalled on the
+second map waiting for a first gameplay frame and reached its 45-minute limit. The
+rerun on an idle machine, identical except for its output folder, passed in 552 s
+with no device loss.
+
+These are openings sampled without player input, not complete playthroughs. They
+show that the authored speech they reach routes as dialogue, mutes with Dialogue
+Volume and captions only from transcripts, but not that every line in both
+campaigns is audible or captioned.
+
+## Linux, voice output loss and long sessions, 24 October 2026
+
+### Linux x64
+
+The audio round's harnesses ran on Linux for the first time. That covers output
+recovery, live layout changes, the trim, both stream fixtures, subtitles and the
+scene audit. Ubuntu 24.04 ran under WSL2 (kernel 6.6.87.2), with the client built
+there from the same commit (debugoptimized, without native tests, the multiplayer
+module, Vulkan, OpenXR or GLES, and with a minimal `pak1`). It ran hidden under Xvfb
+on Mesa llvmpipe (OpenGL 4.5 compatibility). The system OpenAL Soft 1.23.1, not the
+1.25.1 the Windows package bundles, rendered through its wave writer. Retail paks were
+copied into RAM first. The two Ogg stream fixtures came from the Windows encoder
+(`--write-fixtures`), since that host has no ffmpeg; the fixtures are deterministic.
+Client SHA-256 `78fcaf93f69b6a636228f1c29ac414de4ae686bcdcb02c370dac768649cd7744`.
+
+| Harness | Checks | Notes |
+| --- | ---: | --- |
+| `audio_output_recovery_runtime.py`, stereo | 19 of 19 | dialogue moved 2,636 ms over 2,597 ms of scene time after an outage; the paused line 707 ms over 719 ms; trim freed 1,127 samples and kept 96 |
+| `audio_output_recovery_runtime.py`, surround | 12 of 12 | in-place layout and HRTF resets, centre re-routing, Dialogue Volume held; 5.1 centre ratio 2.10 |
+| `audio_subtitles_runtime.py`, stock 1280×720 English | 16 of 16 | |
+| `audio_scene_audit.py`, `airdefense1`, `hangar2`, `medlabs`, `dispersal` | 10 of 10 | 10 dialogue starts, streams playing in all four, residency 107.7–150.6 MiB |
+
+Building it found a Linux-only break: the dedicated server links the OpenAL sound
+code against `src/sys/stub/stub_openal.cpp`, which lacked the `alSourceRewind` that
+the recycled-voice fix added on 23 October. Windows links the real library and never
+showed it. The stub now provides the call, and the Linux dedicated server links.
+These are automated Linux runs on one virtual machine with software rendering, not
+physical Linux audio devices or distributions other than Ubuntu.
+
+### Voice chat across output loss
+
+Windows x64, MSVC debugoptimized, built from `35a1e919c` plus this round's changes;
+client SHA-256 `de29bfd2fa9b48d94cc2d14da76a356d449957dc9097b6e88d732c4f25e3fcbc`.
+`tools/ui/capture_voice_settings.py` now simulates an output loss during the local
+microphone test, with SDL's dummy input and an OpenAL wave writer. All 13 checks
+pass. Before the outage, 58 frames had played and none were dropped. Halfway through
+the 1,000 ms outage, 58 had still played and 26 were dropped. After it, playback
+continued: 105 played in all, while capture never stopped. Neither the dummy input,
+which delivers frames in bursts, nor any source state is the signal: the harness
+reads the frame counters. The first run of the new checks also required a source
+in the playing state, which this bursty input rarely shows even without an outage;
+that criterion was dropped. Physical capture and playback devices remain
+unqualified.
+
+### Long sessions
+
+`audio_scene_audit.py --repeat 3` played `airdefense1`, `hangar2`, `medlabs`,
+`dispersal`, `storage1` and `core1` three times each in one client, 18 openings in
+671 s. All 11 checks pass. Reserved audio after each opening is flat across the
+passes: at most 83 KiB more on the second pass than the first, and identical on the
+third. Voices in use and stream reservations do not grow. The process peak is
+205.7 MiB. A first attempt labelled the passes with `#`, which the console's `echo`
+splits into separate words, so no opening could be told apart. The labels are now
+`passN/<map>`.
+
 ## Other verification and limitations
 
 - `sound_settings.py --no-mutations`: 35,807 checks pass.
@@ -653,4 +953,7 @@ and content without asserting that every different release pair is incompatible.
 
 Full subtitle coverage, whole-process/mobile memory qualification, physical device
 lifecycle and target-OS breadth remain open. Voice and compressed streaming are qualified only
-within the automated scope recorded above.
+within the automated scope recorded above. The 23 October output recovery, layout and
+trim results come from a simulated outage, OpenAL Soft's wave writer and a desktop
+console trigger; physical endpoints, real low-memory notices and other operating
+systems remain the qualification gates.

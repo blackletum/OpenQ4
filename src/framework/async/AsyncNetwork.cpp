@@ -103,6 +103,15 @@ idAsyncNetwork::idAsyncNetwork( void ) {
 
 /*
 ==================
+AsyncNetwork_NetImpairment_f
+==================
+*/
+static void AsyncNetwork_NetImpairment_f( const idCmdArgs &args ) {
+	Sys_NetImpairmentReport();
+}
+
+/*
+==================
 AsyncNetwork_AppendDisplayText
 
 Network userinfo and remote disconnect reasons are display data, never command
@@ -190,6 +199,7 @@ void idAsyncNetwork::Init( void ) {
 	cmdSystem->AddCommand( "checkNewVersion", CheckNewVersion_f, CMD_FL_SYSTEM, "check if a new version of the game is available" );
 	cmdSystem->AddCommand( "updateUI", UpdateUI_f, CMD_FL_SYSTEM, "internal - cause a sync down of game-modified userinfo" );
 #endif
+	cmdSystem->AddCommand( "netImpairment", AsyncNetwork_NetImpairment_f, CMD_FL_SYSTEM, "reports the simulated network conditions (net_forceLatency, net_forceJitter, net_forceDrop, net_forceDuplicate) and what each open port's delay lines have done" );
 }
 
 /*

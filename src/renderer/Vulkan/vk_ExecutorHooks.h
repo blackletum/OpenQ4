@@ -83,6 +83,9 @@ bool VK_Exec_AuthoredUniformAlloc( const void *data, int bytes, VkDescriptorBuff
 VkPipeline VK_Exec_AuthoredMaterialPipeline( int identity, VkShaderModule vertex,
     VkShaderModule fragment, VkPipelineLayout layout, int stateBits,
     bool separateColor, unsigned int vertexInputMask );
+// Destroys every cached pipeline of an evicted authored version. The caller
+// guarantees no frame in flight still references them.
+void VK_Exec_ReleaseAuthoredMaterialPipelines( int identity );
 VkPipeline			VK_Exec_PostPipeline( int kind, VkShaderModule vertModule,
 							VkShaderModule fragModule, int stateBits );
 VkPipeline			VK_Exec_ExtraPipeline( int kind, VkShaderModule vertModule,
@@ -189,7 +192,8 @@ enum vkStencilReadbackMode_t {
 	VK_STENCIL_READBACK_COUNT = 1,	// the average, "overdraw: %5.1f"
 	VK_STENCIL_READBACK_SCAN		// the histogram, "stencil values:"
 };
-bool				VK_Exec_QueueStencilReadback( int mode );
+// failure, when given, receives why nothing was queued.
+bool				VK_Exec_QueueStencilReadback( int mode, const char **failure = NULL );
 void				VK_DebugTools_PrintStencilReadback( const byte *stencil, int width, int height, int mode );
 
 #endif /* !__VK_EXECUTOR_HOOKS_H__ */

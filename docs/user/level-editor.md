@@ -1,5 +1,7 @@
 # Level editor (experimental)
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 Run `editorExperimental` in the client console to open the separate experimental
 workspace. It uses the engine's GUI and renderer interfaces and works with
 OpenGL and Vulkan. Install the matching bundled data with the engine.

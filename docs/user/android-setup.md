@@ -1,5 +1,7 @@
 # Android setup, backups and logs
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 The Android app is experimental. It needs your own Quake 4 1.4.2 game data;
 retail files are not included in the APK. The current setup screen supports
 English, German, Spanish and French. The standalone app includes experimental

@@ -53,6 +53,10 @@ static const int VK_MAX_DEFERRED_DESTROYS = 512;
 // staging buffers a single upload batch may own before it is force-flushed
 static const int VK_MAX_UPLOAD_BATCH_STAGING = 1024;
 
+// Per-image objects are indexed by the acquired image index. A swapchain the
+// driver creates with more images than this fails closed instead.
+static const uint32_t VK_MAX_SWAPCHAIN_IMAGES = 16;
+
 typedef struct vkDeviceContext_s {
 	bool				initialized;
 	// A failed post-acquire operation may leave semaphores signaled or queue
@@ -72,6 +76,8 @@ typedef struct vkDeviceContext_s {
 	VkDebugUtilsMessengerEXT debugMessenger;
 	VkSurfaceKHR		surface;
 	VkPhysicalDevice	physicalDevice;
+	// enumeration index of the admitted device (r_vkDevice uses the same order)
+	uint32_t			physicalDeviceIndex;
 	VkPhysicalDeviceProperties deviceProperties;
 	// Fixed for the device lifetime. Zero retains the driver's native pattern.
 	// All multisample pipelines and depth-image transitions use the same pattern.
@@ -106,8 +112,8 @@ typedef struct vkDeviceContext_s {
 	VkExtent2D			swapchainExtent;
 	VkPresentModeKHR	presentMode;
 	uint32_t			swapchainImageCount;
-	VkImage				swapchainImages[ 8 ];
-	VkImageView			swapchainViews[ 8 ];
+	VkImage				swapchainImages[ VK_MAX_SWAPCHAIN_IMAGES ];
+	VkImageView			swapchainViews[ VK_MAX_SWAPCHAIN_IMAGES ];
 	bool				swapchainTransferSrc;
 	// A hidden window (r_hiddenWindow) is never displayed, so its frames skip
 	// the presentation engine: each renders into its frame slot's offscreen
@@ -128,7 +134,7 @@ typedef struct vkDeviceContext_s {
 	VkSemaphore			acquireSemaphores[ VK_FRAMES_IN_FLIGHT ];
 	// one render-finished semaphore per swapchain image: present may still
 	// read the semaphore of an image the acquire slot has already recycled
-	VkSemaphore			renderFinishedSemaphores[ 8 ];
+	VkSemaphore			renderFinishedSemaphores[ VK_MAX_SWAPCHAIN_IMAGES ];
 	VkFence				frameFences[ VK_FRAMES_IN_FLIGHT ];
 	int					frameSlot;
 	// Slot whose command buffer is currently recording. frameSlot advances
@@ -209,12 +215,27 @@ bool VK_Device_SampleLocations( VkSampleCountFlagBits samples, VkSampleLocations
 // the bring-up probe shares it so both load the same image
 bool	VK_Device_InitLoader( void );
 
+// What one VK_Device_Init attempt reached. A failure after admission belongs
+// to that adapter, so automatic selection may resume after it; a failure before
+// admission (loader, instance, surface, no candidate) is not specific to a GPU.
+typedef struct vkDeviceAttempt_s {
+	bool				admitted;
+	bool				automatic;		// r_vkDevice -1
+	uint32_t			index;
+	char				deviceName[ VK_MAX_PHYSICAL_DEVICE_NAME_SIZE ];
+} vkDeviceAttempt_t;
+
 // full bring-up through the window services: instance (+validation when
 // r_vkValidation), surface, device selection honoring r_vkDevice, queues,
-// swapchain, per-frame sync. Returns false with everything torn down on any
-// failure so the loader's fail-closed ladder stays reachable.
-bool	VK_Device_Init( const renderWindowServices_s *windowServices );
+// swapchain, per-frame sync. Automatic selection starts at firstCandidate.
+// Returns false with everything torn down on any failure so the loader's
+// fail-closed ladder stays reachable; attempt says how far it got.
+bool	VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firstCandidate,
+			vkDeviceAttempt_t &attempt );
 void	VK_Device_Shutdown( void );
+// Startup only: tears down an adapter that failed after admission without
+// writing its pipeline cache, so the next candidate starts from a clean slate.
+void	VK_Device_AbandonAdapter( void );
 
 // recreates the swapchain (resize / OUT_OF_DATE / swap-interval change);
 // reads the current window pixel size through the services

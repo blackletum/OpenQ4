@@ -118,7 +118,8 @@
   "chapter.row31.open": {"type": "boolean", "initial": false},
   "language": {"type": "string", "initial": "", "cvar": "sys_lang"},
   "prompt.glyphs": {"type": "number", "initial": 0},
-  "prompt.swapped": {"type": "boolean", "initial": false}
+  "prompt.swapped": {"type": "boolean", "initial": false},
+  "prompt.accept": {"type": "string", "initial": "#str_231042"}
  },
  "actions": {
   "skill0": {"operation": "session.menu", "arguments": {"command": "campaignSkill0"}},
@@ -2261,6 +2262,18 @@
      "none"
     ]
    }
+  },
+  {
+   "id": "prompt-231042-verb.text",
+   "node": "prompt-231042-verb",
+   "property": "text",
+   "value": {"state": "prompt.accept"}
+  },
+  {
+   "id": "prompts-lead.display",
+   "node": "prompts-lead",
+   "property": "display",
+   "value": {"op": "select", "args": [{"op": "==", "args": [{"state": "prompt.accept"}, ""]}, "none", "flex"]}
   },
   {
    "id": "prompt-230045-cap.display",
@@ -17490,6 +17503,14 @@
               "focus": "row-0.focus",
               "pressed": "row-0.pressed",
               "disabled": "row-0.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 0]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -17714,6 +17735,14 @@
               "focus": "row-1.focus",
               "pressed": "row-1.pressed",
               "disabled": "row-1.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 1]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -17938,6 +17967,14 @@
               "focus": "row-2.focus",
               "pressed": "row-2.pressed",
               "disabled": "row-2.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 2]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -18162,6 +18199,14 @@
               "focus": "row-3.focus",
               "pressed": "row-3.pressed",
               "disabled": "row-3.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 3]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -18386,6 +18431,14 @@
               "focus": "row-4.focus",
               "pressed": "row-4.pressed",
               "disabled": "row-4.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 4]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -18610,6 +18663,14 @@
               "focus": "row-5.focus",
               "pressed": "row-5.pressed",
               "disabled": "row-5.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 5]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -18834,6 +18895,14 @@
               "focus": "row-6.focus",
               "pressed": "row-6.pressed",
               "disabled": "row-6.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 6]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -19058,6 +19127,14 @@
               "focus": "row-7.focus",
               "pressed": "row-7.pressed",
               "disabled": "row-7.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 7]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -19282,6 +19359,14 @@
               "focus": "row-8.focus",
               "pressed": "row-8.pressed",
               "disabled": "row-8.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 8]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -19506,6 +19591,14 @@
               "focus": "row-9.focus",
               "pressed": "row-9.pressed",
               "disabled": "row-9.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 9]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -19730,6 +19823,14 @@
               "focus": "row-10.focus",
               "pressed": "row-10.pressed",
               "disabled": "row-10.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 10]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -19954,6 +20055,14 @@
               "focus": "row-11.focus",
               "pressed": "row-11.pressed",
               "disabled": "row-11.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 11]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -20178,6 +20287,14 @@
               "focus": "row-12.focus",
               "pressed": "row-12.pressed",
               "disabled": "row-12.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 12]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -20402,6 +20519,14 @@
               "focus": "row-13.focus",
               "pressed": "row-13.pressed",
               "disabled": "row-13.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 13]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -20626,6 +20751,14 @@
               "focus": "row-14.focus",
               "pressed": "row-14.pressed",
               "disabled": "row-14.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 14]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -20850,6 +20983,14 @@
               "focus": "row-15.focus",
               "pressed": "row-15.pressed",
               "disabled": "row-15.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 15]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -21074,6 +21215,14 @@
               "focus": "row-16.focus",
               "pressed": "row-16.pressed",
               "disabled": "row-16.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 16]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -21298,6 +21447,14 @@
               "focus": "row-17.focus",
               "pressed": "row-17.pressed",
               "disabled": "row-17.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 17]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -21522,6 +21679,14 @@
               "focus": "row-18.focus",
               "pressed": "row-18.pressed",
               "disabled": "row-18.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 18]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -21746,6 +21911,14 @@
               "focus": "row-19.focus",
               "pressed": "row-19.pressed",
               "disabled": "row-19.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 19]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -21970,6 +22143,14 @@
               "focus": "row-20.focus",
               "pressed": "row-20.pressed",
               "disabled": "row-20.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 20]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -22194,6 +22375,14 @@
               "focus": "row-21.focus",
               "pressed": "row-21.pressed",
               "disabled": "row-21.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 21]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -22418,6 +22607,14 @@
               "focus": "row-22.focus",
               "pressed": "row-22.pressed",
               "disabled": "row-22.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 22]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -22642,6 +22839,14 @@
               "focus": "row-23.focus",
               "pressed": "row-23.pressed",
               "disabled": "row-23.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 23]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -22866,6 +23071,14 @@
               "focus": "row-24.focus",
               "pressed": "row-24.pressed",
               "disabled": "row-24.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 24]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -23090,6 +23303,14 @@
               "focus": "row-25.focus",
               "pressed": "row-25.pressed",
               "disabled": "row-25.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 25]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -23314,6 +23535,14 @@
               "focus": "row-26.focus",
               "pressed": "row-26.pressed",
               "disabled": "row-26.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 26]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -23538,6 +23767,14 @@
               "focus": "row-27.focus",
               "pressed": "row-27.pressed",
               "disabled": "row-27.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 27]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -23762,6 +23999,14 @@
               "focus": "row-28.focus",
               "pressed": "row-28.pressed",
               "disabled": "row-28.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 28]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -23986,6 +24231,14 @@
               "focus": "row-29.focus",
               "pressed": "row-29.pressed",
               "disabled": "row-29.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 29]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -24210,6 +24463,14 @@
               "focus": "row-30.focus",
               "pressed": "row-30.pressed",
               "disabled": "row-30.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 30]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            },
@@ -24434,6 +24695,14 @@
               "focus": "row-31.focus",
               "pressed": "row-31.pressed",
               "disabled": "row-31.disabled"
+             },
+             "prompt": {
+              "op": "select",
+              "args": [
+               {"op": "==", "args": [{"state": "chapter.selected"}, {"op": "+", "args": [{"state": "chapter.first"}, 31]}]},
+               "#str_231520",
+               "#str_231042"
+              ]
              }
             }
            }

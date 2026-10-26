@@ -101,10 +101,13 @@ def check_abi() -> None:
         require(render_world, field, "renderView_t keeps existing views symmetric")
 
     game = read("src/game/Game.h")
-    require(game, "const int GAME_API_VERSION\t\t= 53;", "game module ABI v53")
+    require(game, "const int GAME_API_VERSION\t\t= 54;", "game module ABI v54")
     import_block = game[game.index("struct gameImport_t {"):game.index("struct gameExport_t {")]
-    if not import_block.rstrip().rstrip("};").rstrip().endswith("idVRSystem *				vrSystem;				// tracked head/controller poses (never NULL)"):
-        raise AssertionError("gameImport_t must end with vrSystem")
+    # Append-only ABI: vrSystem (v50) keeps its slot; later members follow it.
+    if not import_block.rstrip().rstrip("};").rstrip().endswith(
+            "idVRSystem *				vrSystem;				// tracked head/controller poses (never NULL)\n"
+            "	idUsercmdGen *				usercmdGen;				// late-look input sampling (draw pass only)"):
+        raise AssertionError("gameImport_t must keep vrSystem in place, followed only by usercmdGen (v54)")
     for module in ("src/game/Game_local.cpp", "src/mpgame/Game_local.cpp"):
         require(read(module), "vrSystem\t\t\t\t\t= import->vrSystem;", f"{module} binds the VR system")
     require(read("src/framework/Common.cpp"), "gameImport.vrSystem\t\t\t\t\t= ::vrSystem;", "the engine exports its VR system")

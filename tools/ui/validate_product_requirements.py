@@ -16,6 +16,14 @@ An archive relocation (--archive-relocation) preserves the complete register
 and migration records while moving source-document references through a checked
 archive manifest and adding the consolidated planning authority. Historical
 local captures remain unchanged and are reported separately, never requalified.
+
+None of those modes accepts work. Acceptance has its own, separately reviewed
+transition (--acceptance with --accept/--accept-resource, implemented in
+acceptance_transition.py): it names every requirement and resource it accepts
+and audits each one's committed acceptance records. An implementation increment
+keeps earlier acceptance only while its evidence still describes the present
+files; otherwise it must withdraw it explicitly (--withdraw/--withdraw-resource),
+keeping the records as history.
 """
 from __future__ import annotations
 
@@ -23,12 +31,14 @@ import argparse
 from collections import Counter
 from datetime import date
 import hashlib
+import importlib.util
 import json
 from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
 import sys
+import types
 
 
 REQUIREMENT_FIELDS = ("id", "title", "milestone_owner", "implementation_owner", "source_refs", "requirement",
@@ -92,14 +102,50 @@ def require_acyclic(rows: dict) -> None:
         visit(name, set())
 
 
-def check_migration_manifest(root: Path, git, revision: str, current: dict):
+def check_migration_manifest(root: Path, git, revision: str, current: dict, withdrawn=()):
     manifest_path = root / "docs/dev/ui/migration-manifest.json"
     manifest = manifest_path.read_text(encoding="utf-8")
-    require(manifest.replace("\r\n", "\n") == git("show", revision + ":docs/dev/ui/migration-manifest.json").replace("\r\n", "\n"), "Migration source records changed")
-    resources = read_json(manifest)["resources"]
+    baseline_text = git("show", revision + ":docs/dev/ui/migration-manifest.json")
+    resources, old_resources = read_json(manifest)["resources"], read_json(baseline_text)["resources"]
+    withdrawn = set(withdrawn)
+    if not withdrawn:
+        require(manifest.replace("\r\n", "\n") == baseline_text.replace("\r\n", "\n"), "Migration source records changed")
+    else:
+        # Withdrawal returns accepted resources to pending; nothing else moves.
+        new_document, old_document = read_json(manifest), read_json(baseline_text)
+        require(all(new_document[key] == old_document[key] for key in old_document if key != "resources") and
+                new_document.keys() == old_document.keys(), "Migration source records changed")
+        require([row["resource_id"] for row in resources] == [row["resource_id"] for row in old_resources], "Migration source records changed")
+        require(withdrawn <= {row["resource_id"] for row in old_resources if row["translation_status"] == "accepted"},
+                "Only an accepted migration resource can be withdrawn")
+        for row, old in zip(resources, old_resources):
+            expected = dict(old, translation_status="pending", replacement=None, bitmap_exceptions=None,
+                            behavior_evidence=[], visual_evidence=[]) if old["resource_id"] in withdrawn else old
+            require(row == expected, f"Migration source records changed: {old['resource_id']}")
     require(len(resources) == current["baseline"]["effective_gui_count"], "Migration inventory denominator changed")
-    require(all(row["translation_status"] == "pending" and not row["replacement"] and not row["behavior_evidence"] and not row["visual_evidence"] for row in resources), "Checkpoint cannot accept a GUI migration")
+    # Resources accepted by an earlier acceptance transition stay accepted;
+    # no checkpoint accepts one.
+    require(all(row["translation_status"] == "accepted" or (row["translation_status"] == "pending" and not row["replacement"] and
+                not row["behavior_evidence"] and not row["visual_evidence"]) for row in resources), "Checkpoint cannot accept a GUI migration")
+    require(current["baseline"].get("translated_or_accepted_resources", 0) == sum(row["translation_status"] == "accepted" for row in resources),
+            "Baseline accepted-resource count differs from the manifest")
     return manifest_path, resources
+
+
+def audit_helpers():
+    """The shared checks, handed to the separately reviewed transition module."""
+    return types.SimpleNamespace(require=require, read_json=read_json, digest=digest, line_ending_digests=line_ending_digests,
+                                 archive_path=archive_path, clean_text=clean_text, require_acyclic=require_acyclic,
+                                 check_source_bindings=check_source_bindings, check_markdown=check_markdown,
+                                 __file__=str(Path(__file__).resolve()))
+
+
+def load_sibling(name: str):
+    path = Path(__file__).resolve().with_name(name + ".py")
+    spec = importlib.util.spec_from_file_location("openq4_ui_" + name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def check_source_bindings(root: Path, current: dict, previous: dict, defer_hashes: bool):
@@ -159,9 +205,14 @@ def validate(args) -> dict:
     protected += ("supersessions",) if "supersessions" in previous else ()
     for key in protected:
         require(current[key] == previous[key], f"Protected register contract changed: {key}")
+    withdrawn = set(getattr(args, "withdraw", []))
+    withdrawn_resources = set(getattr(args, "withdraw_resource", []))
     for key, value in previous["baseline"].items():
-        if key != "engine_revision":
+        # A resource withdrawal lowers the accepted-resource count, which the
+        # manifest check below recomputes.
+        if key != "engine_revision" and not (key == "translated_or_accepted_resources" and withdrawn_resources):
             require(current["baseline"][key] == value, f"Protected baseline field changed: {key}")
+    require(current["baseline"].keys() == previous["baseline"].keys(), "Baseline schema changed")
     require(current["baseline"]["engine_revision"] == revision, "Current increment must identify the audited baseline revision")
     require(current["normative_sources"].keys() == previous["normative_sources"].keys(), "Normative source set changed")
     for name, source in previous["normative_sources"].items():
@@ -176,6 +227,7 @@ def validate(args) -> dict:
             [row["id"] for row in previous["requirements"]], "Requirement order/identity changed")
     allowed = set(args.partial)
     require(allowed <= rows.keys(), "Unknown --partial requirement")
+    require(withdrawn <= rows.keys() and not (withdrawn & allowed), "Unknown or conflicting --withdraw requirement")
     changes, status_changes, repairs = {}, {}, {}
     for name, row in rows.items():
         old = before[name]
@@ -201,16 +253,27 @@ def validate(args) -> dict:
             changed.append(field)
             if field == "requirement" and isinstance(value, str) and repaired_dash(old[field]) == value:
                 repairs[name] = {"before": old[field], "after": value}
+            elif field == "status" and name in withdrawn:
+                require(old[field] == "verified" and value == "partial", f"Withdrawal returns a verified requirement to partial: {name}")
+                status_changes[name] = {"before": old[field], "after": value}
             elif field == "status":
                 require(name in allowed and old[field] == "pending" and value == "partial", f"Unauthorized acceptance/status change: {name}")
                 status_changes[name] = {"before": old[field], "after": value}
+            elif field == "acceptance_evidence":
+                require(name in withdrawn and value == [], f"Unauthorized acceptance evidence change: {name}")
             else:
                 require(field in ("remaining", "current_evidence"), f"Normative scope/constraints/acceptance changed: {name}.{field}")
+        if name in withdrawn:
+            # The withdrawn records stay as history of what was claimed.
+            history = list(dict.fromkeys(old["current_evidence"] + old["acceptance_evidence"]))
+            require(row["current_evidence"][:len(history)] == history, f"Withdrawal must keep the acceptance records as evidence history: {name}")
         if changed:
             changes[name] = changed
         if name.startswith(("GATE-", "FINAL-")):
-            require(row["status"] == "pending", f"Checkpoint cannot accept a product gate: {name}")
-    require(allowed == status_changes.keys(), "--partial list must match actual pending-to-partial changes exactly")
+            # Gates are accepted only by an acceptance transition; a checkpoint
+            # keeps their state or withdraws an accepted one.
+            require(row["status"] == old["status"] or name in withdrawn, f"Checkpoint cannot accept a product gate: {name}")
+    require(allowed | withdrawn == status_changes.keys(), "--partial and --withdraw lists must match actual status changes exactly")
 
     require_acyclic(rows)
     require(all(name in rows for group in current["audit_findings"].values() for name in group), "Unresolved audit finding")
@@ -221,9 +284,16 @@ def validate(args) -> dict:
         require({k: v for k, v in item.items() if k != "sha256"} ==
                 {k: v for k, v in current["evidence"][name].items() if k != "sha256"}, f"Historical evidence scope/result/binding changed: {name}")
 
-    manifest_path, resources = check_migration_manifest(root, git, revision, current)
+    manifest_path, resources = check_migration_manifest(root, git, revision, current, withdrawn_resources)
+    # Earlier acceptance stays only while its records describe the present files.
+    transition = load_sibling("acceptance_transition")
+    stale = transition.accepted_record_problems(transition.Repository(audit_helpers(), root, revision), current,
+                                                {row["resource_id"]: row for row in resources}, rows)
+    require(not stale, "Accepted scope has stale evidence; withdraw it (--withdraw/--withdraw-resource) or accept it again: " +
+            "; ".join(f"{key}: {', '.join(value)}" for key, value in sorted(stale.items())))
     files, deferred, historical_unbound = check_source_bindings(root, current, previous, args.defer_hashes)
     links, counts = check_markdown(root, markdown_path, rows, current["normative_sources"]["product"]["path"])
+    gates = [name for name in rows if name.startswith(("GATE-", "FINAL-"))]
     return {
         "schema_version": 1, "status": "structure_valid_hashes_deferred" if args.defer_hashes else "structural_source_audit_passed",
         "product_acceptance": False, "baseline_engine_revision": revision,
@@ -232,12 +302,15 @@ def validate(args) -> dict:
         "plan_sha256": digest(root / current["normative_sources"]["product"]["path"]),
         "validator_sha256": digest(Path(__file__).resolve()),
         "requirements": len(rows), "status_counts": dict(counts), "status_changes": status_changes,
+        "withdrawn_requirements": sorted(withdrawn), "withdrawn_resources": sorted(withdrawn_resources),
         "requirement_field_changes": changes, "strict_roundtrip_text_repairs": repairs,
         "scope_constraints_owners_dependencies_and_acceptance_preserved": True,
-        "dependency_cycles": 0, "all_milestone_and_final_gates_pending": True,
+        "dependency_cycles": 0, "all_milestone_and_final_gates_pending": all(rows[name]["status"] == "pending" for name in gates),
+        "earlier_acceptance_current": True,
         "historical_evidence_preserved_except_document_hashes": True,
-        "migration_manifest_unchanged": True, "migration_manifest_sha256": digest(manifest_path),
-        "migration_entries": len(resources), "accepted_migration_entries": 0,
+        "migration_manifest_unchanged": not withdrawn_resources, "migration_manifest_sha256": digest(manifest_path),
+        "migration_entries": len(resources),
+        "accepted_migration_entries": sum(row["translation_status"] == "accepted" for row in resources),
         "required_source_bindings_valid": not args.defer_hashes,
         "source_paths_and_hashes_valid": not args.defer_hashes and not historical_unbound,
         "historical_unbound_references": historical_unbound, "deferred_hash_bindings": deferred,
@@ -259,7 +332,8 @@ def validate_revision(args) -> dict:
     markdown_path = root / "docs/dev/ui/product-requirements.md"
     current = read_json(register_path.read_text(encoding="utf-8"))
     previous = read_json(git("show", revision + ":docs/dev/ui/product-requirements.json"))
-    require(not args.partial, "A register revision cannot change requirement status; audit status changes as an increment")
+    require(not args.partial and not getattr(args, "withdraw", []) and not getattr(args, "withdraw_resource", []),
+            "A register revision cannot change requirement status; audit status changes as an increment")
 
     # Contract: keep every existing entry; only additions are admissible.
     require(set(previous) <= set(current) and set(current) - set(previous) <= {"supersessions"},
@@ -425,7 +499,8 @@ def archive_path(root: Path, value: str) -> Path:
 
 def validate_archive_relocation(args) -> dict:
     """Only relocate document bindings; never revise requirements or accept work."""
-    require(not args.revision and not args.partial and not args.defer_hashes,
+    require(not args.revision and not args.partial and not args.defer_hashes and
+            not getattr(args, "withdraw", []) and not getattr(args, "withdraw_resource", []),
             "Archive relocation cannot revise scope/status or defer document hashes")
     root = args.root.resolve()
 
@@ -608,7 +683,8 @@ def validate_inventory_revision(args) -> dict:
     item = current['evidence'][evidence_id]
     require(item.get('path') == 'docs/dev/ui/inventory-sources.json' and
             item.get('sha256') in line_ending_digests(root / item['path']), 'Stale inventory snapshot binding')
-    require(not args.partial and not args.defer_hashes, 'Inventory mode cannot grant partial/deferral exceptions')
+    require(not args.partial and not args.defer_hashes and not getattr(args, 'withdraw', []) and
+            not getattr(args, 'withdraw_resource', []), 'Inventory mode cannot grant partial/deferral exceptions')
     rows = {row['id']: row for row in current['requirements']}
     check_markdown(root, root / 'docs/dev/ui/product-requirements.md', rows, current['normative_sources']['product']['path'])
     report.update(product_acceptance=False, invalidated_requirements=invalidated, historical_evidence=historical)
@@ -626,12 +702,19 @@ def main() -> int:
     parser.add_argument("--archive-relocation", action="store_true", help="Audit only the 2026-10-18 plan archive and consolidated planning authority; preserves all requirement and migration states")
     parser.add_argument("--inventory-revision", action="store_true", help="Reconcile source configurations/denominator and invalidate stale inventory acceptance; cannot accept requirements or resources")
     parser.add_argument("--inventory-evidence-id", default="inventory-stage-one", help="New inventory revision evidence identity; use a new inventory-* ID for each later revision")
+    parser.add_argument("--acceptance", action="store_true", help="Audit an evidence-controlled acceptance transition (UI-11); only the requirements and resources it names may be accepted")
+    parser.add_argument("--accept", action="append", default=[], metavar="ID", help="Acceptance mode: one requirement this transition marks verified; repeat for each")
+    parser.add_argument("--accept-resource", action="append", default=[], metavar="RESOURCE_ID", help="Acceptance mode: one migration resource (path@closure) this transition accepts; repeat for each")
+    parser.add_argument("--withdraw", action="append", default=[], metavar="ID", help="Increment mode: return a verified requirement to partial, keeping its acceptance records as evidence history")
+    parser.add_argument("--withdraw-resource", action="append", default=[], metavar="RESOURCE_ID", help="Increment mode: return an accepted migration resource to pending")
     parser.add_argument("--output", type=Path, required=True, help="New report path; existing evidence is never overwritten")
     args = parser.parse_args()
     try:
         require(not args.output.exists(), "Preserve existing audit; choose a new output path")
-        require(sum((args.archive_relocation, args.revision, args.inventory_revision)) <= 1, 'Select one revision mode')
-        report = (validate_inventory_revision(args) if args.inventory_revision else
+        require(sum((args.archive_relocation, args.revision, args.inventory_revision, args.acceptance)) <= 1, 'Select one revision mode')
+        require(args.acceptance or not (args.accept or args.accept_resource), "--accept and --accept-resource need --acceptance")
+        report = (load_sibling("acceptance_transition").validate(args, audit_helpers()) if args.acceptance else
+                  validate_inventory_revision(args) if args.inventory_revision else
                   validate_archive_relocation(args) if args.archive_relocation else
                   validate_revision(args) if args.revision else validate(args))
         args.output.parent.mkdir(parents=True, exist_ok=True)

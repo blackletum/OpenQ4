@@ -16524,6 +16524,10 @@ windowDef Desktop
 			set "set_game_controller_low_battery_rumble_hover::visible" "1" ;
 			set "set_game_controller_low_battery_rumble_cap::visible" "1" ;
 			set "set_game_controller_low_battery_rumble_cap_hover::visible" "1" ;
+			set "set_game_controller_prompt_style::visible" "1" ;
+			set "set_game_controller_prompt_style_hover::visible" "1" ;
+			set "set_game_controller_swap_confirm::visible" "1" ;
+			set "set_game_controller_swap_confirm_hover::visible" "1" ;
 			set "set_game_customxhair::visible" "1" ;
 			set "set_game_customxhair_hover::visible" "1" ;
 			if ( "gui::g_crosshairCustom" == 1 ) {
@@ -16655,6 +16659,8 @@ windowDef Desktop
 			set "set_game_controller_touchscreen::noevents" "0" ;
 			set "set_game_controller_low_battery_rumble::noevents" "0" ;
 			set "set_game_controller_low_battery_rumble_cap::noevents" "0" ;
+			set "set_game_controller_prompt_style::noevents" "0" ;
+			set "set_game_controller_swap_confirm::noevents" "0" ;
 			set "set_game_customxhair::noevents" "0" ;
 			set "set_game_previewxhair::noevents" "0" ;
 			set "set_game_xhairsize::noevents" "0" ;
@@ -16778,6 +16784,10 @@ windowDef Desktop
 			set "set_game_controller_low_battery_rumble_hover::visible" "0" ;
 			set "set_game_controller_low_battery_rumble_cap::visible" "0" ;
 			set "set_game_controller_low_battery_rumble_cap_hover::visible" "0" ;
+			set "set_game_controller_prompt_style::visible" "0" ;
+			set "set_game_controller_prompt_style_hover::visible" "0" ;
+			set "set_game_controller_swap_confirm::visible" "0" ;
+			set "set_game_controller_swap_confirm_hover::visible" "0" ;
 			set "set_game_customxhair::visible" "0" ;
 			set "set_game_customxhair_hover::visible" "0" ;
 			set "set_game_previewxhair::visible" "0" ;
@@ -16895,6 +16905,8 @@ windowDef Desktop
 			set "set_game_controller_touchscreen::noevents" "1" ;
 			set "set_game_controller_low_battery_rumble::noevents" "1" ;
 			set "set_game_controller_low_battery_rumble_cap::noevents" "1" ;
+			set "set_game_controller_prompt_style::noevents" "1" ;
+			set "set_game_controller_swap_confirm::noevents" "1" ;
 			set "set_game_customxhair::noevents" "1" ;
 			set "set_game_previewxhair::noevents" "1" ;
 			set "set_game_xhairsize::noevents" "1" ;
@@ -19104,6 +19116,8 @@ windowDef Desktop
 				set "set_game_controller_touchscreen_background::matcolor_w" "0.4" ;
 				set "set_game_controller_low_battery_rumble_background::matcolor_w" "0.4" ;
 				set "set_game_controller_low_battery_rumble_cap_background::matcolor_w" "0.4" ;
+				set "set_game_controller_prompt_style_background::matcolor_w" "0.4" ;
+				set "set_game_controller_swap_confirm_background::matcolor_w" "0.4" ;
 				set "set_game_customxhair_background::matcolor_w" "0.4" ;
 				set "set_game_corpsesink_background::matcolor_w" "0.4" ;
 				set "set_game_corpsetime_background::matcolor_w" "0.4" ;

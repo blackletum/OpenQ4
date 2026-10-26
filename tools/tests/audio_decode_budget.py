@@ -40,6 +40,7 @@ struct idSoundSampleDecode {
     unsigned decodedFrames=1;
     void* vorbis=nullptr;
     void* fileData=nullptr;
+    unsigned char* envelope=nullptr;
 };
 static void FreeBuffer(void*) { ++freed; }
 struct SoundVorbisStream { static constexpr uint64 ArenaBytes=2*MiB; };
@@ -103,6 +104,12 @@ int main() {
     Check(reloaded==2 && soundSamplePendingDecodeBytes==0);
     Submit(a,MiB); a.FinishDecode(); a.FinishDecode();
     Check(uploaded==2 && soundSamplePendingDecodes==0);
+    // A streamed track's envelope job joins without an upload or a reload.
+    unsigned char envelope[4]={};
+    Submit(a,MiB); a.pendingDecode->envelope=envelope; a.FinishDecode();
+    Check(uploaded==2 && reloaded==2 && soundSamplePendingDecodeBytes==0 && soundSamplePendingDecodes==0);
+    Submit(a,MiB); a.pendingDecode->envelope=envelope; a.pendingDecode->headerMismatch=true; a.FinishDecode();
+    Check(uploaded==2 && reloaded==3 && soundSamplePendingDecodeBytes==0);
     Check(soundSampleDecodePeakBytes<=16*MiB && soundSampleDecodeWaits>=1);
     // Runtime budget reduction must join existing work before admitting more.
     s_decodeMemoryMB.value=32; Submit(a,24*MiB);

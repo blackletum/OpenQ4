@@ -3949,6 +3949,38 @@ static void Cmd_OpenQ4LaunchMPTestProjectile_f( const idCmdArgs &args ) {
 	gameLocal.Printf( "MP_WORLD_PROJECTILE launched name=%s\n", projectile->GetName() );
 }
 
+/*
+==================
+Cmd_LagCompStatus_f
+
+openQ4: what lag compensation would rewind for each connected client, and why: its reported
+lead, the round trip the server measured, the remote extrapolation it advertises and the
+displayed pose age that leaves.  Read-only, and meaningful with net_mpLagCompensation off.
+==================
+*/
+static void Cmd_LagCompStatus_f( const idCmdArgs &args ) {
+	if ( !gameLocal.isMultiplayer || !gameLocal.isServer ) {
+		gameLocal.Printf( "lagCompStatus: only a multiplayer server can report lag compensation\n" );
+		return;
+	}
+	const int maxRewindMS = idMath::ClampInt( 0, 1000, net_mpLagCompMaxMS.GetInteger() );
+	gameLocal.Printf( "LAGCOMP_STATUS enabled=%d max=%dms slack=%dms bias=%dms frame=%dms\n",
+		net_mpLagCompensation.GetBool() ? 1 : 0, maxRewindMS, net_mpLagCompSlackMS.GetInteger(),
+		net_mpLagCompBiasMS.GetInteger(), gameLocal.GetMSec() );
+	for ( int clientNum = 0; clientNum < MAX_CLIENTS; clientNum++ ) {
+		const idEntity *entity = gameLocal.entities[ clientNum ];
+		if ( entity == NULL || !entity->IsType( idPlayer::GetClassType() ) ) {
+			continue;
+		}
+		idGameLocal::mpLagCompEstimate_t estimate;
+		gameLocal.EstimateMPLagCompensation( clientNum, estimate );
+		const int rewindMS = idMath::ClampInt( 0, maxRewindMS, estimate.poseAgeMS + net_mpLagCompBiasMS.GetInteger() );
+		gameLocal.Printf( "LAGCOMP_CLIENT client=%d name=\"%s\" lead=%dms rtt=%dms advertised=%dtics extrap=%dms age=%dms rewind=%dms\n",
+			clientNum, gameLocal.userInfo[ clientNum ].GetString( "ui_name" ), estimate.leadMS, estimate.measuredMS,
+			estimate.advertisedTics, estimate.extrapolationMS, estimate.poseAgeMS, rewindMS );
+	}
+}
+
 // Read actual simulation and animation state without moving the camera or
 // injecting player commands. This complements engine render-target captures
 // when qualifying repeated competitive pauses and subsequent resumption.
@@ -4284,6 +4316,7 @@ void idGameLocal::InitConsoleCommands( void ) {
 	cmdSystem->AddCommand( "openq4_assertMPClientActive", Cmd_OpenQ4AssertMPClientActive_f, CMD_FL_GAME | CMD_FL_CHEAT, "fail validation unless the local multiplayer player is active and not spectating" );
 	cmdSystem->AddCommand( "openq4_reportMPState", Cmd_OpenQ4ReportMPState_f, CMD_FL_GAME | CMD_FL_CHEAT, "report local multiplayer phases, scores and player state to the console" );
 	cmdSystem->AddCommand( "openq4_reportMPWorld", Cmd_OpenQ4ReportMPWorld_f, CMD_FL_GAME | CMD_FL_CHEAT, "report one multiplayer entity's simulation, animation and powerup state" );
+	cmdSystem->AddCommand( "lagCompStatus", Cmd_LagCompStatus_f, CMD_FL_GAME, "report each client's lag-compensation lead, round trip, advertised remote extrapolation and rewind" );
 	cmdSystem->AddCommand( "openq4_launchMPTestProjectile", Cmd_OpenQ4LaunchMPTestProjectile_f, CMD_FL_GAME | CMD_FL_CHEAT, "launch a named stock projectile for multiplayer world-clock diagnostics" );
 	cmdSystem->AddCommand( "openq4_matchControl", Cmd_OpenQ4MatchControl_f, CMD_FL_GAME | CMD_FL_CHEAT, "exercise and inspect the local accepted-view Match Control adapter without device input" );
 	cmdSystem->AddCommand( "openq4_arenaCeremony", Cmd_OpenQ4ArenaCeremony_f, CMD_FL_GAME | CMD_FL_CHEAT, "drive the local Arena Campaign match without device input: openq4_arenaCeremony <win|loss|draw|skip|status>" );

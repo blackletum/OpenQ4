@@ -261,6 +261,44 @@ static void PersistenceAndLifetime() {
 	f.input.Focus("toggle"); auto semantics = f.input.Capture(); Check(f.input.Restore(semantics,f.error),"legacy interaction snapshot remains valid for persistent focus");
 	Check(!f.View("toggle").pending,"legacy semantic restore clears transient value ownership");
 }
+static void QueuedReadbackOwnership() {
+	Fixture f;
+	f.Accept("toggle"); f.Accept("toggle"); f.Accept("toggle");
+	auto actions = f.Actions();
+	Check(f.input.CanDispatchControlAction(actions[0]) && !f.input.CanDispatchControlAction(actions[1]),
+		"queued steps require their predecessor's actual readback");
+	for (const auto& action : actions) {
+		Check(f.input.CanDispatchControlAction(action),"ordered queued toggle remains dispatchable");
+		f.values["toggle"].value = *action.proposal; f.Refresh();
+		f.input.AcknowledgeProposal("toggle",action.proposalToken,true);
+	}
+	Check(!f.input.CanDispatchControlAction(actions[0]),"completed proposal cannot dispatch again");
+	f.values["toggle"].value = false; f.Refresh(); f.Accept("toggle");
+	Check(!f.input.CanDispatchControlAction(actions[0]),"new proposal cannot revive a previous chain");
+	const auto fresh = f.Actions().front();
+	Check(f.input.CanDispatchControlAction(fresh),"fresh proposal after previous chain remains usable");
+	f.values["toggle"].mixed = true; f.Refresh();
+	Check(!f.input.CanDispatchControlAction(fresh),"external mixed state invalidates old toggle intent");
+	f.input.AcknowledgeProposal("toggle",fresh.proposalToken,false); f.Accept("toggle");
+	Check(f.input.CanDispatchControlAction(f.Actions().front()),"fresh mixed toggle uses current mixed state");
+	Fixture slider;
+	slider.input.Focus("slider"); slider.Press(MenuInput::Right); slider.Press(MenuInput::Right);
+	actions = slider.Actions();
+	Check(slider.input.CanDispatchControlAction(actions[0]),"slider starts from actual custom value");
+	slider.values["slider"].value = 1.8; slider.Refresh();
+	Check(!slider.input.CanDispatchControlAction(actions[0]) && !slider.input.CanDispatchControlAction(actions[1]),
+		"external slider value invalidates queued steps");
+	Fixture choice;
+	choice.input.Focus("choice"); choice.Press(MenuInput::Right);
+	actions = choice.Actions();
+	Check(choice.input.CanDispatchControlAction(actions[0]),"current choice is dispatchable");
+	choice.values["choice"].enabledOptions[0] = false; choice.Refresh();
+	Check(!choice.input.CanDispatchControlAction(actions[0]),"option disabled after queue cannot dispatch");
+	choice.values["choice"].enabledOptions[0] = true; choice.values["choice"].optionCount = 0; choice.Refresh();
+	Check(!choice.input.CanDispatchControlAction(actions[0]),"removed counted option cannot dispatch");
+	choice.values["choice"].optionCount.reset(); choice.values["choice"].value = std::string("value5"); choice.Refresh();
+	Check(!choice.input.CanDispatchControlAction(actions[0]),"external choice value invalidates old selection");
+}
 static void QueueBound() {
 	Fixture f; f.input.Focus("toggle");
 	for (unsigned i = 0; i < 256; ++i) f.Press(MenuInput::Accept);
@@ -269,8 +307,41 @@ static void QueueBound() {
 	auto a = f.Actions(); Check(a.size() == 256 && !f.input.Overflowed(),"bounded queue retains all frozen preceding proposals");
 	Check(!std::get<bool>(*a.back().proposal),"overflow did not mutate queued values");
 }
+static void ButtonContextOwnership() {
+	Fixture f;
+	Expression context; context.type = 2; context.state = "subject";
+	f.model.root.children[0].control->context = context;
+	f.input.Reset(f.model); f.input.SetBounds(f.bounds);
+	Check(!f.input.CanActivate("button"),"context button waits for authoritative subject");
+	f.values["button"].value = std::string("connection-a"); f.Refresh();
+	f.Accept("button"); auto queued = f.Actions().front();
+	Check(queued.contextToken && f.input.CanDispatchControlAction(queued),"current button subject can dispatch");
+	f.Refresh(); Check(f.input.CanDispatchControlAction(queued),"unchanged subject retains its activation");
+	f.values["button"].value = std::string("connection-b"); f.Refresh();
+	Check(!f.input.CanDispatchControlAction(queued),"queued action cannot follow a replacement subject");
+	f.values["button"].value = std::string("connection-a"); f.Refresh();
+	Check(!f.input.CanDispatchControlAction(queued),"returning subject cannot revive old work");
+	f.input.Focus("button"); f.input.Input(MenuInput::Accept,true);
+	f.values["button"].value = std::string("connection-b"); f.Refresh();
+	f.input.Input(MenuInput::Accept,false);
+	Check(f.Actions().empty(),"held semantic press is canceled when its subject changes");
+	f.input.Hover("button"); f.input.Pointer(true);
+	f.values["button"].value = std::string("connection-c"); f.Refresh();
+	f.input.Pointer(false); Check(f.Actions().empty(),"held pointer press cannot select a replacement row");
+	f.Accept("button"); auto fresh = f.Actions().front();
+	Check(f.input.CanDispatchControlAction(fresh),"a fresh press can select the replacement subject");
+	auto forged = fresh; forged.contextToken = 0;
+	Check(!f.input.CanDispatchControlAction(forged),"missing context token fails closed");
+	auto invalid = f.values; invalid["button"].value = 4.0;
+	Check(!f.input.SetReadbacks(invalid,f.error) && f.input.CanDispatchControlAction(fresh),"invalid context readback is atomic");
+	invalid = f.values; invalid.erase("button");
+	Check(!f.input.SetReadbacks(invalid,f.error),"missing context readback is rejected");
+	const auto snapshot = f.input.Capture();
+	Check(f.input.Restore(snapshot,f.error) && !f.input.CanDispatchControlAction(fresh),"restore cannot carry queued context authority");
+}
+
 int main() {
 	ButtonAndToggle(); AtomicReadbacks(); SliderKeyboard(); SliderPointerAndCancel(); ChoiceNavigation(); ChoiceStepping(); FocusPresentation(); LostFocusResumes();
-	ChoicePointerAndReadback(); PersistenceAndLifetime(); QueueBound();
+	ChoicePointerAndReadback(); PersistenceAndLifetime(); QueuedReadbackOwnership(); ButtonContextOwnership(); QueueBound();
 	std::printf("PASS: value interaction (%u assertions)\n",checks); return 0;
 }

@@ -36,7 +36,7 @@ from build_retained_screens import FULL, OLIVE, ORANGE, VALUE, group, keyword, l
 from retained_create_server import ban_list_modal, text_row
 from retained_mp_menus import (ERROR, HEADING, INSET, MATCH_LIST_ROW_H, MATCH_STRIP_GAP, MATCH_STRIP_H, PAGE_TOP, PLACEHOLDER, PROMPT_BOTTOM,
                                PROMPT_H, SLOT_PITCH, VOTE_ROW_H, Document, action_plate, any_text, colour, heading_text, in_game_plate,
-                               link, page_group, row_face, value_row, wrapped_width)
+                               link, page_group, row_face, section_triggers, value_row, wrapped_width)
 
 # The page's sections, in the stock sub-pages' order, with their stock names.
 SECTIONS = ("players", "server", "console")
@@ -281,7 +281,8 @@ def admin_page(doc: Document, index: int, ident: str, width: float, height: floa
         tabs.append(node)
         controls.append(tab_id)
     strip = group("admin-strip", {**b.absolute(left=0, top=0, width=page_width, height=MATCH_STRIP_H), "display": keyword("flex"),
-                                  "flex-direction": keyword("row"), "align-items": keyword("center")}, tabs)
+                                  "flex-direction": keyword("row"), "align-items": keyword("center")},
+                  [*tabs, section_triggers(doc, "admin-triggers", SECTION_KEYS, page_width)])
     rule = vector("admin-strip-rule", b.absolute(left=0, top=MATCH_STRIP_H, width=page_width, height=1), [
         path("rule", [(0, 0), ({"fraction": 1}, 0), ({"fraction": 1}, 1), (0, 1)], fill=solid(rgb(OLIVE, 0.5)))])
     section_top = MATCH_STRIP_H + MATCH_STRIP_GAP
@@ -356,7 +357,7 @@ def admin_page(doc: Document, index: int, ident: str, width: float, height: floa
                                                 "display": keyword("flex"), "flex-direction": keyword("column")}, right_rows)
     apply_name, apply_verb = APPLY
     apply = action_plate(doc, "admin-apply", f"mp.admin.{apply_name}", apply_w, section_height - 58, "admin_apply",
-                         [{"op": "action", "action": apply_verb}], primary=True)
+                         [{"op": "action", "action": apply_verb}], primary=True, menu_button=True)
     controls.append("admin-apply")
     server_section = section_group("server", 1, [server_left, server_right,
                                                  group("admin-apply-holder", b.absolute(left=0, top=0, width=apply_w, height=section_height),

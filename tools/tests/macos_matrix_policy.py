@@ -79,7 +79,11 @@ def validate_release_facing_docs() -> None:
         "Apple Silicon/arm64 Macs on macOS 11 or later",
         "getting started macOS floor and architecture",
     )
-    require(getting_started, "Intel Mac and universal2 packages are not published yet", "getting started Intel/universal2 wording")
+    require(
+        getting_started,
+        "Our GitHub releases do not yet publish Intel Mac or universal2 packages",
+        "getting started Intel/universal2 wording",
+    )
     require(getting_started, "Rosetta is not a supported release target", "getting started Rosetta wording")
     require(
         package_readme,

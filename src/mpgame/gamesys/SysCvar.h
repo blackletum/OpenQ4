@@ -510,6 +510,7 @@ extern idCVar net_clientPredictWeaponSwitch;
 extern idCVar net_mpPredictMode;
 extern idCVar net_mpPredictMaxFrames;
 extern idCVar net_mpPredictDebug;
+extern idCVar net_mpRemoteExtrapolation;
 extern idCVar net_mpLagCompensation;
 extern idCVar net_mpLagCompMaxMS;
 extern idCVar net_mpLagCompBiasMS;

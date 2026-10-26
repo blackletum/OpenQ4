@@ -297,7 +297,25 @@ static void AtomicReadbacks() {
 	const auto countedBefore=countedState.Variables();
 	Check(!countedState.Set({{"divisor",0.0}},error) && error.find("Control 'choice'")!=std::string::npos && countedState.Variables()==countedBefore,"an invalid count expression cannot partially publish");
 }
+static void ButtonContexts() {
+	auto source = Fixture();
+	StateDecl(source,"subject","string","");
+	source["root"]["children"][3]["control"]["context"] = Ref("subject");
+	Document document; Load(document,source);
+	State state; std::string error;
+	Check(state.Reset(document.Model(),error) && state.Set({{"subject",std::string("8193")}},error) &&
+		state.ControlValues().at("button").value == StateValue(std::string("8193")),"button context evaluates a typed subject");
+	Check(state.Set({{"subject",std::string("16385")}},error) && state.ControlValues().at("button").value == StateValue(std::string("16385")),"button context follows authoritative state");
+	for (int invalid = 0; invalid < 3; ++invalid) {
+		auto bad = source;
+		if (invalid == 0) bad["root"]["children"][3]["control"]["context"] = Ref("brightness");
+		if (invalid == 1) bad["root"]["children"][3]["control"]["context"] = Ref("absent");
+		if (invalid == 2) bad["root"]["children"][0]["control"]["context"] = Ref("subject");
+		std::vector<Diagnostic> diagnostics;
+		Check(!document.Load(Text(bad),diagnostics) && !diagnostics.empty(),"context rejects wrong types, absent state and non-buttons");
+	}
+}
 int main() {
-	Schema(); Inputs(); AtomicReadbacks();
+	Schema(); Inputs(); AtomicReadbacks(); ButtonContexts();
 	std::printf("UI value-control schema and atomic readbacks passed: %u checks\n",checks);
 }

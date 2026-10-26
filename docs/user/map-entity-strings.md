@@ -1,5 +1,7 @@
 # Map Entity Strings
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 can replace or extend the entities spawned by a retail map without
 editing, recompiling, or redistributing that map. This is intended for mods,
 server packages, compatibility fixes, and alternate gameplay layouts.

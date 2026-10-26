@@ -546,7 +546,7 @@ def validate_documentation_entry_points() -> None:
     release = read("docs/dev/release-completion.md")
     require(
         readme,
-        "[Demo Library and Multi-View Demos](docs/user/multiview-demos.md)",
+        "[Demo Library and Multi-View Demos](https://github.com/themuffinator/openQ4/blob/v0.13.2/docs/user/multiview-demos.md)",
         "README demo guide",
     )
     require(release, "MVD 1.2", "release completion demo compatibility note")

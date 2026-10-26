@@ -515,6 +515,7 @@ private:
 
 	int						buildMsec;
 	int						gapJumpLinks;
+	int						trenchRimLinks;	// gap jumps over a trench to its far rim
 	// Smallest stored edge-cost/geometric-distance ratio.  Scaling Euclidean
 	// distance by this keeps A* admissible even with cheap long-range
 	// transports; the landmarks supply the real guidance on top of it.

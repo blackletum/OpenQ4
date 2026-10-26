@@ -152,6 +152,9 @@ float ReceiveGain() {
 
 void Play( int client, unsigned int generation, const int16_t* pcm ) {
 	if ( !soundSystemLocal.hardware.GetOpenALContext() ) return;
+	// A lost endpoint plays nothing: drop the frame rather than queue speech that
+	// would be late when it returns. A stopped source restarts with the next frame.
+	if ( !soundSystemLocal.hardware.IsOutputConnected() ) { ++playbackDrops; return; }
 	Playback* target = NULL;
 	for ( Playback& channel : playback ) if ( channel.client == client && channel.generation == generation ) target = &channel;
 	if ( !target ) {
@@ -242,6 +245,12 @@ void TestTone( const idCmdArgs& args ) {
 void SoundVoiceChat_InitCommands() {
 	cmdSystem->AddCommand( "listVoiceChat", ListVoice, CMD_FL_SOUND, "report bounded voice capture/playback state" );
 	cmdSystem->AddCommand( "testVoiceChat", TestTone, CMD_FL_SOUND | CMD_FL_CHEAT, "send up to ten seconds of synthetic voice; never opens a microphone" );
+}
+
+void SoundVoiceChat_OutputInterrupted() {
+#if defined(USE_OPENAL) && !defined(ID_DEDICATED)
+	for ( Playback& channel : playback ) if ( channel.source ) alSourceStop( channel.source );
+#endif
 }
 
 void SoundVoiceChat_Shutdown() {

@@ -376,11 +376,11 @@ def validate_windows_ipv6_specifics() -> None:
         require(routing, token, "Windows address family routing")
 
     # A queued datagram is routed by its own family, which may differ from the
-    # datagram that filled the latency queue.
+    # datagram that filled the delay line.
     send = function_body(source, "void idPort::SendPacket", "Windows delayed send routing")
     require(
         send,
-        "Net_SendUDPPacket( Net_SocketForAddress( netSocket, netSocket6, msg->address ), msg->size, msg->data, msg->address );",
+        "Net_SendUDPPacket( Net_SocketForAddress( ipv4Socket, ipv6Socket, address ), length, bytes, address );",
         "Windows delayed send routing",
     )
     require(
@@ -455,16 +455,18 @@ def validate_posix_ipv6_specifics() -> None:
     require_before(
         send,
         "if ( to.type == NA_MULTICAST6 )",
-        "if ( !NetadrToSockadr( &to, &addr, &addrLen ) )",
+        "Net_SendDatagram( netSocket, netSocket6, to, packetData, size )",
         "POSIX multicast send precedes single-destination conversion",
     )
+    datagram = function_body(source, "static bool Net_SendDatagram(", "POSIX single-destination send")
+    require(datagram, "if ( !NetadrToSockadr( &to, &addr, &addrLen ) )", "POSIX single-destination conversion")
 
     # SO_REUSEADDR on a UDP socket would let a second instance bind a port the
     # first already holds, which silently breaks the caller's port scan.
     reject(source, "SO_REUSEADDR", "POSIX UDP address reuse")
     reject(source, "SO_REUSEPORT", "POSIX UDP port reuse")
 
-    resolver = function_body(source, "static bool Sys_ResolveSockaddr", "POSIX address resolver")
+    resolver = function_body(source, "static int Sys_ResolveSockaddrs", "POSIX address resolver")
     require(
         resolver,
         "hints.ai_flags = AI_NUMERICSERV | ( doDNSResolve ? AI_ADDRCONFIG : AI_NUMERICHOST );",
@@ -638,7 +640,7 @@ def validate_family_scoped_resolution() -> None:
         source = read(relative_path)
         resolver = function_body(
             source,
-            "Net_StringToSockaddr" if platform == "Windows" else "static bool Sys_ResolveSockaddr",
+            "static int Net_ResolveSockaddrs" if platform == "Windows" else "static int Sys_ResolveSockaddrs",
             f"{platform} resolver",
         )
         for token in (
@@ -924,6 +926,62 @@ def validate_ipv6_delivery_docs() -> None:
         require(building, token, "IPv6 self-test build guidance")
 
 
+def validate_connect_failover() -> None:
+    """A host name's other A/AAAA records are tried when its first never answers."""
+    header = read("src/sys/NetworkEndpoint.h")
+    for token in (
+        "inline int OrderCandidates( const int *families, int count, bool preferIPv4, int *order, int maxOrder )",
+        "const int CONNECT_CHALLENGES_PER_CANDIDATE = 3;",
+        "inline bool FailoverBeforeChallenge( connectFailover_t &state )",
+        "state.index = ( state.index + 1 ) % state.count;",
+    ):
+        require(header, token, "shared connect failover")
+
+    for relative_path, platform, converter in (
+        (WINDOWS_NET, "Windows", "Net_SockadrToNetadr"),
+        (POSIX_NET, "POSIX", "SockadrToNetadr"),
+    ):
+        source = read(relative_path)
+        candidates = function_body(source, "int Sys_StringToNetAdrCandidates(", f"{platform} candidate resolver")
+        for token in (
+            "maxCandidates > idNetworkEndpoint::MAX_RESOLVED_CANDIDATES",
+            f"!{converter}( reinterpret_cast<const struct sockaddr *>(",
+            "Sys_CompareNetAdrBase( candidates[j], candidate ) && candidates[j].port == candidate.port",
+        ):
+            require(candidates, token, f"{platform} candidate resolver")
+
+    public = read("src/sys/sys_public.h")
+    require(
+        public,
+        "int\t\t\t\tSys_StringToNetAdrCandidates( const char *s, netadr_t *candidates, int maxCandidates, bool doDNSResolve );",
+        "candidate resolver declaration",
+    )
+
+    client = read("src/framework/async/AsyncClient.cpp")
+    by_name = function_body(client, "void idAsyncClient::ConnectToServer( const char *address )", "host name connect")
+    require(by_name, "Sys_StringToNetAdrCandidates( address, candidates, MAX_CONNECT_CANDIDATES, true )", "host name connect")
+    require_before(by_name, "ConnectToServer( candidates[ 0 ] );", "connectCandidateCount = candidateCount;", "host name connect")
+    by_address = function_body(client, "void idAsyncClient::ConnectToServer( const netadr_t adr )", "address connect")
+    require_before(by_address, "Clear();", "connectCandidateCount = 1;", "address connect")
+    setup = function_body(client, "void idAsyncClient::SetupConnection( void )", "connection setup")
+    require_before(
+        setup,
+        "idNetworkEndpoint::FailoverBeforeChallenge( failover )",
+        'msg.WriteString( "challenge" );',
+        "connection setup failover",
+    )
+    require(setup, "serverAddress = connectCandidates[ failover.index ];", "connection setup failover")
+    clear = function_body(client, "void idAsyncClient::Clear( void )", "client state clear")
+    require(clear, "connectCandidateCount = 0;", "client state clear")
+
+    native = read("tools/tests/native/CoreSafetyTest.cpp")
+    require(native, "ExerciseConnectFailover();", "native connect failover coverage")
+    require(native, '"6644", true, 8, "2031"', "native interleaved candidate order")
+
+    networking = read("docs/user/multiplayer-networking.md")
+    require(networking, "the first server to answer is the one you join", "networking guide failover")
+
+
 def validate_critical_mutation_sensitivity() -> None:
     """Prove the contracts above actually reject the regressions they describe."""
     header = read("src/sys/NetworkEndpoint.h")
@@ -1058,6 +1116,7 @@ def main() -> None:
     validate_master_server_ipv6_list()
     validate_console_address_arguments()
     validate_family_scoped_resolution()
+    validate_connect_failover()
     validate_server_list_deduplication()
     validate_local_server_address_text()
     validate_runtime_ipv6_selftest()

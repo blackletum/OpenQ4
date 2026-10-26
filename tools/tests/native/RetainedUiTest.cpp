@@ -1131,6 +1131,59 @@ static void CheckDetailCard(TestHost& host) {
 	Check(values.contains("subject") && runtime.GetStateValue("picked",values["picked"]) && !runtime.GetStateValue("absent",values["subject"]),
 		"one state reads without copying the rest; an undeclared one is refused");
 }
+// Accept's verb follows focus (section 13.4): the focused button's prompt,
+// a key or a string expression over state, the caller's fallback for a
+// control that names none, and nothing while no focused control can act.
+static void CheckAcceptPrompts(TestHost& host) {
+	const auto button = [](const char* id, double top, const std::string& extra) {
+		return std::string(R"({"id":")")+id+R"(","type":"group","properties":{"position":{"type":"keyword","value":"absolute"},)"
+			R"("left":{"type":"length","value":40,"unit":"dp"},"top":{"type":"length","value":)"+std::to_string(top)+R"(,"unit":"dp"},)"
+			R"("width":{"type":"length","value":300,"unit":"dp"},"height":{"type":"length","value":30,"unit":"dp"},)"
+			R"("opacity":{"type":"number","value":1}},)"
+			R"("control":{"role":"button","event":"pick","label":"#str_200013","states":{"default":")"+id+R"(-rest","hover":")"+id+
+			R"(-rest","focus":")"+id+R"(-rest","pressed":")"+id+R"(-rest","disabled":")"+id+R"(-rest"})"+extra+"}}";
+	};
+	const auto rest = [](const char* id) {
+		return std::string(R"({"id":")")+id+R"(-rest","durationMs":1,"tracks":[{"node":")"+id+R"(","property":"opacity","keys":[)"
+			R"({"atMs":0,"value":{"type":"number","value":1}},{"atMs":1,"value":{"type":"number","value":1}}]}]})";
+	};
+	const auto document = [&](const std::string& extra) {
+		return std::string(R"json({"format":"openq4-ui","version":1,"id":"accept-prompts",
+		 "state":{"chosen":{"type":"boolean","initial":false},"verb":{"type":"string","initial":"#str_231521"},
+		  "picked":{"type":"boolean","initial":false}},
+		 "root":{"id":"root","type":"group","properties":{"width":{"type":"length","value":100,"unit":"%"},"height":{"type":"length","value":100,"unit":"%"}},
+		  "children":[)json")+button("named",40,R"(,"prompt":"#str_231520")")+","+button("plain",80,"")+","+
+			button("chosen",120,R"(,"prompt":{"op":"select","args":[{"state":"chosen"},"#str_231522","#str_231042"]})")+","+
+			button("stated",160,R"(,"prompt":{"state":"verb"})"+extra)+R"json(]},
+		 "timelines":[)json"+rest("named")+","+rest("plain")+","+rest("chosen")+","+rest("stated")+R"json(],
+		 "events":{"pick":[{"op":"setState","values":{"picked":true}}]}})json";
+	};
+	const auto loads = [](const std::string& source) { Document parsed; std::vector<Diagnostic> found; return parsed.Load(source,found); };
+	Runtime runtime(host);
+	std::vector<Diagnostic> diagnostics; std::string error;
+	const bool loaded = runtime.Initialize() && runtime.LoadDocument(document(""),"accept-prompts.q4ui",diagnostics);
+	for (const auto& d : diagnostics) std::fprintf(stderr,"%s %s\n",d.pointer.c_str(),d.message.c_str());
+	Check(loaded,"the accept prompt document loads");
+	Viewport viewport; viewport.width = 1280; viewport.height = 720;
+	runtime.Frame(viewport,1);
+	const std::string select = "#str_231042";
+	Check(runtime.FocusedControl().empty() && runtime.AcceptPrompt(select,1.1).empty(),"nothing focused leaves nothing to accept");
+	Check(runtime.FocusControl("named",1.2) && runtime.AcceptPrompt(select,1.2) == "#str_231520","a button names its own verb");
+	Check(runtime.FocusControl("plain",1.3) && runtime.AcceptPrompt(select,1.3) == select,"a button without one keeps the bar's verb");
+	Check(runtime.FocusControl("chosen",1.4) && runtime.AcceptPrompt(select,1.4) == select,"an expression chooses the verb from state");
+	Check(runtime.SetState({{"chosen",true}},error,1.5) && runtime.AcceptPrompt(select,1.5) == "#str_231522","and follows it as it changes");
+	Check(runtime.FocusControl("stated",1.6) && runtime.AcceptPrompt(select,1.6) == "#str_231521","a verb can come from a string state");
+	Check(runtime.SetState({{"verb",std::string("Load")}},error,1.7) && runtime.AcceptPrompt(select,1.7) == select,
+		"a state that holds no localization key keeps the bar's verb");
+	Check(runtime.FocusControl("named",1.8) && runtime.SetControlEnabled("named",false,1.8) && runtime.AcceptPrompt(select,1.8).empty(),
+		"a focused control that cannot act leaves nothing to accept");
+	// Only buttons take a prompt, and a literal one must be a localization key.
+	Check(!loads(document(R"(,"extra":1)")),"unknown control fields stay refused");
+	std::string literal = document(""); literal.replace(literal.find("\"#str_231520\""),13,"\"Load\"");
+	Check(!loads(literal),"a literal prompt must be a localization key");
+	std::string numeric = document(""); numeric.replace(numeric.find("\"#str_231520\""),13,"7");
+	Check(!loads(numeric),"a prompt must be text");
+}
 // A document parsed once serves both a GUI and its view: a copy shares the
 // parsed source and model, an edit of one copy replaces only its own, and a
 // runtime loaded from the parsed document presents as one loaded from the
@@ -2124,6 +2177,7 @@ int main(int argc, char** argv) {
 	Check(host.errors==0,"no library warnings or errors");
 	CheckCompletionPrograms(host);
 	CheckDetailCard(host);
+	CheckAcceptPrompts(host);
 	CheckSharedDocument(host);
 	CheckSoftFocus(host);
 	CheckDirectBackdrop(host);
@@ -2140,5 +2194,5 @@ int main(int argc, char** argv) {
 	CheckCoverageRaster();
 	CheckHiddenPresentation(host);
 	CheckCompoundPlateCache(host);
-	std::puts("Retained UI: density, layout, input, clipping, motion, bindings, independent contexts, bounded backend reuse, transactional instance snapshots, restart, completion programs, detail cards, shared documents, soft focus and retained meshes passed");
+	std::puts("Retained UI: density, layout, input, clipping, motion, bindings, independent contexts, bounded backend reuse, transactional instance snapshots, restart, completion programs, detail cards, accept prompts, shared documents, soft focus and retained meshes passed");
 }

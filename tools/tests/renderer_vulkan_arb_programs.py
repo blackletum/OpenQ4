@@ -338,7 +338,7 @@ def prove(report: dict) -> dict:
         for name in PROGRAMS:
             if f"Vulkan: drawing authored ARB 'tests/oq4_arb_{name}.vfp'" not in log:
                 failures.append(f'{name}: program did not reach the Vulkan ARB draw path')
-        if 'unsupported ARB material program skipped' in log:
+        if 'authored ARB material program stage skipped' in log or '; the stage is skipped' in log:
             failures.append('an authored ARB program was skipped')
     if set(images) == set(CASES):
         for name, (_, reference) in CONTROLS.items():

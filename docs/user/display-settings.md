@@ -1,5 +1,7 @@
 # Display Settings and Multi-Screen Guide
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 This guide covers openQ4 display/window settings for end users, including multi-monitor behavior and modern fullscreen/window handling.
 
 ## Quick Start
@@ -261,6 +263,28 @@ does not replace or remove the OpenGL renderer.
 | `com_steamDeckFrameCap` | `0` | Steam Deck default cap override (`0` = use detected display refresh clamped to the Deck-oriented range). |
 
 The Steam Deck auto cap preserves custom `com_maxfps` values. Set `com_steamDeckAutoFrameCap 0` to opt out, or set `com_maxfps` directly for a fixed cap.
+
+### Smooth motion between game ticks
+
+Quake 4's game runs 60 times a second. Above 60 FPS, openQ4 draws the camera,
+your weapon, moving objects, ragdolls, flying debris, cutscene and security
+cameras, third person and the death camera between those ticks, so motion stays
+smooth instead of stepping. Gameplay, networking, saves and demos keep their
+original timing.
+
+| Setting | Default | What it does |
+|---|---:|---|
+| `g_presentationInterpolation` | `1` | Draw the world and alternate views between game ticks. `0` returns everything to the 60 Hz tick. |
+| `in_presentationView` | `0` | **Late look (opt-in).** Turns the view with your mouse, gyro, look keys and stick on every drawn frame, instead of up to a tick later. Your weapon, its muzzle flash and its lights turn with the view. Shots, hit detection and the network still use the game's own 60 Hz aim. |
+| `com_latencyFlash` | `0` | **Latency measurement aid.** Draws a white bar down the left edge on the first frame after you press fire, for click-to-photon sensors such as NVIDIA LDAT or OSLTT. Leave it off for normal play. |
+
+Late look stands down, and the view behaves exactly as before, while mouse
+smoothing or filtering is on (`m_smooth` above `1`, `m_filter` above `0`), in a
+menu, the weapon or quick-chat wheel, a vehicle, a cutscene or camera view,
+third person, VR, while dead, or while playing back a recorded demo. Tracers,
+impacts and projectiles still start where the shot actually left, so on very
+fast turns they can appear a few units from the drawn barrel for their first
+frame; that gap is smaller than without late look.
 
 ## Anti-Aliasing Settings (New)
 

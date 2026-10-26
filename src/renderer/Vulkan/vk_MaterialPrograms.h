@@ -27,7 +27,17 @@ const char *VK_MaterialProgramFileName( unsigned int target, unsigned int handle
 // Whether one ARB program, on its own, translates for this backend.
 bool VK_MaterialPrograms_ARBTranslatable( unsigned int target, const char *file );
 
+// True the first time a subject/reason pair is seen since the last reload, so
+// a rejected or approximated stage is reported once instead of every frame.
+// The set is bounded; once full, later pairs are counted as suppressed.
+bool VK_MaterialPrograms_ReportOnce( const char *subject, const char *reason );
+
+// reloadGLSLprograms/reloadARBprograms: versions are re-validated on next use;
+// unchanged sources reuse their version. The table is bounded: a new version
+// evicts the least recently drawn stale one that no frame in flight uses.
 void VK_MaterialPrograms_Reload();
+// reportShaderPrograms: every version with its state, diagnostic, draws and
+// skips since the last reload, plus capacity and suppression counters.
 void VK_MaterialPrograms_Report();
 void VK_MaterialPrograms_BeginFrame( int slot );
 void VK_MaterialPrograms_Shutdown();

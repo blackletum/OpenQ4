@@ -74,8 +74,53 @@ static void Opening(View& v,float density,int width,int height,bool wholeFirstSe
  }
 }
 static void Layout(View& v,float density,int width,int height){std::fprintf(stderr,"layout %dx%d density=%g expansion=%g\n",width,height,density,v.host.expansion);v.viewport.width=width;v.viewport.height=height;v.viewport.displayScale=density;std::istringstream labels(v.host.strings.at("#str_229977"));std::string label;size_t longest=0;unsigned candidate=0,index=0;while(std::getline(labels,label,';')){if(label.size()>longest){longest=label.size();candidate=index;}++index;}Check(v.tx.Edit(View::Owner,{{"com_performancePreset",std::string(PerformancePresets()[candidate].name)}}).code==SettingsCode::Ok,"select longest localized readback for fit");v.Sync();Check(v.runtime.FocusControl("settings_preset",v.time),"preset reachable");v.Frame();auto box=v.Box("settings_preset");Check(box.x>=0&&box.x+box.width<=width+1,"selector within horizontal viewport");TextFits(v,"settings_preset-label");TextFits(v,"settings_preset-value");v.Open();v.Key(MenuInput::End);v.Frame();auto popup=v.Box("settings_preset-popup");Check(popup.x>=-.1f&&popup.y>=-.1f&&popup.x+popup.width<=width+.2f&&popup.y+popup.height<=height+.2f,"popup fully clamped to viewport");for(unsigned option=0;option<6;++option)TextFits(v,("settings_preset-option-"+std::to_string(option)+"-label").c_str());v.Key(MenuInput::Back);v.Frame();Check(v.runtime.FocusControl("settings_autodetect",v.time),"Auto remains reachable at narrow viewport");v.Frame();auto button=v.Box("settings_autodetect"),body=v.Box("settings-body");Check(button.x>=0&&button.x+button.width<=width+1,"Auto horizontally contained");if(button.y<body.y-.5f||button.y+button.height>body.y+body.height+.5f)std::fprintf(stderr,"auto density=%g expansion=%g button=%g,%g,%g,%g body=%g,%g,%g,%g\n",density,v.host.expansion,button.x,button.y,button.width,button.height,body.x,body.y,body.width,body.height);Check(button.y>=body.y-.5f&&button.y+button.height<=body.y+body.height+.5f,"focused Auto wholly revealed in scroll body");TextFits(v,"settings_autodetect-label");v.Key(MenuInput::Accept);auto actions=v.runtime.TakeActions();Check(actions.size()==1&&actions[0].event=="autodetect","Auto button queues guarded authored event");v.Frame();auto old=v.Box("settings_preset");v.Frame();box=v.Box("settings_preset");Check(old.x==box.x&&old.y==box.y&&old.width==box.width&&old.height==box.height,"unchanged layout settles");Check(v.host.draws>0&&v.host.writes==0,"actual render and zero native writes");}
+// The Menu button (section 13.5): Apply with pending changes, Back in the
+// dialogs and on a clean page, and the focus to a typed number Apply waits for.
+static void MenuButton(const std::string& source,const std::string& locale){View v(source,locale);
+ auto Ops=[&](){std::vector<std::string> o;for(auto& a:v.Event("onMenuButton").actions)o.push_back(a.operation);return o;};
+ Check(v.runtime.HasEvent("onMenuButton"),"SYSTEM declares the Menu button");Check((Ops()==std::vector<std::string>{"ui.dismiss"}),"clean page: Menu closes as Back");
+ v.Accept(v.Select(0));Check(v.tx.Dirty(),"a preset leaves pending changes");Check(Ops().empty(),"Apply unavailable: Menu does nothing");
+ v.canApply=true;v.Sync();v.Frame();Check((Ops()==std::vector<std::string>{"settings.system.apply"}),"pending changes: Menu applies");
+ v.pending=true;v.Sync();v.Frame();Check((Ops()==std::vector<std::string>{"ui.numberDrafts.focus"}),"a typed number first takes the focus");v.pending=false;v.Sync();v.Frame();
+ Check(v.Event("onBack").actions.empty()&&v.runtime.GetState().at("page.discardVisible")==StateValue(true),"Back asks to discard");
+ Check(v.runtime.ModalOpen(),"the discard dialog holds the input at once: the adapter keeps Menu as Back");v.Frame();Check(v.runtime.ModalOpen(),"and still after a frame");
+ auto e=v.Event("onMenuButton");Check(e.actions.size()==1&&e.actions[0].operation=="ui.numberDrafts.focus"&&v.runtime.GetState().at("page.discardVisible")==StateValue(false),"in the discard dialog Menu continues editing, as Back");
+ v.Frame();Check(!v.runtime.ModalOpen(),"the dialog closed releases the input");
+ Check(v.runtime.SetState({{"settings.confirmationVisible",true},{"settings.canRevert",true}},v.error,v.time),v.error.c_str());v.Frame();
+ Check((Ops()==std::vector<std::string>{"settings.system.revert"}),"in the display confirmation Menu reverts, as Back");Check(v.host.writes==0,"the Menu button never writes settings itself");}
+static void ExternalRefresh(const std::string& source,const std::string& locale) {
+ View v(source,locale);
+ const auto queued=v.Select(0);
+ Check(v.runtime.CanDispatchControlAction(queued,v.time),"preset proposal starts eligible");
+ for(const auto& [key,value]:v.Patch(*FindPerformancePreset("ultra")))v.host.live.at(key)=value;
+ Check(v.tx.Refresh(View::Owner).code==SettingsCode::Ok,"external preset refreshes clean transaction");
+ v.Sync();v.Frame();
+ Check(v.Alias("draftPreset")=="ultra" && v.Alias("baselinePreset")=="ultra" &&
+       std::get<std::string>(v.Widget().accepted)=="ultra","actual SYSTEM aliases and painted selector follow external preset");
+ Check(!v.runtime.CanDispatchControlAction(queued,v.time),"old preset proposal cannot overwrite external readback");
+ Check(v.runtime.FocusControl("settings_brightness_number",v.time) &&
+       v.runtime.BeginNumberEdit("settings_brightness_number",v.error,v.time),"open local number editor before external change");
+ auto number=v.runtime.GetWidgetState("settings_brightness_number")->number;
+ Check(v.runtime.SetNumberSelection("settings_brightness_number",number->identity,0,number->state.text.size(),v.error,v.time),"select local number");
+ number=v.runtime.GetWidgetState("settings_brightness_number")->number;
+ Check(v.runtime.ReplaceNumberSelection("settings_brightness_number",number->identity,"-",v.error,v.time),"retain unfinished number text");
+ v.host.live["r_brightness"]=1.625;
+ Check(v.tx.Refresh(View::Owner).code==SettingsCode::Ok,"external numeric value refreshes service without committing local text");
+ v.Sync();v.Frame();
+ number=v.runtime.GetWidgetState("settings_brightness_number")->number;
+ Check(number && number->state.text=="-" && number->conflict,"external refresh preserves unfinished text with a conflict");
+ NumberDraftSummary drafts;
+ Check(v.runtime.QueryNumberDrafts(drafts,v.error,v.time) && drafts.blocking.size()==1,"conflicting local text still blocks Apply and dismissal");
+ Check(v.runtime.DiscardNumberDrafts(drafts.barrier,v.error,v.time),"explicit local discard accepts refreshed readback");
+ v.Sync();v.Frame();
+ Check(v.runtime.QueryNumberDrafts(drafts,v.error,v.time) && drafts.blocking.empty() &&
+       v.runtime.GetWidgetState("settings_brightness_number")->accepted==StateValue(1.625),"discard reveals actual numeric value");
+ Check(!v.tx.Dirty() && v.host.writes==0,"refresh and local conflict handling never write host settings");
+}
 int main(int argc,char** argv){
  Check(argc==3,"page and locale directory args");auto source=Read(argv[1]);std::string dir=argv[2];Semantics(source,dir+"/english_openq4.lang");
+ ExternalRefresh(source,dir+"/english_openq4.lang");
+ MenuButton(source,dir+"/english_openq4.lang");
  for(auto* locale:{"english","spanish","polish","russian","french","italian","german"})for(float expansion:{1.f,1.4f}){
   std::fprintf(stderr,"locale %s expansion=%g\n",locale,expansion);
   View view(source,dir+"/"+locale+"_openq4.lang",1,1280,720,expansion);

@@ -1330,6 +1330,23 @@ static void Con_Clear_f( const idCmdArgs &args ) {
 	localConsole.Clear();
 }
 
+// com_latencyFlash (UsercmdGen.cpp): true once for each press of the attack
+// button, taken by the first frame drawn after it; Arm stands in for a press.
+bool Usercmd_ConsumeLatencyFlash( void );
+void Usercmd_ArmLatencyFlash( void );
+
+static idCVar com_latencyFlash( "com_latencyFlash", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT,
+	"click-to-photon latency aid: draw a white bar down the left edge on the first frame drawn after the attack button goes down, for sensors such as NVIDIA LDAT and OSLTT" );
+
+/*
+==============
+Con_LatencyFlashTest_f
+==============
+*/
+static void Con_LatencyFlashTest_f( const idCmdArgs &args ) {
+	Usercmd_ArmLatencyFlash();
+}
+
 /*
 ==============
 Con_Dump_f
@@ -1432,6 +1449,7 @@ void idConsoleLocal::Init( void ) {
 
 	cmdSystem->AddCommand( "clear", Con_Clear_f, CMD_FL_SYSTEM, "clears the console" );
 	cmdSystem->AddCommand( "conDump", Con_Dump_f, CMD_FL_SYSTEM, "dumps the console text to a file" );
+	cmdSystem->AddCommand( "latencyFlashTest", Con_LatencyFlashTest_f, CMD_FL_SYSTEM | CMD_FL_CHEAT, "arms com_latencyFlash as an attack press would, without device input" );
 }
 
 /*
@@ -5012,6 +5030,14 @@ void	idConsoleLocal::Draw( bool forceFullScreen ) {
 
 	if ( !idAsyncNetwork::client.IsActive() && !idAsyncNetwork::server.IsActive() && aasFileOutOfDate ) {
 		SCR_DrawTextRightAlign( y, "AAS" );
+	}
+
+	// Taken every frame, so turning the flash on never shows a stale press.
+	if ( Usercmd_ConsumeLatencyFlash() && com_latencyFlash.GetBool() ) {
+		DrawSolidRect( 0.0f, 0.0f, SCREEN_WIDTH * 0.1f, SCREEN_HEIGHT, colorWhite, 1.0f );
+		if ( com_developer.GetBool() ) {
+			common->Printf( "latencyFlash: drawn at %d ms\n", Sys_Milliseconds() );
+		}
 	}
 
 	if ( keyCatching && ( forceFullScreen || displayFrac > 0.0f ) ) {

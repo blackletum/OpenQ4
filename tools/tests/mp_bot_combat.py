@@ -278,7 +278,83 @@ def main() -> None:
     if point_distance(projectile_at_crossing, teammate_at_crossing) > 1e-6:
         raise AssertionError("Moving teammate corridor reference is incorrect")
 
+    validate_team_knockback_throw()
+    validate_penetrating_hitscan()
     print("mp_bot_combat: ok")
+
+
+def validate_penetrating_hitscan() -> None:
+    """A penetrating hitscan must not pass through a foe into a team-mate.
+
+    idGameLocal::HitScan keeps tracing through every actor while the hitscan
+    def's penetrate is positive (the multiplayer railgun's is 1.0), so the bot
+    traces the whole range the same way instead of stopping at the first hit.
+    """
+    combat = read("src/mpgame/bots/BotCombat.cpp")
+    context = "penetrating hitscan team safety"
+    check = function_body(combat, "static bool BotCombatPenetratingShotHitsTeamMate(")
+    for token in (
+        'shooter->weapon->spawnArgs.GetString( "def_hitscan", "" )',
+        "gameLocal.FindEntityDefDict( hitscanName, false )",
+        'hitscan->GetFloat( "penetrate" ) <= 0.0f',
+        'hitscan->GetFloat( "range", "40000" )',
+        "!hit->IsType( idActor::GetClassType() )",
+        "BotCombatSameTeam( shooter, static_cast<idPlayer *>( hit ) )",
+        "ignore = hit;",
+    ):
+        require(check, token, context)
+    line_of_fire = function_body(combat, "bool BotCombatLineOfFireIsSafe(")
+    require(line_of_fire, "BotCombatPenetratingShotHitsTeamMate( shooter, shotOrigin, shotDirection )", context)
+    # Only the hitscan branch: a projectile stops at its first impact.
+    require_before(line_of_fire, "MASK_SHOT_BOUNDINGBOX, shooter );",
+                   "BotCombatPenetratingShotHitsTeamMate( shooter, shotOrigin, shotDirection )", context)
+
+    game = read("src/mpgame/Game_local.cpp")
+    for token in (
+        'penetrate = hitscanDict.GetFloat( "penetrate" );',
+        "if ( ent->IsType ( idActor::GetClassType() ) && penetrate > 0.0f ) {",
+        "additionalIgnore = ent;",
+    ):
+        require(game, token, "idGameLocal::HitScan pass-through the bot mirrors")
+
+
+def validate_team_knockback_throw() -> None:
+    """A blast must not throw a team-mate into the void, team damage on or off.
+
+    The bot's prediction must be the push the game applies: RadiusDamage's
+    falloff and fudged multiplayer direction, idPlayer::Damage's knockback_team
+    and g_knockback scale.  Both sides are pinned so they cannot drift apart.
+    """
+    combat = read("src/mpgame/bots/BotCombat.cpp")
+    context = "team knockback throw"
+    throw = function_body(combat, "static bool BotCombatSplashThrowsTeamMate(")
+    for token in (
+        "model.teamKnockback * model.power * ( 1.0f - distance / model.splashRadius )",
+        "( origin + idVec3( 0.0f, 0.0f, 31.875f ) ) - impact",
+        "direction.z += 24.0f;",
+        "g_knockback.GetFloat() * (float)knockback / 200.0f",
+        "BOTCOMBAT_TEAM_KNOCK_MIN_SPEED",
+        "BotCombatPredictedBoundsExposed( teamMate, splashIgnore, impact, leadTime )",
+        "navMesh.AirInputLandingSafe( origin, velocity + kick, vec3_origin, idMath::INFINITY )",
+    ):
+        require(throw, token, context)
+    model = function_body(combat, "static bool BotCombatCurrentShotModel(")
+    require(model, 'splash->GetInt( "knockback_team", va( "%d", knockback ) )', context)
+    require(model, "model.power = power;", context)
+
+    line_of_fire = function_body(combat, "bool BotCombatLineOfFireIsSafe(")
+    require(line_of_fire, "BotCombatSplashThrowsTeamMate( shooter, splashIgnore, actualImpact, shotModel, impactTime )", context)
+    # It runs after both team-damage branches, so it covers team damage on and off.
+    require_before(line_of_fire, "BOTCOMBAT_TEAM_PUSH_RADIUS", "BotCombatSplashThrowsTeamMate(", context)
+
+    game = read("src/mpgame/Game_local.cpp")
+    radius = function_body(game, "void idGameLocal::RadiusDamage(")
+    require(radius, "idVec3( 0.0f, 0.0f, 31.875f )", "RadiusDamage push direction the bot predicts")
+    require(radius, "dir[2] += 24;", "RadiusDamage push direction the bot predicts")
+    require(radius, "damageScale = dmgPower * ( 1.0f - dist / radius );", "RadiusDamage falloff the bot predicts")
+    player = read("src/mpgame/Player.cpp")
+    require(player, 'damageDef->dict.GetInt( "knockback_team", va( "%d", knockback ), knockback );', "player team knockback")
+    require(player, "kick *= g_knockback.GetFloat() * knockback * attackerPushScale / 200.0f;", "player knockback scale")
 
 
 if __name__ == "__main__":

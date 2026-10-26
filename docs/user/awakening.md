@@ -1,5 +1,7 @@
 # Quake 4: The Awakening on openQ4
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 The Awakening is the Quake 4 expansion Raven Software and Ritual Entertainment
 never released. Justin Marshall recovered and published its alpha. openQ4 plays
 its single-player campaign from your copy of that content, using openQ4's own

@@ -199,6 +199,7 @@ jobs:
             tools/tests/savegame_restore_recovery_runtime.py \
             tools/tests/ui_generated_image_runtime.py \
             tools/tests/filesystem_case_segments.py \
+            tools/tests/pinned_archive_headers.py \
             tools/tests/filesystem_mod_manifest.py \
             tools/tests/filesystem_write_qpath_safety.py \
             tools/tests/game_class_allocator_alignment.py \
@@ -308,14 +309,20 @@ jobs:
             tools/tests/mp_client_combat_effects.py \
             tools/tests/bse_retail_parity.py \
             tools/tests/mp_lag_compensation_contract.py \
+            tools/tests/mp_lag_compensation_state.py \
+            tools/tests/mp_client_prediction_state.py \
             tools/tests/mp_runtime_freshness.py \
             tools/tests/mp_weapon_switch_contract.py \
             tools/tests/multiview_demo.py \
             tools/tests/mvd_server_api_contract.py \
             tools/tests/mvd_recording_failure_contract.py \
+            tools/tests/mvd_recovery_contract.py \
+            tools/tests/mvd_start_state_contract.py \
             tools/tests/native_glx_shutdown.py \
             tools/tests/network_ipv4_support.py \
             tools/tests/network_ipv6_support.py \
+            tools/tests/network_impairment_contract.py \
+            tools/tests/network_impairment_state.py \
             tools/tests/network_security.py \
             tools/tests/openurl_security.py \
             tools/tests/openq4_pure_pack.py \
@@ -370,6 +377,8 @@ jobs:
             tools/tests/rigid_body_recovery_diagnostics.py \
             tools/tests/savegame_corruption_contract.py \
             tools/tests/savegame_gui_layout_contract.py \
+            tools/tests/weapon_gui_event_queue_contract.py \
+            tools/tests/turbo_scripted_movers.py \
             tools/tests/savegame_pointer_width_safety.py \
             tools/tests/savegame_v3_contract.py \
             tools/tests/sdl3_input_parity.py \
@@ -423,9 +432,12 @@ jobs:
             tools/tests/audio_center.py \
             tools/tests/audio_decode_budget.py \
             tools/tests/audio_dialogue.py \
+            tools/tests/audio_dialogue_coverage.py \
             tools/tests/audio_memory.py \
             tools/tests/audio_memory_runtime.py \
             tools/tests/audio_mod_reverb.py \
+            tools/tests/audio_output_recovery_runtime.py \
+            tools/tests/audio_scene_audit.py \
             tools/tests/audio_stream_budget.py \
             tools/tests/audio_streaming.py \
             tools/tests/audio_subtitles.py \
@@ -453,6 +465,7 @@ jobs:
             tools/ui/update_system_soft_focus.py \
             tools/ui/update_system_render_options.py \
             tools/ui/update_system_initial_focus.py \
+            tools/ui/update_system_menu_button.py \
             tools/tests/windows_text_store.py \
             tools/tests/windows_text_collection_bridge.py \
             tools/tests/windows_text_session.py \
@@ -473,6 +486,9 @@ jobs:
             tools/tests/ui_system_session_route.py \
             tools/tests/ui_controller_menu_pump.py \
             tools/tests/ui_retained_gate.py \
+            tools/tests/ui_player_identity.py \
+            tools/ui/capture_player_identity.py \
+            tools/ui/capture_save_browser.py \
             tools/tests/ui_stock_level_load.py \
             tools/ui/build_retained_screens.py \
             tools/ui/capture_retained_screens.py \
@@ -495,6 +511,8 @@ jobs:
             tools/tests/ui_capture_system_settings.py \
             tools/tests/ui_capture_system_page.py \
             tools/tests/ui_capture_system_exit.py \
+            tools/tests/ui_capture_multiplayer_rosters.py \
+            tools/tests/ui_capture_system_refresh.py \
             tools/tests/renderer_vid_restart_route.py \
             tools/tests/renderer_image_recovery_owner.py \
             tools/tests/renderer_image_recovery_module.py \
@@ -522,18 +540,24 @@ jobs:
             tools/tests/renderer_gl_display_policy.py \
             tools/tests/sdl3_strict_window.py \
             tools/tests/ui_capture_display_device.py \
+            tools/tests/ui_capture_multiplayer_rosters.py \
+            tools/tests/ui_capture_system_refresh.py \
             tools/ui/capture_display_device.py \
             tools/tests/ui_legacy_inventory.py \
             tools/tests/game_regression_suite.py \
             tools/tests/presentation_clock_ownership.py \
+            tools/tests/presentation_hf_contract.py \
+            tools/tests/presentation_look_runtime.py \
             tools/tests/ui_inventory_revision.py \
             tools/tests/ui_requirement_archive.py \
+            tools/tests/ui_requirement_acceptance.py \
             tools/tests/ui_legacy_import.py \
             tools/tests/ui_legacy_feedback.py \
             tools/tests/ui_legacy_expression.py \
             tools/tests/ui_legacy_observation.py \
             tools/ui/legacy_inventory.py \
             tools/ui/inventory_revision.py \
+            tools/ui/acceptance_transition.py \
             tools/ui/legacy_import.py \
             tools/ui/legacy_syntax.py \
             tools/ui/capture_legacy_baseline.py \
@@ -649,6 +673,7 @@ jobs:
           python tools/tests/ui_engine_thread.py
           python tools/tests/ui_generated_images.py
           python tools/tests/filesystem_case_segments.py
+          python tools/tests/pinned_archive_headers.py
           python tools/tests/filesystem_mod_manifest.py
           python tools/tests/filesystem_write_qpath_safety.py
           python tools/tests/game_class_allocator_alignment.py
@@ -752,14 +777,20 @@ jobs:
           python tools/tests/mp_client_combat_effects.py
           python tools/tests/bse_retail_parity.py
           python tools/tests/mp_lag_compensation_contract.py
+          python tools/tests/mp_lag_compensation_state.py
+          python tools/tests/mp_client_prediction_state.py
           python tools/tests/mp_runtime_freshness.py
           python tools/tests/mp_weapon_switch_contract.py
           python tools/tests/multiview_demo.py
           python tools/tests/mvd_server_api_contract.py
           python tools/tests/mvd_recording_failure_contract.py
+          python tools/tests/mvd_recovery_contract.py
+          python tools/tests/mvd_start_state_contract.py
           python tools/tests/native_glx_shutdown.py
           python tools/tests/network_ipv4_support.py
           python tools/tests/network_ipv6_support.py
+          python tools/tests/network_impairment_contract.py
+          python tools/tests/network_impairment_state.py
           python tools/tests/network_security.py
           python tools/tests/openurl_security.py
           python tools/tests/openq4_pure_pack.py
@@ -811,6 +842,8 @@ jobs:
           python tools/tests/rigid_body_recovery_diagnostics.py
           python tools/tests/savegame_corruption_contract.py
           python tools/tests/savegame_gui_layout_contract.py
+          python tools/tests/weapon_gui_event_queue_contract.py
+          python tools/tests/turbo_scripted_movers.py
           python tools/tests/savegame_pointer_width_safety.py
           python tools/tests/savegame_v3_contract.py
           python tools/tests/sdl3_input_parity.py
@@ -870,6 +903,7 @@ jobs:
           python tools/ui/update_system_soft_focus.py --check
           python tools/ui/update_system_render_options.py --check
           python tools/ui/update_system_initial_focus.py --check
+          python tools/ui/update_system_menu_button.py --check
           python tools/tests/ui_text_input.py
           python tools/tests/ui_retained_input.py
           python tools/tests/ui_retained_state_sources.py
@@ -885,6 +919,7 @@ jobs:
           python tools/tests/ui_system_session_route.py
           python tools/tests/ui_controller_menu_pump.py
           python tools/tests/ui_retained_gate.py
+          python tools/tests/ui_player_identity.py
           python tools/tests/ui_stock_level_load.py
           python tools/tests/ui_retained_resource_lifecycle.py
           python tools/tests/ui_retained_adapter.py
@@ -908,6 +943,8 @@ jobs:
           python tools/tests/ui_capture_system_settings.py
           python tools/tests/ui_capture_system_page.py
           python tools/tests/ui_capture_system_exit.py
+          python tools/tests/ui_capture_multiplayer_rosters.py
+          python tools/tests/ui_capture_system_refresh.py
           python tools/tests/renderer_vid_restart_route.py
           python tools/tests/renderer_image_recovery_owner.py --mutations
           python tools/tests/renderer_image_recovery_module.py --mutations
@@ -932,11 +969,15 @@ jobs:
           python tools/tests/renderer_gl_display_policy.py
           python tools/tests/sdl3_strict_window.py
           python tools/tests/ui_capture_display_device.py
+          python tools/tests/ui_capture_multiplayer_rosters.py
+          python tools/tests/ui_capture_system_refresh.py
           python tools/tests/ui_legacy_inventory.py
           python tools/tests/game_regression_suite.py --check-discovery
           python tools/tests/presentation_clock_ownership.py
+          python tools/tests/presentation_hf_contract.py --mutations
           python tools/tests/ui_inventory_revision.py
           python tools/tests/ui_requirement_archive.py
+          python tools/tests/ui_requirement_acceptance.py
           python tools/tests/ui_legacy_import.py
           python tools/tests/ui_legacy_feedback.py
           python tools/tests/ui_legacy_expression.py --mutations
@@ -1264,11 +1305,25 @@ jobs:
           retention-days: 14
           include-hidden-files: true
 
+      - name: Publish Windows ARM64 native regression logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: commit-windows-arm64-native-regressions
+          path: |
+            .tmp/validation/pr-builddir/game-regression-logs
+            .tmp/validation/pr-builddir/meson-logs
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
   linux-sanitizer:
     name: Linux x64 ASan+UBSan Commit Validation
     runs-on: ubuntu-24.04
     needs: script-smoke
-    timeout-minutes: 90
+    # The instrumented build alone can take over 80 minutes. Leave time for
+    # native tests, staging, the Wayland smoke and its evidence upload.
+    timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       ASAN_OPTIONS: halt_on_error=1:detect_leaks=0

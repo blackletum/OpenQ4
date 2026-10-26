@@ -1626,6 +1626,68 @@
         ]
       }
     ],
+    "onMenuButton": [
+      {
+        "op": "if",
+        "condition": {
+          "state": "settings.confirmationVisible"
+        },
+        "then": [
+          {
+            "op": "call",
+            "event": "confirmationBack"
+          }
+        ],
+        "else": [
+          {
+            "op": "if",
+            "condition": {
+              "state": "page.discardVisible"
+            },
+            "then": [
+              {
+                "op": "call",
+                "event": "continueEditing"
+              }
+            ],
+            "else": [
+              {
+                "op": "if",
+                "condition": {
+                  "state": "ui.numberDraftsPending"
+                },
+                "then": [
+                  {
+                    "op": "action",
+                    "action": "focusNumberDraft"
+                  }
+                ],
+                "else": [
+                  {
+                    "op": "if",
+                    "condition": {
+                      "state": "settings.dirty"
+                    },
+                    "then": [
+                      {
+                        "op": "call",
+                        "event": "apply"
+                      }
+                    ],
+                    "else": [
+                      {
+                        "op": "call",
+                        "event": "onBack"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
     "discard": [
       {
         "op": "if",

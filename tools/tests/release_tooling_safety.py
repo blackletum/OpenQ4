@@ -287,6 +287,58 @@ def validate_changelog_output_and_override_guards() -> None:
         )
 
 
+def validate_withdrawn_release_selection() -> None:
+    repo = make_git_repo(WORK / "withdrawn-release-repo")
+    commit_file(repo, "meson.build", "project('openQ4', version: '0.13.2')\n", "released")
+    git(repo, "tag", "v0.13.2")
+    commit_file(repo, "file.txt", "withdrawn\n", "withdrawn candidate")
+    git(repo, "tag", "v0.14.000")
+    git(repo, "tag", "v0.14.0")
+    commit_file(repo, "file.txt", "development\n", "continue development")
+
+    if VERSION.read_base_version(repo, "") != "0.13.2":
+        raise AssertionError("development version selected a withdrawn tag")
+    latest = RELEASE_VERSION.find_latest_release_tag(repo)
+    if latest is None or latest[0] != "v0.13.2":
+        raise AssertionError("manual release baseline selected a withdrawn tag")
+    if CHANGELOG.find_previous_release_tag(repo, "v0.15.000") != "v0.13.2":
+        raise AssertionError("changelog omitted changes covered only by a withdrawn release")
+
+    command = [sys.executable, str(BUILD_DIR / "openq4_release_version.py"), "--source-root", str(repo)]
+    patch = run(command + ["--bump-mode", "patch"], repo)
+    minor = run(command + ["--bump-mode", "minor"], repo)
+    if "latest_release_tag=v0.13.2\n" not in patch or "release_tag=v0.13.003\n" not in patch:
+        raise AssertionError("patch selection did not start at the available release")
+    if "release_tag=v0.14.001\n" not in minor or "Skipped withdrawn version" not in minor:
+        raise AssertionError("minor selection would reuse the withdrawn version")
+    for text in ("0.14.0", "0.14.000"):
+        expect_system_exit(
+            lambda: RELEASE_VERSION.validate_version_override(
+                RELEASE_VERSION.parse_version(text), RELEASE_VERSION.parse_version("0.13.2"), latest
+            ),
+            "is withdrawn",
+            "withdrawn override",
+        )
+        output = repo / f"notes-{text}.md"
+        expect_system_exit(
+            lambda: CHANGELOG.main([
+                "generate_release_changelog.py", "--source-root", str(repo),
+                "--version", text, "--version-tag", text, "--release-tag", f"v{text}",
+                "--repo", "owner/repo", "--output", str(output),
+            ]),
+            "is withdrawn",
+            "withdrawn notes publication",
+        )
+        if output.exists():
+            raise AssertionError("withdrawn release notes were generated")
+
+    git(repo, "tag", "v0.15.000")
+    if VERSION.read_base_version(repo, "") != "0.15.000":
+        raise AssertionError("withdrawal policy capped future valid releases")
+    if RELEASE_VERSION.find_latest_release_tag(repo)[0] != "v0.15.000":
+        raise AssertionError("manual release selection ignored a future valid release")
+
+
 def validate_openq4_version_iteration() -> None:
     expect_system_exit(
         lambda: VERSION.resolve_auto_iteration_date("20260231"),
@@ -1811,6 +1863,7 @@ def main() -> None:
         validate_changelog_git_context_and_limits()
         validate_changelog_input_and_markdown_safety()
         validate_changelog_output_and_override_guards()
+        validate_withdrawn_release_selection()
         validate_openq4_version_iteration()
         validate_version_header_build_refresh_contract()
         validate_release_build_history()

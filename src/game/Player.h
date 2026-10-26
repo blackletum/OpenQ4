@@ -274,6 +274,16 @@ public:
 	int						secretAreasDiscovered;
 };
 
+// alternate views sampled by idPlayer::PresentAlternateView
+enum {
+	PRESENTATION_ALT_VIEW_NONE = 0,
+	PRESENTATION_ALT_VIEW_CAMERA,
+	PRESENTATION_ALT_VIEW_PRIVATE_CAMERA,
+	PRESENTATION_ALT_VIEW_THIRD_PERSON,
+	PRESENTATION_ALT_VIEW_THIRD_PERSON_VEHICLE,
+	PRESENTATION_ALT_VIEW_DEATH
+};
+
 class idPlayer : public idActor {
 public:
 
@@ -428,6 +438,33 @@ public:
 	idVec3					presentationCurViewOrigin;
 	idMat3					presentationCurViewAxis;
 	float					presentationCurFov;
+	// openQ4 late look (in_presentationView): the authoritative view and usercmd
+	// angles at the camera's two samples, and the correction frozen for the draw
+	// being prepared. Draw-only, like the samples above: never saved or sent.
+	idAngles				presentationPrevLookAngles;
+	idAngles				presentationCurLookAngles;
+	idAngles				presentationPrevCmdAngles;
+	idAngles				presentationCurCmdAngles;
+	bool					presentationLookCoupled;
+	bool					presentationLookActive;
+	idAngles				presentationLookCorrection;
+	float					presentationLookInputYaw;	// diagnostics only
+	// openQ4 alternate views (cinematic and private cameras, third person, the
+	// death camera): the authoritative view sampled once per tic, like the eye
+	// above, so the camera and the scene it shows share the presentation clock.
+	int						presentationAltViewTime;
+	int						presentationAltViewKind;
+	int						presentationAltViewSource;
+	bool					presentationAltViewCanInterpolate;
+	bool					presentationAltViewDrawn;
+	idVec3					presentationPrevAltOrigin;
+	idMat3					presentationPrevAltAxis;
+	float					presentationPrevAltFovX;
+	float					presentationPrevAltFovY;
+	idVec3					presentationCurAltOrigin;
+	idMat3					presentationCurAltAxis;
+	float					presentationCurAltFovX;
+	float					presentationCurAltFovY;
 
 	idDragEntity			dragEntity;
 	idVec3					intentDir;
@@ -481,6 +518,7 @@ public:
 
 	void					SavePersistantInfo( void );
 	void					RestorePersistantInfo( void );
+	int						PlaySeconds( void ) const;	// openQ4: the run's play time, -1 when unknown
 	void					SetLevelTrigger( const char *levelName, const char *triggerName );
 
  	bool					UserInfoChanged( void );
@@ -542,7 +580,13 @@ public:
 	bool					IsPresentationViewInterpolated( void ) const;
 	float					GetPresentationViewBlendFraction( void ) const;
 	float					GetPresentationFov( void );
-	
+	void					PresentAlternateView( int kind, const idEntity *source );
+	bool					AllowsPresentationLook( void ) const;
+	bool					GetPresentationLookDiagnostic( float &inputYaw, float &correctionYaw ) const;
+	void					UpdatePresentationLook( void );
+	void					ApplyPresentationLookToView( idVec3 &origin, idMat3 &axis ) const;
+	void					ApplyPresentationLookToEyeAttachment( const idVec3 &eyeOrigin, const idMat3 &eyeAxis, idVec3 &origin, idMat3 &axis ) const;
+
 	void					DrawShadow( renderEntity_t *headRenderEnt );
 	void					UpdateMultiplayerVisibilityEffects( renderEntity_t *headRenderEnt );
 	void					UpdateZoomGuiViewState( void );

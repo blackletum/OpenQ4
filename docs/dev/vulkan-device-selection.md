@@ -97,16 +97,84 @@ The native test is registered as `openq4-vulkan-device-selection` with Meson
 when Vulkan and `build_native_tests` are enabled, so normal native-test runs
 include it without a GPU or Vulkan loader.
 
+## Complete inventories and adapter retry (23 October 2026, VK-03)
+
+Every list the probe and renderer read is now complete or reported as failed.
+The probe's instance-layer and instance-extension queries, the renderer's
+instance-extension query and the surface present-mode list go through the same
+bounded-retry enumeration as the device lists (`VK_FindInstanceLayers`,
+`VK_FindInstanceExtensions`, `VK_QuerySurfacePresentModes`). A failed or
+persistently changing list returns its error and reports nothing found,
+instead of a truncated subset or an uninitialized one. A failed
+instance-extension inventory stops both the startup gate and the renderer, so it
+can never read as "no portability enumeration" and hide MoltenVK. A failed
+layer inventory only disables validation, with a warning when it was requested.
+
+The renderer no longer runs a second, separately capped device-extension lookup.
+Admission records `VK_KHR_portability_subset` and `VK_EXT_sample_locations`
+from the same complete list in which it finds the swapchain extension, and
+device creation uses those flags. The window system's instance extensions are
+read at the size SDL reports rather than truncated at twenty. Debug utils is
+requested only when the loader or the validation layer provides it, and the
+retry without the layer drops it when only the layer did. The swapchain image
+arrays hold sixteen images, up from eight; a driver that creates more still fails
+closed rather than indexing past them.
+
+When an **automatic** start (`r_vkDevice -1`) admits an adapter that then fails
+logical-device, swapchain or renderer-resource creation, the renderer tears
+that adapter down without writing its pipeline cache and resumes selection at
+the next enumeration index. Incompatible adapters are skipped by admission and
+do not count; at most four adapters are tried. Screen parameters are applied
+once, and a failed resize rebuild after them belongs to the window, so it does
+not trigger a retry. An explicit `r_vkDevice` choice is never substituted: a
+failure there still falls back to OpenGL. The override now accepts indices up
+to 255 to match enumeration, which has no fixed device cap.
+
+`r_vkStartupFailureDevice <index>` limits a swapchain (3) or renderer-resources
+(4) `r_vkStartupFailure` drill to the admitted device with that index, so the
+retry can be shown on real hardware. The log names each step:
+
+```text
+Vulkan startup failure injected: renderer resources on device 0
+WARNING: Vulkan: device 0 'NVIDIA GeForce RTX 4060 Laptop GPU' failed during renderer resources; trying the next compatible device
+Vulkan: skipping device 1 'Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)' (API 1.2.359, descriptor sets 8): this renderer requires Vulkan 1.3 (-9)
+Vulkan: started on device 2 'Intel(R) Iris(R) Xe Graphics' after 1 failed adapter attempt
+```
+
+### Evidence
+
+- The native selection suite passes 107 cases: 51 renderer, 31 probe and 25
+  instance/presentation cases. New cases cover resuming after a failed
+  adapter, skipping an unsuitable next adapter, resuming past the last device,
+  explicit choices that must not resume, explicit indices beyond the old cap,
+  optional extensions beyond the old 1,024-entry cap, and layer, instance
+  extension and present-mode lists beyond their old fixed arrays, with count,
+  data, missing-layer, growing and persistently incomplete responses.
+- `tools/tests/renderer_vid_restart_route.py` runs the production
+  `VK_PrepareRenderDevice` against adapter doubles: retry after a resource or
+  logical-device failure, skipped incompatible adapters, no substitution for an
+  explicit choice, no further adapter, the four-attempt bound, and no retry for
+  a failed resize rebuild.
+- `tools/tests/renderer_display_presentation.py` now runs the production
+  present-mode query against its stub driver list.
+- On the Windows laptop (RTX 4060, Dozen, Iris Xe), hidden, input-free runs of
+  the staged debug engine with debug builds of these modules: the
+  renderer-resources and swapchain drills on device 0 both started on the Iris
+  Xe; the same drill with `r_vkDevice 0` fell back to OpenGL. All Vulkan
+  render-target, HDR and temporal GPU self-tests passed with the validation layer
+  on and no validation messages. In airdefense1, three repeated `vid_restart`s
+  held device-local memory at 1,004.5 MiB in 60 blocks and 2,032 allocations
+  after the first restart. A validation-enabled session reported no validation
+  messages or warnings and quit cleanly.
+- A module swapped into a staged package must match the engine's buildtype:
+  `builddir` and `.install` are debug builds with the static debug CRT, and a
+  release-CRT module faults at quit freeing an engine-allocated material array.
+
 ## Remaining scope
 
-The probe's earlier instance-layer and instance-extension enumeration still
-uses fixed arrays and needs an error-handling audit. The renderer's separate
-optional-device-extension lookup also remains bounded. Retrying other
-adapters after later device/resource-creation failures is another open item.
-The public `r_vkDevice` override still has its existing maximum index of 15,
-although automatic enumeration no longer has the old sixteen-device cap.
-Native fake-driver tests do not establish physical GPU, Linux or MoltenVK
-qualification.
+Native fake-driver tests and one hybrid laptop do not establish AMD, physical
+Linux or MoltenVK qualification (VK-01). Ranking adapters by speed or changing
+the default renderer remain out of scope.
 
 This startup correction does not resolve the observed cross-adapter frame
 stalls, remaining PBR/material/shadow comparisons, or the broader

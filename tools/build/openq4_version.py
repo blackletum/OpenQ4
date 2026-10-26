@@ -11,6 +11,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from openq4_release_status import is_withdrawn_release
+
 
 NUMERIC_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 IDENTIFIER_RE = re.compile(r"^[0-9A-Za-z-]+$")
@@ -84,7 +86,7 @@ def read_meson_base_version(source_root: Path) -> str:
 
 
 def find_latest_release_tag_version(source_root: Path) -> str:
-    """Return the highest published v<major>.<minor>.<patch> tag, without the 'v'."""
+    """Return the highest release tag not withdrawn, without the 'v'."""
     highest_key: tuple[int, int, int] | None = None
     highest_version = ""
     for raw_tag in run_git(source_root, "tag", "--list", "v*").splitlines():
@@ -92,6 +94,8 @@ def find_latest_release_tag_version(source_root: Path) -> str:
         if match is None:
             continue
         key = tuple(int(group) for group in match.groups())
+        if is_withdrawn_release(key):
+            continue
         if highest_key is None or key > highest_key:
             highest_key = key
             highest_version = raw_tag.strip()[1:]

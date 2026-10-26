@@ -29,14 +29,39 @@ struct vkDeviceSelection_t {
 	uint32_t index;
 	uint32_t queueFamily;
 	uint32_t timestampValidBits;
+	// Read from the complete admission extension list, so device creation never
+	// consults a second, separately bounded lookup.
+	bool hasPortabilitySubset;
+	bool hasSampleLocations;
 };
 
 typedef void (*vkDeviceRejection_t)( uint32_t index, const VkPhysicalDeviceProperties &properties,
 		const char *reason, VkResult result, void *user );
 
+// Automatic selection (forcedIndex < 0) takes the first admitted candidate at or
+// after firstIndex; a caller resumes there after a candidate that later failed
+// logical-device, swapchain or resource creation. An explicit index is never
+// resumed past: a nonzero firstIndex with forcedIndex >= 0 fails without a query.
 VkResult VK_SelectPhysicalDevice( const vkDeviceSelectionApi_t &api, VkInstance instance,
 		VkSurfaceKHR surface, int forcedIndex, vkDeviceSelection_t &selected,
-		vkDeviceRejection_t report = nullptr, void *user = nullptr );
+		vkDeviceRejection_t report = nullptr, void *user = nullptr, uint32_t firstIndex = 0 );
+
+// Startup tries at most this many adapters before it gives up on Vulkan.
+static const int VK_MAX_STARTUP_ADAPTER_ATTEMPTS = 4;
+
+// Complete instance-level inventories with the same bounded retry as device
+// lists. found[i] reports names[i]; a failed or persistently changing list
+// returns its error and reports nothing found rather than a truncated subset.
+VkResult VK_FindInstanceLayers( PFN_vkEnumerateInstanceLayerProperties query,
+		const char *const *names, uint32_t count, bool *found );
+VkResult VK_FindInstanceExtensions( PFN_vkEnumerateInstanceExtensionProperties query,
+		const char *layer, const char *const *names, uint32_t count, bool *found );
+
+// Bit (1 << mode) for every supported core present mode below 32 (immediate,
+// mailbox, FIFO, FIFO relaxed); extension modes are ignored. A failed list
+// clears the mask and returns its error.
+VkResult VK_QuerySurfacePresentModes( PFN_vkGetPhysicalDeviceSurfacePresentModesKHR query,
+		VkPhysicalDevice device, VkSurfaceKHR surface, uint32_t &modeMask );
 
 // Shared by admission and swapchain creation, including the legacy undefined
 // format case. Never silently picks an sRGB attachment for display-coded output.

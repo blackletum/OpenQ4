@@ -267,6 +267,7 @@ protected:
 	void				ResetPresentationViewModelState( void );
 	void				UpdatePresentationViewModelState( const idVec3 &playerOrigin, const idMat3 &playerAxis, const idVec3 &origin, const idMat3 &axis );
 	void				GetPresentationViewModelTransform( idVec3 &origin, idMat3 &axis ) const;
+	void				GetPresentationEye( idVec3 &origin, idMat3 &axis ) const;
 
 public:
 
@@ -413,6 +414,7 @@ public:
 	idMat3							presentationCurViewModelAxis;
 	idVec3							presentationRestoreViewModelOrigin;
 	idMat3							presentationRestoreViewModelAxis;
+	idVec3							presentationFlashlightBackoff;	// Think's wall back-off, carried by draw frames
 
 
 	// View Model

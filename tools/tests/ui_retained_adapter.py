@@ -433,6 +433,13 @@ public:
     std::set<std::string> disabledControls;
     int validations=0;
     std::string FocusedControl() const {return selected;}
+    std::string acceptVerb;
+    std::vector<std::pair<std::string,double>> acceptQueries;
+    std::string AcceptPrompt(const std::string& fallback,double seconds) {
+        acceptQueries.emplace_back(fallback,seconds);
+        if(selected.empty() || disabledControls.contains(selected))return {};
+        return acceptVerb.empty() ? fallback : acceptVerb;
+    }
     unsigned long long StateRevision() const {return 0;}
     struct Stats {unsigned long long activeContexts=1,vectorElements=0,vectorPathsCompiled=0,vectorUploads=0,vectorCacheHits=0,submittedVertices=0,submittedIndices=0,layoutUpdates=0;};
     Stats stats;
@@ -451,6 +458,8 @@ public:
     std::string modalRoot="dialog",modalBack="modalback";
     std::uint64_t modalIdentity=1;
     bool authoredModal=false;
+    bool modalOpen=false;
+    bool ModalOpen() const {return modalOpen;}
     std::vector<ControlAction> modalBackQueries;
     std::vector<ControlAction> controlActionQueries;
     std::map<std::string,std::pair<std::string,std::string>> expectedControlDescriptors;
@@ -1211,6 +1220,66 @@ static void CheckEventBridge() {
     assert(!ValidInvocation({"x","settings.brightness.set",{{"value",true}}},error));
     assert(!ValidInvocation({"x","ui.dismiss",{{"value",1.0}}},error));
     assert(!ValidInvocation({"x","exec",{}},error));
+    const auto save=[](const char* command,StateValue index,StateValue generation) {
+        return ActionInvocation{"save","session.menu",{{"command",std::string(command)},{"index",index},{"generation",generation}}};
+    };
+    for (const auto* command : {"loadSelect","saveSelect","loadSave","loadDelete"}) {
+        assert(ValidInvocation(save(command,0.0,1.0),error));
+        assert(ValidInvocation(save(command,2147483647.0,2147483647.0),error));
+        for (StateValue bad : {StateValue(-1.0),StateValue(2147483648.0),StateValue(2.5),StateValue(true),
+                              StateValue(std::string("1")),StateValue(std::numeric_limits<double>::infinity())}) {
+            assert(!ValidInvocation(save(command,bad,1.0),error));
+            assert(!ValidInvocation(save(command,1.0,bad),error));
+        }
+        assert(!ValidInvocation(save(command,1.0,0.0),error));
+        assert(!ValidInvocation({"save","session.menu",{{"command",std::string(command)}}},error));
+        Action action; action.operation="session.menu";
+        Expression verb; verb.type=2; verb.literal=std::string(command);
+        Expression index; index.type=0; index.state="row";
+        Expression generation=index; generation.state="generation";
+        action.arguments={{"command",verb},{"index",index},{"generation",generation}};
+        assert(ValidOperation(action));
+        action.arguments.erase("generation"); assert(!ValidOperation(action));
+    }
+    {
+        idUserInterfaceRetained gui; assert(gui.InitFromFile("test.q4ui")); gui.Activate(true,0);
+        eventPlans["savecatalog"]={{},{save("loadSelect",65.0,7.0),save("loadDelete",12.0,7.0)}};
+        gui.HandleNamedEvent("savecatalog");
+        gui.SetStateInt("load.pick",3); gui.SetStateInt("browser.generation",8);
+        bool close=false; assert(gui.DispatchApplicationActions(gui.PendingApplicationCommand(),close) && !close);
+        for (const auto* expected : {"loadSelect 65 7","loadDelete 12 7"}) {
+            idStr request; assert(gui.TakeSessionRequest(ActionMarker,request) && request==expected);
+        }
+        eventPlans.clear();
+    }
+    const auto player=[](const char* command,StateValue client,StateValue identity) {
+        return ActionInvocation{"player","session.menu",{{"command",std::string(command)},{"client",client},{"identity",identity}}};
+    };
+    for (const auto* command : {"mpSelectPlayer","mpMute","mpFriend"}) {
+        assert(ValidInvocation(player(command,0.0,std::string("8192")),error));
+        assert(ValidInvocation(player(command,31.0,std::string("4294967295")),error));
+        for (StateValue client : {StateValue(-1.0),StateValue(32.0),StateValue(2.5),StateValue(true),
+                                 StateValue(std::string("1")),StateValue(std::numeric_limits<double>::infinity())})
+            assert(!ValidInvocation(player(command,client,std::string("8193")),error));
+        for (const auto* identity : {"","-1","001","4294967296","8193;quit","8193 1"})
+            assert(!ValidInvocation(player(command,1.0,std::string(identity)),error));
+        assert(!ValidInvocation(player(command,1.0,8193.0),error));
+        assert(!ValidInvocation({"player","session.menu",{{"command",std::string(command)}}},error));
+    }
+    {
+        idUserInterfaceRetained gui; assert(gui.InitFromFile("test.q4ui")); gui.Activate(true,0);
+        eventPlans["players"]={{},{player("mpSelectPlayer",4.0,std::string("8196")),
+                                  player("mpMute",31.0,std::string("4294967295")),
+                                  player("mpFriend",7.0,std::string("16391"))}};
+        gui.HandleNamedEvent("players");
+        gui.SetStateInt("card.client",19); gui.SetStateString("card.identity","99999");
+        bool close=false; assert(gui.DispatchApplicationActions(gui.PendingApplicationCommand(),close) && !close);
+        for (const auto* expected : {"mpSelectPlayer 4 8196","mpMute 31 4294967295","mpFriend 7 16391"}) {
+            idStr request; assert(gui.TakeSessionRequest(ActionMarker,request) && request==expected);
+        }
+        idStr none; assert(!gui.TakeSessionRequest(ActionMarker,none));
+        eventPlans.clear();
+    }
     // A value verb carries a whole number from -1 to 999, or a Boolean, and
     // only the multiplayer card's Vote page verbs may carry one.
     const auto valued=[](const char* command,StateValue value) {
@@ -2377,7 +2446,11 @@ static void CheckNumberDiagnosticBoundary() {
 // where it declares them, the triggers its onSectionPrevious and
 // onSectionNext, and the west and north face buttons its onSecondary and
 // onTertiary: once per press, never on a repeat, never with Ctrl or Alt,
-// and never while a Number field is being edited.
+// and never while a Number field is being edited. Without section events
+// the triggers are PageUp and PageDown, which page a list; on a focused
+// slider the right trigger raises the value (PageUp). The Menu button runs
+// onMenuButton where it is declared and is Back elsewhere and while a dialog
+// or an open list holds the input.
 static void CheckTabKeys() {
     assert(views.empty());cvars=CVars{};consoleObject.open=false;windowFocused=true;
     eventPlans={};eventHistory.clear();
@@ -2408,6 +2481,12 @@ static void CheckTabKeys() {
         if(name=="onsectionprevious" || name=="onsectionnext")found.push_back(name);return found;};
     pulse(K_JOY16);pulse(K_JOY15);
     assert(sections().empty() && tabs().size()==6);
+    using Pulses=std::vector<std::pair<MenuInput,bool>>;
+    assert((runtime.menu==Pulses{{MenuInput::PageUp,true},{MenuInput::PageUp,false},{MenuInput::PageDown,true},{MenuInput::PageDown,false}}));
+    runtime.widgets.at("root").role=ControlRole::Slider;runtime.menu.clear();
+    pulse(K_JOY15);pulse(K_JOY16);
+    assert((runtime.menu==Pulses{{MenuInput::PageUp,true},{MenuInput::PageUp,false},{MenuInput::PageDown,true},{MenuInput::PageDown,false}}));
+    runtime.widgets.at("root").role=ControlRole::Number;runtime.menu.clear();
     eventPlans["onsectionprevious"]={};eventPlans["onsectionnext"]={};
     pulse(K_JOY16);pulse(K_JOY15);
     assert(sections()==std::vector<std::string>({"onsectionprevious","onsectionnext"}) && tabs().size()==6);
@@ -2427,6 +2506,18 @@ static void CheckTabKeys() {
     pulse(K_JOY6);
     runtime.widgets.at("root").number->active=false;
     assert(faces().size()==3 && runtime.menu.empty());
+    // The Menu button is Back unless the document declares onMenuButton,
+    // which it then runs once per press.
+    pulse(K_JOY7);
+    assert((runtime.menu==Pulses{{MenuInput::Back,true},{MenuInput::Back,false}}));
+    eventPlans["onmenubutton"]={};runtime.menu.clear();
+    pulse(K_JOY7);Key(gui,K_JOY7,true);Key(gui,K_JOY7,true);Key(gui,K_JOY7,false);
+    assert(runtime.menu.empty() && std::count(eventHistory.begin(),eventHistory.end(),std::string("onmenubutton"))==2);
+    // A dialog or an open list keeps it Back, which closes them.
+    runtime.modalOpen=true;pulse(K_JOY7);runtime.modalOpen=false;
+    runtime.widgets.at("root").popupOpen=true;pulse(K_JOY7);runtime.widgets.at("root").popupOpen=false;
+    assert((runtime.menu==Pulses{{MenuInput::Back,true},{MenuInput::Back,false},{MenuInput::Back,true},{MenuInput::Back,false}}));
+    assert(std::count(eventHistory.begin(),eventHistory.end(),std::string("onmenubutton"))==2);
 }
 // A document that declares prompt.glyphs gets RetainedUI_PromptGlyphs as
 // each frame draws, once per change, and the session's state pushes carry
@@ -2479,6 +2570,36 @@ static void CheckPromptSwapped() {
         gui.StateChanged(0);assert(std::get<bool>(runtime.state.at("prompt.swapped")));
     }
     modelTemplate=original;promptSwappedValue=false;
+}
+// prompt.accept carries Accept's verb for the focused control (section 13.4)
+// before the frame draws, once per change: the runtime's answer for the
+// document's declared verb, and empty while nothing focused can act; a
+// document that does not declare it never asks.
+static void CheckPromptAccept() {
+    assert(views.empty());const auto original=modelTemplate;
+    consoleObject.open=false;windowFocused=true;
+    {
+        idUserInterfaceRetained gui;assert(gui.InitFromFile("test.q4ui"));gui.Activate(true,0);gui.Redraw(0);
+        assert(!Live().state.contains("prompt.accept") && Live().acceptQueries.empty());
+    }
+    modelTemplate.state["prompt.accept"]={std::string("#str_231042"),""};
+    {
+        idUserInterfaceRetained gui;assert(gui.InitFromFile("test.q4ui"));gui.Activate(true,0);
+        auto& runtime=Live();
+        const auto published=[&]{size_t n=0;for(const auto& call:runtime.stateCalls)if(call.size()==1 && call.contains("prompt.accept"))++n;return n;};
+        const auto verb=[&]{return std::get<std::string>(runtime.state.at("prompt.accept"));};
+        runtime.selected="button";const auto frames=runtime.frames;gui.Redraw(0);
+        assert(published()==1 && verb()=="#str_231042" && runtime.acceptQueries.back().first=="#str_231042" && runtime.frames==frames+1);
+        gui.Redraw(0);assert(published()==1);
+        runtime.acceptVerb="#str_231520";gui.Redraw(0);
+        assert(published()==2 && verb()=="#str_231520" && std::string(gui.GetStateString("prompt.accept"))=="#str_231520");
+        gui.StateChanged(0);assert(verb()=="#str_231520");
+        runtime.disabledControls.insert("button");gui.Redraw(0);
+        assert(published()==3 && verb().empty());
+        runtime.disabledControls.erase("button");runtime.selected.clear();gui.Redraw(0);
+        assert(published()==3 && verb().empty());
+    }
+    modelTemplate=original;
 }
 // Confirm and Back on a controller (section 13.5): south accepts and east
 // goes back, or the other way round while confirm is swapped, and a release
@@ -2798,6 +2919,7 @@ int main() {
     CheckTabKeys();
     CheckPromptGlyphs();
     CheckPromptSwapped();
+    CheckPromptAccept();
     CheckConfirmSwap();
     std::puts("Retained adapter: Number diagnostic transport, delayed numeric identity and readback-before-acknowledgement; exactly-once Apply-and-exit receipts after complete queued batches, stationary wheel/pointer handoff, immutable value proposals/acknowledgements, authoritative settings return and authored Back, settings capability/draw ownership and state/lifecycle boundaries, ordered event/FIFO publication, restore suppression, pending dictionary, presentation delegation, framed saves, input suspension and cursor mapping passed");
 }

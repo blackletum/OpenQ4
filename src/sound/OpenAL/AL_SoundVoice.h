@@ -142,6 +142,9 @@ public:
 	// Sends new position/volume/pitch information to the hardware
 	bool					Update();
 	bool					UsesBoundedQueue() const;
+	// A voice that hands itself back is restarted at the scene clock when a bounded
+	// queue ran dry or its output, not the sound, stopped it (SoundOutputRecovery.h).
+	bool					RecoversAtClock() const;
 
 	// returns the RMS levels of the most recently processed block of audio, SSF_FLICKER must have been passed to Start
 	float					GetAmplitude();
@@ -165,6 +168,12 @@ private:
 
 	// Returns true when all the buffers are finished processing
 	bool					IsPlaying();
+
+	// The routing Start would choose on the current output.
+	bool					WantsCenterRouting() const;
+	// False once the output this voice started on was lost, replaced or re-laid out
+	// in a way it cannot keep playing through.
+	bool					CheckOutput();
 
 	// Called after the voice has been stopped
 	void					FlushSourceBuffers();
@@ -234,6 +243,9 @@ private:
 	bool					hasVUMeter;
 	bool					paused;
 	bool					centerRouting;
+	bool					outputRecovery;			// the output, not the sound, ended playback
+	unsigned int			outputSerial;			// hardware output serial this voice plays on
+	int						startFlags;				// the shader flags Start was given
 	bool					deepRoutedQueue;		// holds one of SOUND_QUEUE_DEEP_ROUTED_VOICES until its buffers are deleted
 	float					appliedSourceRadius;	// last AL_SOURCE_RADIUS sent, -1 = none yet
 };

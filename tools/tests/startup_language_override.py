@@ -93,8 +93,32 @@ def validate_language_reload_contract() -> None:
         "startup language reload should happen after command-line reapply",
     )
     require_order(init_game, "InitLanguageDict( true, allowStartupLanguageAutoSelect );", "exec autoexec.cfg", "early language load before cfg files")
-    require_order(init_game, "exec autoexec.cfg", "cmdSystem->ExecuteCommandBuffer();", "cfg files before execution")
-    require_order(init_game, "cmdSystem->ExecuteCommandBuffer();", "StartupVariable( NULL, false );", "cfg execution before command-line reapply")
+    require_order(init_game, "exec autoexec.cfg", "// run cfg execution\n\tcmdSystem->ExecuteCommandBuffer();", "cfg files before execution")
+    require_order(init_game, "// run cfg execution\n\tcmdSystem->ExecuteCommandBuffer();", "StartupVariable( NULL, false );", "cfg execution before command-line reapply")
+
+    # An installer's q4base/autoexec.cfg must not replace the saved Settings language (#199).
+    retail_file = function_body(source, "static bool Common_IsRetailGameDirFile( const char *relativePath ) {")
+    require(retail_file, "fileSystem->OpenFileRead( relativePath );", "retail autoexec lookup uses the normal search order")
+    require(retail_file, "file->GetFullPath();", "retail autoexec origin from the opened file")
+    require(retail_file, "directory.StripFilename();", "retail autoexec directory")
+    require(retail_file, "directory.StripPath();", "retail autoexec directory name")
+    require(retail_file, "directory.Icmp( BASE_GAMEDIR ) == 0", "only loose files in the retail game directory")
+    require(
+        init_game,
+        'const bool keepSavedLanguage = !sysDetect && !SafeMode() && Common_IsRetailGameDirFile( "autoexec.cfg" );',
+        "saved language kept only over an installer autoexec once a config exists",
+    )
+    require(init_game, 'savedLanguage = cvarSystem->GetCVarString( "sys_lang" );', "saved language sampled after the config")
+    require(init_game, 'cvarSystem->SetCVarString( "sys_lang", savedLanguage.c_str() );', "saved language restored after the installer autoexec")
+    require_order(init_game, "exec \" CONFIG_FILE", 'savedLanguage = cvarSystem->GetCVarString( "sys_lang" );', "config executed before sampling")
+    require_order(init_game, 'savedLanguage = cvarSystem->GetCVarString( "sys_lang" );', "exec autoexec.cfg", "sampled before autoexec")
+    require_order(init_game, "exec autoexec.cfg", 'cvarSystem->SetCVarString( "sys_lang", savedLanguage.c_str() );', "restored after autoexec")
+    require_order(
+        init_game,
+        'cvarSystem->SetCVarString( "sys_lang", savedLanguage.c_str() );',
+        "StartupVariable( NULL, false );",
+        "+set sys_lang still wins over the saved language",
+    )
     require_order(init_game, "StartupVariable( NULL, false );", "InitLanguageDict( false, false );", "command-line reapply before final language reload")
     require_order(init_game, "fileSystem->SetIsFileLoadingAllowed( true );", "InitLanguageDict( false, false );", "file loading enabled before final language reload")
     require_order(init_game, "InitLanguageDict( false, false );", "fileSystem->SetIsFileLoadingAllowed( wasFileLoadingAllowed );", "file-loading flag restored after final language reload")

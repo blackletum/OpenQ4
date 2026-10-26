@@ -1,5 +1,101 @@
 # UI product requirement register
 
+24 October 2026: [Menu glyphs](input-routing.md#menu-glyphs-24-october-2026)
+add bounded UI-02 evidence to `INP-011`. Each controller family's Menu button
+glyph ends the Escape card's Admin Apply changes plate, which the button presses,
+for a controller only. The art derives from section 13.5 and awaits review under
+UI-05. The increment is audited against `b038777b2b1cec823b34b80256d0c3f7d50ccc64`. No requirement status,
+migration acceptance or final gate changes.
+
+24 October 2026: [joined lines and capitals](retained-screens.md#joined-lines-and-capitals-24-october-2026)
+add bounded UI-02 evidence to `TXT-005`. List joins, the time in the mission, a
+save's date and time and the load time's decimal mark and unit come from every
+shipped table, and the Demos page's plates and headings are capitals in every
+language. The increment is audited against `d610d54794ca41f13b6f8c9878023e4d8912e6c8`. No requirement status,
+migration acceptance or final gate changes.
+
+24 October 2026: [trigger glyphs](input-routing.md#trigger-glyphs-24-october-2026)
+add bounded UI-02 evidence to `INP-011`. The Escape card's Match and Admin section
+strips end with each controller family's trigger glyphs, a legend for a controller
+only. The art derives from section 13.5 and awaits review under UI-05. The increment
+is audited against `55ed6f210da77490d2389849e04d46faad92e9c0`. No requirement status, migration acceptance or
+final gate changes.
+
+24 October 2026: [the Menu button's Apply](input-routing.md#menu-button-24-october-2026)
+adds bounded UI-02 evidence to `INP-011`. The opt-in SYSTEM page and the Escape
+card's Admin page apply pending changes with the Menu button, and the adapter keeps
+the button Back while a dialog or an open list holds the input. The increment is
+audited against `2bfcb60cc42b51d700b36386d065c104c0d9daf5`. No requirement status, migration acceptance or final
+gate changes.
+
+24 October 2026: [the Menu button](input-routing.md#menu-button-24-october-2026)
+adds bounded UI-02 evidence to `INP-011`. A document's `onMenuButton` runs once
+per press where declared and the button is Back elsewhere; the pause's Save, Load
+and Restart Level pages resume play through `menuResume`. The increment is audited
+against `1ce1599f4357cdf28b0ceffec83c0b3d2fb51fe6`. No requirement status,
+migration acceptance or final gate changes.
+
+24 October 2026: [controller settings, list paging and Join Game focus](input-routing.md#settings-rows-24-october-2026)
+add bounded UI-02/UI-03 evidence to `INP-011` and `WID-009`. Prompt Style and Swap
+Confirm and Back are Settings rows, the triggers page retained lists and step a
+focused slider coarsely, and Join Game's row focus follows its server. The increment
+is audited against `35a1e919c828b8fd5326f46e1dda9a975c8549aa`. No requirement status,
+migration acceptance or final gate changes.
+
+23 October 2026: [save details](retained-screens.md#save-details) add bounded
+UI-03 evidence to `FLOW-024`, `FLOW-048` and `FLOW-004`. Saves record the
+run's play time and difficulty in their existing headers; CONTINUE and the
+Load Game page name them, the pause's level block adds the run's total, and
+completed objectives survive a save load. The increment is audited against
+`8d821202d70ca746d58a2608b1aab3c69bcbf56f`. No requirement status, migration
+acceptance or final gate changes.
+
+23 October 2026: [focus-following prompt verbs](retained-screens.md#page-prompt-bars)
+add bounded UI-02 evidence to `WID-019`, `FLOW-004` and `FLOW-013`. The pages'
+Accept names the focused control's verb in the focus frame and leaves the bar
+while nothing focused can act. The increment is audited against
+`2f6c628a306b9dc42f752df505ebce5f26595996`. No requirement status, migration
+acceptance or final gate changes.
+
+23 October 2026: [Strogg confirmations](retained-screens.md#strogg-confirmations)
+add bounded UI-03 evidence to `FLOW-048`, `WID-013`, `ART-037` and `MOT-015`.
+The Strogg pause's and Strogg pages' dialogs take the Strogg family and
+translate from runes as they open; their art derives from section 13.7 and
+awaits review. The increment is audited against `e3cf8d037b1458c8ed49b9b423bf76201a194879`.
+No requirement status, migration acceptance or final gate changes.
+
+23 October 2026: the [acceptance transition](acceptance-transition.md) adds
+UI-11 tooling evidence to `GOV-002` and `QUAL-006`. Only it may accept
+requirements and resources, from current, separately reviewed records. It was
+audited against `f74b48edb4b5cb3153749241f0b087df17e3eb0d`. Nothing has been
+accepted with it, and no status changes.
+
+23 October 2026: [save browser controls](save-browser.md) add bounded UI-03
+evidence to `WID-009`, `FLOW-004` and `FLOW-026`: sorting, filter tags, explicit
+refresh, filename-based selection/focus and stale catalog rejection in both
+page families. The increment is audited against `c302254b865833786be9f1fd02041aef85f80b22`.
+No requirement status, migration acceptance or final gate changes.
+
+23 October 2026: [full multiplayer roster scrolling](multiplayer-menus.md#full-roster-scrolling-23-october-2026)
+adds bounded UI-03 evidence to `WID-009`, `WID-010`, `FLOW-039` and `FLOW-046`.
+Four production views keep fixed headings and readable rows, reach all 32
+connection slots and preserve or clamp their scroll as appropriate; the kick
+chooser includes every other client. Six native suites, the session gate,
+four capture-oracle tests and 30 reviewed OpenGL/Vulkan engine screenshots pass.
+The gameplay runs use three live players plus explicit 32-slot document fixtures;
+the configured server limit remains 16. This increment is checked against
+immutable Git baseline `f5bd60838ae25961fb9392ba71a9ab6c6a9c1437`. Existing evidence
+bindings to the extended multiplayer document are refreshed without changing
+their historical scope. No requirement status, migration or final gate changes.
+
+23 October 2026: the [external settings refresh and queued value ownership
+increment](external-settings-refresh.md) contributes bounded evidence to
+`BEH-002`, `FLOW-002`, `WID-005`, `WID-017` and `WID-018`. Clean SYSTEM pages now
+follow live settings; dirty drafts and local numeric text remain protected;
+queued values check their starting readback and choice availability. Eleven
+native suites, 110 production-service scenarios and SP/OpenGL/MP/Vulkan gameplay
+captures cover this subset. No status, migration acceptance or final gate changes.
+
 **Planning authority, 18 October 2026:** the [development roadmap](../roadmap.md#new-user-interface)
 is the sole active plan; UI-01 through UI-11 coordinate this register's work.
 The archived plans below preserve the original completion scope and section
@@ -676,6 +772,15 @@ builds/binaries where applicable, host/backend, logs/images, outcome, review and
 limitations. Relevant changes require revalidation; a stale hash or unrelated
 green test cannot close a requirement.
 
+Only the [acceptance transition](acceptance-transition.md) records acceptance.
+It names each requirement and resource it accepts and audits their committed
+acceptance records: every conjunct, constraint and dependency, a gate's bounded
+milestone scope, and per-resource behavior and artwork proof. All of it must be
+current against the present files and reviewed by someone other than the
+author. The checkpoint audit keeps earlier acceptance only while its records
+stay current. Otherwise the acceptance must be withdrawn, keeping its records
+as history.
+
 The [migration manifest](migration-manifest.json) remains the per-resource source
 of replacement, behavior and visual acceptance. This register covers shared
 capabilities and product gates; it neither duplicates nor overwrites acceptance
@@ -927,3 +1032,18 @@ The scoped audit is `.tmp/stage-two/ui-awakening-scope/scope-audit-r3.json`, SHA
 Current document bindings pass. Historical local capture references remain
 unchanged and are explicitly not requalified; the unavailable older inventory
 capture is not treated as new evidence.
+
+## 23 October 2026: portrait cinematic subtitles
+
+Visual specification 1.25 lets cinematic subtitles hang 12 u below the 640x480
+cinematic artwork on screens narrower than 4:3 where two lines fit there. The
+picture is too short there for enlarged captions, which covered title text that
+cinematics draw in it, such as the Awakening introduction's. The active subtitle
+clause of `FLOW-052`, which superseded `FLOW-034` through `FLOW-040`, reads "at most
+two lines, never over the crosshair" and already admits this placement. No
+requirement, status or supersession changes; the increment re-binds the visual
+specification and the audio evidence document. The
+[portrait caption captures](../audio-voice-evidence.md#authored-scenes-centred-reverb-and-portrait-captions-23-october-2026)
+record the implementation, not acceptance. The increment audit
+(`validate_product_requirements.py`) passes against baseline `c12d36cda`; its report
+is `.tmp/audio/round2/register-increment.json` in the audio worktree.
