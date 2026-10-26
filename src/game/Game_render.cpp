@@ -717,6 +717,7 @@ static void openQ4_RenderSceneDirect( const renderView_t *view, idRenderWorld *r
 	renderSystem->BindRenderTexture( nullptr, nullptr );
 	renderSystem->ClearRenderTarget( true, true, 1.0f, 0.0f, 0.0f, 0.0f );
 
+	idPresentationRendererScope rendererScope;
 	if ( portalSky ) {
 		renderView_t portalSkyView = *view;
 		portalSky->GetViewParms( &portalSkyView );
@@ -735,6 +736,7 @@ static void openQ4_BindSceneRenderTexture( idRenderTexture *renderTexture ) {
 }
 
 static void openQ4_RenderSceneWorld( const renderView_t *view, idRenderWorld *renderWorld, idCamera *portalSky, int renderFlags ) {
+	idPresentationRendererScope rendererScope;
 	if ( portalSky ) {
 		renderView_t portalSkyView = *view;
 		portalSky->GetViewParms( &portalSkyView );

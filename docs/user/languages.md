@@ -1,5 +1,7 @@
 # Languages
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 can show its menus and game text in twelve languages. Choose one in
 **Settings > Game Options > Language**. The menus switch at once; there is no
 need to restart.
@@ -18,7 +20,10 @@ need to restart.
 
 On the very first launch openQ4 picks your system language if it is one of
 these. Portuguese systems get Brazilian Portuguese. After that your choice is
-kept. You can also start in a given language from the command line:
+kept. Game data from a GOG installer can include an `autoexec.cfg` in `q4base`
+that names a language, often French when the installer was extracted on a Mac
+or Linux. That file sets only the first launch's language; your choice in
+Settings replaces it. You can also start in a given language from the command line:
 
 ```
 openQ4-client_x64 +set sys_lang turkish

@@ -233,10 +233,14 @@ characters; this revision preserves those descriptions as the register requires.
 
 ## One gate (session screens)
 
-`ui_retained` is the only switch for these screens. It defaults to 0 because
-retained gameplay overhead is still not negligible. It remains archived, so
-an existing player preference is preserved; `seta ui_retained 0` returns an
-opted-in profile to the stock screens. While it is 0
+`ui_retained` is the only switch for these screens. It defaults to 1 in the
+current source ([CVar declaration](https://github.com/themuffinator/openQ4/blob/main/src/framework/Session_menu.cpp))
+and is archived, so an existing player preference is preserved.
+`seta ui_retained 0` selects the stock screens; `seta ui_retained 1` selects
+the retained interface. The 0.14.000 release shipped with a default of 0;
+commit `1aa2332d9` restored the default to 1 afterward. This does not close
+the outstanding [UI performance gates](runtime-performance.md).
+While it is 0,
 no menu, pause or loading route creates a retained view, and the stock GUIs
 present every screen exactly as before. Developer commands that name a
 document explicitly (`testGUI`, `ui_retainedPreview`) remain the runtime's
@@ -352,7 +356,8 @@ after editing the script; `--check` fails when an output is stale.
   place, or a held look stick's deflection while it leads (menu focus moves
   with the other stick), and reduced motion holds the layers still.
   CONTINUE leads the navigation when a save exists and its
-  message line shows the save's levelshot, name and time; the same line explains
+  message line shows the save's levelshot and name, then its mission,
+  difficulty and the run's play time ([save details](#save-details)); the same line explains
   whichever item has focus. SINGLE PLAYER, LOAD GAME, MULTIPLAYER and SETTINGS
   follow, and the secondary links and EXIT stay on the plinth. EXIT asks before
   leaving. Opening the menu focuses its primary action (section 13.4),
@@ -371,12 +376,13 @@ after editing the script; `--check` fails when an output is stale.
   with the `retainedPauseState` menu command when the screen opens. Three
   rows list the open objectives, newest first as the stock objective screen
   stacks them, each behind the atlas marker, and then the ones completed on
-  this map, newest first, behind a check at 0.5. The time line under a faint
-  rule gives the mission's game time (it restarts with each map and is saved
-  with it) and how long ago the newest save was written: "0:42:10 in mission
-  · saved 4 min ago". A game module that publishes neither leaves the map's
-  own objective summary and no time line, and the heading hides when there
-  is nothing to list. The paused view
+  this map, newest first, behind a check at 0.5; the completed ones survive
+  a save load ([save details](#save-details)). Two time lines under a faint
+  rule give the mission's game time (it restarts with each map and is saved
+  with it) with the run's play time, then how long ago the newest save was
+  written: "0:42:10 in mission · 3:05:06 total" over "saved 4 min ago". A
+  game module that publishes neither leaves the map's own objective summary
+  and no time lines, and the heading hides when there is nothing to list. The paused view
   stays behind the screen, softened and never
   dimmed: the specification gives scene softening no values of its own, so
   it takes `modal.softfocus` (a 7.5 dp blur at 0.80 saturation), ramping in
@@ -465,6 +471,8 @@ after editing the script; `--check` fails when an output is stale.
     language.
   - **Input and reduced motion.** Input works from the first frame. Reduced
     motion shows the translated labels at once.
+  - **Confirmations.** QUIT TO MENU and EXIT ask in the Strogg family too
+    ([Strogg confirmations](#strogg-confirmations)).
   - **Choosing it.** The session asks the game once a level, with the
     `retainedPauseFamily` menu command, whether the player is Strogg (the
     `player_strogg` definition, from game/medlabs on). Every single-player
@@ -800,7 +808,9 @@ The Strogg pause opens the same page in the Strogg family
   switched on later, it loads at the first click.
 - **Composition** (section 9). The selected save's picture, 183x137 u at
   25,78 u, fitted inside a 1 u #414624 frame on black 0.60, with its date and
-  time at 37,215 and 37,230 u (Lowpixel 18 dp). LOAD GAME and DELETE GAME are
+  time on one line at 37,215 and 128,215 u, then the difficulty at 37,230 u and
+  the run's play time at 37,245 u, the Demos page's three detail lines
+  (Lowpixel 18 dp; [save details](#save-details)). LOAD GAME and DELETE GAME are
   section navigation plates: `b2_dark` at 21,256 and 20,293 u (Appendix B.1),
   208x52 u, with the band rows 13-37.4 u, the lower-leading cut from row 32,
   the #CCCC51 rail and the fill opaque to 57 %, half at 72 % and clear by
@@ -840,9 +850,11 @@ The Strogg pause opens the same page in the Strogg family
   SAVED GAMES, one sentence saying where saves come from and, at the title,
   NEW GAME, which opens the Single Player page. The plates rest disabled.
 - **CONTINUE.** The title's CONTINUE line showed the save's raw label, color
-  codes and tab included. It now shows the save's name, then its level and
-  when it was written. A newest save that LoadGame refuses opens this page on
-  it with the reason, as LOAD GAME on it would, instead of nothing.
+  codes and tab included. It now shows the save's name, then its level, the
+  difficulty and the run's play time, or when a save from an earlier build
+  was written ([save details](#save-details)). A newest save that LoadGame
+  refuses opens this page on it with the reason, as LOAD GAME on it would,
+  instead of nothing.
 - **Text.** The page adds `#str_231100` to `#str_231107` to all twelve tables.
   The generator measures every language's text in its box and fails
   otherwise: the plates, headings and pager rows on one line, the empty
@@ -858,6 +870,53 @@ command. Hyphenated ids such as `row-1` must be quoted there, since the
 console tokenizer splits an unquoted `-`. On a shared machine,
 `--set win_allowMultipleInstances=1` lets a capture start beside another
 openQ4 client; without it, a second client exits at once, leaving no log.
+
+## Save details
+
+A save names its difficulty and the run's play time (UI-03; FLOW-024 and
+FLOW-048), and the objectives completed on its map survive loading it. None
+of this changes the save format.
+
+- **Recording.** `idPlayer::SavePersistantInfo` adds `openq4_playSeconds` and
+  `openq4_skill` to the persistent player info, which carries the inventory
+  from one map to the next and which every save header already holds for
+  each client. The play time is the time the persistent info carried into
+  the map plus the map's game time, so pauses and menus never count. A new
+  game (empty persistent info) starts it at zero; a player who re-enters the map (`playerModel`) keeps the value it
+  arrived with. A run that a save from an earlier build began has no play
+  time, and keeps none until a new game: the menus show nothing rather than
+  a partial total. Loading an earlier save, or restarting the level from its
+  start autosave, rewinds the play time with the rest of the run.
+- **Showing.** The menus read the first client's persistent info from the
+  save's header (`Session_MenuReadSaveGameHeader`), as the list already
+  parses each header to accept a save. The title's CONTINUE detail is the
+  mission, the difficulty and "1:02:05 played" (`#str_231525`, a format
+  each table orders), joined as the language joins a list ([joined
+  lines](#joined-lines-and-capitals-24-october-2026)); a save that records
+  neither says when it was written instead, which also drops the old
+  unlocalized hyphen. The Load Game page puts the date and time on one line under the
+  picture, then the difficulty and the play time; both stay empty for a save
+  from an earlier build. The pause's level block gives the mission time and
+  the total (`#str_231524`, "3:05:06 total") on one line and the newest
+  save's age on the next; the levelshot gives up 12 dp so the third
+  objective row keeps its place.
+- **Objectives.** `idPlayer::CompleteObjective` records each completed
+  objective's title among the player's spawn arguments
+  (`openq4_objectiveDone<n>`), which every save writes, and `idPlayer::Restore`
+  lists them again. The inventory still does not save them, so older saves
+  restore none.
+- **Checks.** The generator measures the difficulty names and the played
+  phrase with a 999-hour time in every language, and the date and time in
+  their shared line. The session gate covers CONTINUE, the Load Game page
+  and the pause with and without the details; the screens test lays out the
+  Load Game page's detail lines clear of LOAD GAME's band and the pause's
+  two time lines under the third objective row. The `save-details` capture
+  completes airdefense1's first objective, saves, loads that save and opens
+  the pause, takes the level change to airdefense2 and pauses again, saves
+  there, and shows the title and the Load Game page on both saves. On a
+  machine busy with other builds the waits can run out before the title
+  and the page arrive; the German Vulkan run took those two screenshots
+  early, and the English OpenGL run covers them.
 
 ## Save Game page
 
@@ -960,8 +1019,9 @@ family).
   0.45), turning #FFCC00 with the plate's focus inset and the row's first
   column. The saves' names, the date, the descriptions and the typed name
   stay Lowpixel, tinted #FCFFC8. The prompt bar takes the Strogg pause's
-  #FFCC00 glyphs and R_Strogg verbs. The confirmations stay the stock dialogs,
-  as the Strogg pause's own do.
+  #FFCC00 glyphs and R_Strogg verbs. DELETE GAME, the overwrite question and
+  the save notice ask in the family's confirmations, as the Strogg pause's
+  own do; the overwritten save's name stays Lowpixel, in #FFCC00.
 - **Hand-off.** The Strogg pause carries the chosen label in R_Strogg as for
   any page, and the page presents at 550 ms. The first Strogg answer of a
   level (`RetainedPauseIsStrogg`) queues the three documents on the job
@@ -975,6 +1035,50 @@ family).
   GAME (typing a name and saving), LOAD GAME (selecting a save, asking to
   delete it and declining) and RESTART LEVEL (choosing a difficulty) from the
   Strogg pause, returning each time.
+
+### Strogg confirmations
+
+The Strogg pause and its pages ask in the Strogg family: QUIT TO MENU and
+EXIT on the pause, and DELETE GAME, the overwrite question and the save notice
+on the pages. `confirmation(..., strogg=True)` in
+`tools/ui/build_retained_screens.py` applies section 13.7's Strogg rules to
+the stock modal construction of section 6. The visual specification defines
+no Strogg dialog of its own, so the construction below derives from those
+rules.
+
+- **Silhouette.** The dialog keeps the stock rectangle, inset and title slot.
+  The slot keeps its 17 dp depth, but its flanks fall at 30 degrees (29.4 dp
+  along). The lower-leading chamfer becomes a 30-degree shoulder over the same
+  38 dp run. It is filled with the Strogg level card's #0A0503 at 0.85 inside
+  a #F59512 rail at 0.75. The glow column, cut to the dialog over soft focus
+  as in the stock modal, takes the Strogg backdrop's #6B2A0E light.
+- **Text.** The title is R_Strogg 20 dp in #FCFFC8, with the stock title's
+  tracking and 1 dp black outline, hanging from the raised top line into the
+  lit slot. A title too long for the slot runs on over the raised trailing
+  section, as on the stock dialog. The body is R_Strogg 15 dp in #FCFFC8 at
+  0.85 on the stock body's 22 dp lines, so every shipped language still fits
+  two lines above the actions.
+- **Actions.** The actions are the stock 180 dp action plates in the Strogg
+  family. The 20 dp lower-leading cut becomes a 30-degree shoulder over the
+  same run, with a black fade fill, a #F59512 rail and a slanted marker. Their
+  R_Strogg labels turn #FFCC00 with the focus inset.
+- **Translation.** While the dialog's contents are hidden, every line returns
+  to runes. When modal.enter completes and the contents show, they play the
+  short credits translation. The title, outline and fill as one, translates
+  over 300 ms. The body fades in from 60 ms. YES and NO, or CLOSE, follow
+  45 ms apart from 100 ms, over 200 ms each. Reduced motion shows the
+  translated dialog at once.
+- **Behavior.** Ids, events, focus, the soft focus, modal.enter and
+  modal.leave are the stock dialog's, so the session and its tests treat both
+  families alike. Every Marine document is unchanged.
+
+The native screens test checks the faces, the rune copies, the order of the
+translation, NO's focus color, reopening in runes and reduced motion on the
+Strogg pause, and each page's dialogs in their family. The `confirm-strogg`
+capture saves in game/recomp and then, from the Strogg pause, asks QUIT TO
+MENU mid-translation and settled (NO, then YES focused) and EXIT. It then
+types an existing save's name to raise the overwrite question, declines,
+and resumes.
 
 ## Arena page
 
@@ -1425,7 +1529,12 @@ verb or node, or to that list; the stock PunkBuster column's sort is exempt
   kept. The favorite toggle adds the chosen server to the favorites or takes
   it off (`idServerScan::ToggleFavoriteServer`, the stock toggle's work for a
   server the page names). The choice follows its server through new orders
-  and stays while a scan may list it again.
+  and stays while a scan may list it again. So does a focused row: the
+  session keeps the address each page row last showed
+  (`retainedJoinRowAddresses`) and, when a new order, a refresh or a filter
+  moves that server, turns to its page and focuses the row that now shows it
+  (the document's `joinFocus<row>` events). A server that leaves the list
+  leaves the focus where it was.
 - **Progress.** The bar is the stock `load_bar3` tube in `marine.progress`:
   its alpha profile down the 14 u tube (a bright top edge, dim under the
   notice, a lighter foot), the track at 0.30 and the fill at 0.50, the fill's
@@ -1577,10 +1686,42 @@ only while that screen presents the load: MAP before the render world loads,
 WORLD before the game builds the level, ASSETS while the renderer works
 through its model and image queues (their own loaded and total counts replace
 the phase's place), FINISHING after the renderer's level load, and the load
-time once the level is ready. The continue prompt follows `prompt.glyphs`
+time once the level is ready, in tenths of a second as the language writes
+them ([joined lines](#joined-lines-and-capitals-24-october-2026)). The continue prompt follows `prompt.glyphs`
 like every prompt ([prompt glyphs](#prompt-glyphs)). The wait for continue
 redraws the screen each frame, so touching a controller or the mouse switches
 it. The session no longer publishes its own `loading_controller`.
+
+## Joined lines and capitals (24 October 2026)
+
+The session no longer joins text in C++ where a language may join it
+differently. Each table gives the form:
+
+- `#str_231533` joins two parts of a line as the language joins a list
+  (`Session_RetainedList`; a middle dot in every shipped table): the title's
+  CONTINUE detail, the pause's time in the mission and the run's total, and
+  the loading card's spectators and players connecting.
+- `#str_231532` places the time in the mission ("%s in mission"), whose
+  order the code fixed before; `#str_231535` orders a save's date and time
+  where CONTINUE shows them.
+- `#str_231534` writes the load time from its whole and tenth seconds, so a
+  language chooses its decimal mark and unit: "1.5 s" in English, "1,5 s" in
+  most tables, "1,5 с" in Russian and Ukrainian, "1,5 mp" in Hungarian and
+  "1,5 sn" in Turkish.
+
+The Demos page's plates and headings are capitals, as Join Game's and the
+save pages' are, in every language: RmlUi's `text-transform` changes ASCII
+letters only, so each has a key. PLAY and DELETE are the pages' prompt
+verbs, MAP and DATE the stock capital keys, and openQ4 adds REFRESH
+(`#str_231536`; the save pages' REFRESH LIST runs past a plate in German),
+NAME (`#str_231530`; the stock capital NAME names a player in Ukrainian) and
+DURATION (`#str_231531`; Polish and Russian use the shorter DŁUGOŚĆ and
+ВРЕМЯ, which fit the column). The gate harness checks that every table's
+formats take exactly their arguments, and generation fails if a capital
+heading or plate runs past its slot in any language.
+
+Evidence: `.tmp/ui/joined-strings/validation-evidence.json`, SHA-256
+`9142f36637682668facf126154792e78c6d94b1235fbe0585b47010438cee682`.
 
 ## Page prompt bars
 
@@ -1588,10 +1729,24 @@ Every page in the docked state carries section 13.4's prompt bar in the
 bottom band's raised trailing section, which spans 375.1-717.9 u of the
 canvas at every aspect. Back keeps the stock Back position: its 45 dp target
 starts where the stock BACK plate's did, at 532,441 u, with its glyph 8 dp in
-and its verb, BACK, 6 dp after the glyph. SELECT, the focused control's
-Accept, ends 22 dp before Back's glyph. Each prompt is the title's
-construction: the active device's glyph ([prompt glyphs](#prompt-glyphs))
-and a Marine 14 dp verb at 0.80.
+and its verb, BACK, 6 dp after the glyph. Accept ends 22 dp before Back's
+glyph. Each prompt is the title's construction: the active device's glyph
+([prompt glyphs](#prompt-glyphs)) and a Marine 14 dp verb at 0.80.
+
+- **Accept follows focus** (section 13.4). Its verb names what the focused
+  control does, in the same frame as the focus moves. A button may name its
+  verb with its `prompt` (a localization key, or a string expression over
+  state, [document format](document-format.md)); the runtime's
+  `AcceptPrompt` answers with it for the focused button, or with the bar's
+  own SELECT for any other control, and with nothing while no focused
+  control can act. The adapter publishes the answer to `prompt.accept`
+  before the frame draws, once per change, and Accept leaves the bar while
+  it is empty. The pages name LOAD on LOAD GAME and on the chosen save,
+  DELETE on DELETE GAME and the Demos page's DELETE, SAVE on SAVE GAME and
+  on the chosen save, PLAY on PLAY and on a chosen demo that can play, and
+  JOIN on JOIN SERVER; a row that is not chosen yet keeps SELECT, which
+  chooses it. The five short verbs are capitals in every shipped language,
+  in each page's own terminology (JOIN is the Join Game card's).
 
 - **Pages.** Load Game, Save Game, Restart Level, Demos,
   Credits, Create Server, Join Game and the pause's Objectives page carry the
@@ -1611,9 +1766,11 @@ and a Marine 14 dp verb at 0.80.
   view-anchored bar hung past it.
 - **Fit.** `check_page_prompts` fails generation unless every shipped
   language's prompts fit, with the wider of each keycap and a controller
-  button: Back's verb ends at least 8 dp inside the 4:3 view, and SELECT
-  starts inside the bar, 5 u past the riser. Spanish is the tightest: 17 dp
-  clear in Marine and 13 dp in R_Strogg.
+  button: Back's verb ends at least 8 dp inside the 4:3 view, and Accept,
+  with SELECT and each verb the page's controls name, starts inside the bar,
+  5 u past the riser. The Save and Load pages' toolbar must end before the
+  bar begins. German REFRESH did not fit, so the Refresh plates keep SELECT;
+  their own labels already name the action.
 - **Pointer.** The bar's box runs from 380 u to the 4:3 view's trailing edge
   and covers no control of the page's own. Legend bars, the title's and the
   pauses' included, never take the pointer, so the pause's faded bar cannot
@@ -1626,7 +1783,19 @@ Checks:
   where it shows. The pointer over SELECT lights nothing and a click there
   does nothing; anywhere in Back's target the pointer lights Back, and a
   click runs the page's Back. Single Player's, Campaign's and Multiplayer's
-  legends take no input.
+  legends take no input. On the Load, Save, Demos and Join Game pages it
+  checks each control's Accept verb, and that the bar shows a published
+  verb and drops Accept while none is published.
+- The retained runtime test checks `AcceptPrompt` for a named verb, the
+  fallback, an expression over state, a state without a localization key,
+  a disabled focus and no focus, and that only buttons take a `prompt`,
+  which must be text and a localization key when literal.
+  `ui_retained_adapter.py` checks the publication: only to a document that
+  declares `prompt.accept`, before the frame draws, once per change, and
+  empty while nothing focused can act.
+- The `prompt-verbs` capture saves twice in airdefense1 and walks the Load
+  and Save pages from the pause, taking the bar on the chosen save, another
+  save, DELETE GAME and a newly chosen save.
 - `ui_retained_gate.py` checks every page's glyph groups with the others'
   ([prompt glyphs](#prompt-glyphs)).
 
@@ -2154,27 +2323,37 @@ SHA-256 `f756cd836ed5469f16f0f60658c9568d31f35bff637eb694493c464dc0f58854`.
 Join Game's network quality bars: `.tmp/ui/retained-network-quality-evidence/validation-evidence.json`,
 SHA-256 `05402c1366af7555381f7142104d346e7e019382670c6b9801977120db398e28`.
 
+The Strogg confirmations: `.tmp/ui/strogg-confirmations/validation-evidence.json`,
+SHA-256 `eaa963119faf7b24401189911309b07e78a456e2433ea2afeb433663b56a1b50`.
+
+Focus-following prompt verbs: `.tmp/ui/prompt-verbs/validation-evidence.json`,
+SHA-256 `71816710d9c56e5637f37b311deddf278eaf32122fe0710fbf49418a408720e2`.
+
+Save details: `.tmp/ui/save-details/validation-evidence.json`,
+SHA-256 `f5e59281e2543d90a21a79da6582413744761e0ceb79c26db0249514888e40a7`.
+
 ## Known limitations
 
 The [menu audit](menu-audit.md) of 8 October 2026 records what it fixed and
 what remains across every retained menu.
 
-- The Load Game page lists the saves newest first only. It has none of
-  section 13.7's list sorting, filter tags or refresh, and it pages by 64 rows
-  rather than virtualizing. A save's own screenshot loads when first shown,
-  outside a level load, as on the stock page. The title's CONTINUE detail
-  joins the level and the date with an unlocalized hyphen.
+- The Load Game page pages by 64 rows rather than virtualizing; its sorting,
+  filters and refresh are the [save browser controls](save-browser.md). A
+  save's own screenshot loads when first shown, outside a level load, as on
+  the stock page. A save from an earlier build shows no difficulty or play
+  time, and a run it began keeps none until a new game.
 
-- The completed objectives are kept per map and not saved, so after loading a
-  save the page and the level block list only those completed since. The
-  time line has no total time: nothing tracks play time across missions. A
-  failed objective is not marked (failure ends the mission at once). The
+- The completed objectives are kept per map, so a new map lists none, and a
+  save from an earlier build restores none. A failed objective is not
+  marked (failure ends the mission at once). The
   objectives display held on the scores button in play, its hold or toggle
   setting, the notices and the failure banner are the Remastered HUD's
   ([Remastered HUD](remastered-hud.md)), not this page's.
-- The Strogg pause and its pages keep the stock confirmation dialogs, and its
-  grain does not drift. The Strogg pages arrive translated: only the pause's
-  own labels play the rune translation. Its translation is the menu's short form: the full credits
+- The Strogg pause's grain does not drift. The Strogg pages arrive translated:
+  only the pause's own labels and the confirmations play the rune
+  translation. The Strogg confirmations derive from section 13.7's family
+  rules; the specification has no Strogg dialog of its own, so their art
+  awaits review with the rest of `ART-037`. Its translation is the menu's short form: the full credits
   translation, with its 2000 ms rune fade-in and 250 ms line stagger, is not
   built.
 - Only RESUME releases the softened view over 250 ms: a disconnect, a level

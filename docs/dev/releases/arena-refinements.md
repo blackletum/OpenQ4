@@ -1,5 +1,7 @@
 # Arena Campaign refinements — pending release notes
 
+> **Unreleased development notes.** 0.13.2 is the latest available release; 0.14.0 was withdrawn. These changes are not a new download. See [release status](../../user/release-status.md).
+
 ## Highlights
 
 - **The match-start camera move and "Fight!" are back.** After the countdown

@@ -189,17 +189,22 @@ void Reset( const char *name, size_t count = 2 ) {
 	probeReports.clear();
 	probeQueryResults.clear();
 }
-vkDeviceSelection_t Select( int expected, int forced = -1, VkResult expectedFailure = VK_ERROR_FEATURE_NOT_PRESENT ) {
+vkDeviceSelection_t Select( int expected, int forced = -1, VkResult expectedFailure = VK_ERROR_FEATURE_NOT_PRESENT,
+		uint32_t firstIndex = 0 ) {
 	vkDeviceSelection_t selected = {};
 	selected.device = Handle( 10 );
 	selected.index = 10;
 	selected.queueFamily = 10;
 	selected.properties.apiVersion = VK_API_VERSION_1_3;
-	const VkResult result = VK_SelectPhysicalDevice( api, VK_NULL_HANDLE, VK_NULL_HANDLE, forced, selected, Report );
+	selected.hasPortabilitySubset = true;
+	selected.hasSampleLocations = true;
+	const VkResult result = VK_SelectPhysicalDevice( api, VK_NULL_HANDLE, VK_NULL_HANDLE, forced, selected, Report,
+			nullptr, firstIndex );
 	if ( expected < 0 ) {
 		Require( result == expectedFailure, "unexpected selection error" );
 		Require( selected.device == VK_NULL_HANDLE && selected.index == 0 && selected.queueFamily == 0
-			&& selected.properties.apiVersion == 0, "failed selection left stale device data" );
+			&& selected.properties.apiVersion == 0 && !selected.hasPortabilitySubset && !selected.hasSampleLocations,
+			"failed selection left stale device data" );
 	} else {
 		Require( result == VK_SUCCESS, "selection failed" );
 		Require( selected.device == Handle( expected ) && selected.index == static_cast<uint32_t>( expected ), "selected wrong device" );
@@ -247,6 +252,73 @@ vkDeviceProbeInfo_t Probe( int expected, bool verbose = false, int forced = -1,
 	++passed;
 	return selected;
 }
+
+// Instance-level inventories and present modes, through the same fake lists.
+std::vector<VkLayerProperties> instanceLayers;
+std::vector<VkExtensionProperties> instanceExtensions;
+std::vector<VkPresentModeKHR> presentModes;
+Enumeration layerQuery, instanceExtensionQuery, presentModeQuery;
+std::vector<std::string> extensionLayerArguments;
+
+VKAPI_ATTR VkResult VKAPI_CALL InstanceLayers( uint32_t *count, VkLayerProperties *data ) {
+	return Enumerate( instanceLayers, layerQuery, count, data );
+}
+VKAPI_ATTR VkResult VKAPI_CALL InstanceExtensions( const char *layer, uint32_t *count, VkExtensionProperties *data ) {
+	extensionLayerArguments.push_back( layer != nullptr ? layer : "" );
+	return Enumerate( instanceExtensions, instanceExtensionQuery, count, data );
+}
+VKAPI_ATTR VkResult VKAPI_CALL PresentModes( VkPhysicalDevice handle, VkSurfaceKHR, uint32_t *count, VkPresentModeKHR *data ) {
+	Require( handle == Handle( 0 ), "present modes queried for the wrong device" );
+	return Enumerate( presentModes, presentModeQuery, count, data );
+}
+
+void ResetInstance( const char *name ) {
+	caseName = name;
+	instanceLayers.clear();
+	instanceExtensions.clear();
+	presentModes.clear();
+	layerQuery = {};
+	instanceExtensionQuery = {};
+	presentModeQuery = {};
+	extensionLayerArguments.clear();
+}
+VkLayerProperties Layer( const char *name ) {
+	VkLayerProperties layer = {};
+	std::strcpy( layer.layerName, name );
+	return layer;
+}
+VkExtensionProperties Extension( const char *name ) {
+	VkExtensionProperties extension = {};
+	std::strcpy( extension.extensionName, name );
+	return extension;
+}
+
+const char *const layerNames[] = { "VK_LAYER_KHRONOS_validation", "VK_LAYER_missing" };
+const char *const extensionNames[] = { "VK_KHR_portability_enumeration", "VK_EXT_debug_utils", "VK_KHR_missing" };
+
+void Layers( VkResult expected, bool validation ) {
+	bool found[2] = { true, true };
+	Require( VK_FindInstanceLayers( InstanceLayers, layerNames, 2, found ) == expected, "unexpected layer result" );
+	Require( found[0] == validation && !found[1], "incorrect or stale layer report" );
+	++passed;
+}
+void Extensions( VkResult expected, bool portability, bool debugUtils, const char *layer = nullptr ) {
+	bool found[3] = { true, true, true };
+	Require( VK_FindInstanceExtensions( InstanceExtensions, layer, extensionNames, 3, found ) == expected,
+			"unexpected instance-extension result" );
+	Require( found[0] == portability && found[1] == debugUtils && !found[2], "incorrect or stale extension report" );
+	Require( !extensionLayerArguments.empty() && extensionLayerArguments.back() == ( layer != nullptr ? layer : "" ),
+			"layer argument not forwarded" );
+	++passed;
+}
+void Modes( VkResult expected, uint32_t mask ) {
+	uint32_t modes = 0xffffffffu;
+	Require( VK_QuerySurfacePresentModes( PresentModes, Handle( 0 ), VK_NULL_HANDLE, modes ) == expected,
+			"unexpected present-mode result" );
+	Require( modes == mask, "incorrect or stale present-mode mask" );
+	++passed;
+}
+uint32_t Bit( VkPresentModeKHR mode ) { return 1u << static_cast<uint32_t>( mode ); }
 
 } // namespace
 
@@ -312,6 +384,32 @@ int main() {
 	devices[0].formats.push_back( { VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR } );
 	devices[0].formatQuery.firstCountLimit = 1; Surface( VK_FORMAT_R8G8B8A8_UNORM );
 	Require( devices[0].formatQuery.countCalls == 2, "surface formats did not retry changing count" );
+	Reset( "admission records optional extensions" );
+	devices[0].extensions.insert( devices[0].extensions.begin(), 1100, VkExtensionProperties{} );
+	VkExtensionProperties optionalExtension = {};
+	std::strcpy( optionalExtension.extensionName, "VK_KHR_portability_subset" );
+	devices[0].extensions.push_back( optionalExtension );
+	std::strcpy( optionalExtension.extensionName, "VK_EXT_sample_locations" );
+	devices[0].extensions.push_back( optionalExtension );
+	const auto withOptional = Select( 0 );
+	Require( withOptional.hasPortabilitySubset && withOptional.hasSampleLocations, "optional extension beyond old cap lost" );
+	Reset( "admission without optional extensions" );
+	const auto withoutOptional = Select( 0 );
+	Require( !withoutOptional.hasPortabilitySubset && !withoutOptional.hasSampleLocations, "optional extension invented" );
+	Reset( "automatic selection resumes after a failed adapter", 3 ); Select( 1, -1, VK_ERROR_FEATURE_NOT_PRESENT, 1 );
+	Require( devices[0].propertiesCalls == 0 && devices[2].propertiesCalls == 0, "resume queried an earlier or later device" );
+	Reset( "resume skips an unsuitable next device", 3 ); devices[1].dynamicRendering = VK_FALSE;
+	Select( 2, -1, VK_ERROR_FEATURE_NOT_PRESENT, 1 );
+	Require( rejected == std::vector<uint32_t>{ 1 } && devices[0].propertiesCalls == 0, "resume reported the wrong candidates" );
+	Reset( "resume past the last device" ); Select( -1, -1, VK_ERROR_FEATURE_NOT_PRESENT, 2 );
+	Require( devices[0].propertiesCalls == 0 && devices[1].propertiesCalls == 0 && rejected.empty(), "queried a device below the resume point" );
+	Reset( "resume when later devices are all unsuitable", 3 ); devices[1].synchronization2 = VK_FALSE; devices[2].synchronization2 = VK_FALSE;
+	Select( -1, -1, VK_ERROR_FEATURE_NOT_PRESENT, 1 );
+	Require( rejected == std::vector<uint32_t>{ 1, 2 }, "did not report every remaining candidate" );
+	Reset( "explicit choice is never resumed" ); Select( -1, 0, VK_ERROR_INITIALIZATION_FAILED, 1 );
+	Require( deviceQuery.countCalls == 0 && devices[0].propertiesCalls == 0, "explicit retry enumerated or substituted" );
+	Reset( "explicit index beyond the old override cap", 20 ); Select( 17, 17 );
+	Require( devices[0].propertiesCalls == 0 && devices[16].propertiesCalls == 0, "forced index queried another device" );
 	const int rendererCases = passed;
 	Reset( "quiet probe stops at first suitable" ); Probe( 0 );
 	Require( devices[1].propertiesCalls == 0 && probeReports.size() == 1, "quiet probe queried later GPU" );
@@ -391,6 +489,69 @@ int main() {
 	Require( !Probe( 0 ).hasDescriptorIndexing, "partial descriptor indexing reported as complete" );
 	Reset( "no suitable probe candidate" ); for ( auto &device : devices ) { device.dynamicRendering = VK_FALSE; } Probe( -1, true );
 	Reset( "empty probe device list", 0 ); Probe( -1 );
-	std::printf( "Vulkan device selection: %d renderer cases and %d probe cases passed\n", rendererCases, passed - rendererCases );
+	const int probeCases = passed - rendererCases;
+
+	Reset( "present modes use the queried device", 1 );
+	ResetInstance( "validation layer found" ); instanceLayers = { Layer( "VK_LAYER_other" ), Layer( "VK_LAYER_KHRONOS_validation" ) };
+	Layers( VK_SUCCESS, true );
+	ResetInstance( "validation layer absent" ); instanceLayers = { Layer( "VK_LAYER_other" ) }; Layers( VK_SUCCESS, false );
+	ResetInstance( "no layers" ); Layers( VK_SUCCESS, false );
+	ResetInstance( "layer beyond old fixed array" ); instanceLayers.assign( 70, Layer( "VK_LAYER_filler" ) );
+	instanceLayers.push_back( Layer( "VK_LAYER_KHRONOS_validation" ) ); Layers( VK_SUCCESS, true );
+	ResetInstance( "layer count error" ); instanceLayers = { Layer( "VK_LAYER_KHRONOS_validation" ) };
+	layerQuery.countResult = VK_ERROR_OUT_OF_HOST_MEMORY; Layers( VK_ERROR_OUT_OF_HOST_MEMORY, false );
+	ResetInstance( "layer data error" ); instanceLayers = { Layer( "VK_LAYER_KHRONOS_validation" ) };
+	layerQuery.dataResult = VK_ERROR_INITIALIZATION_FAILED; Layers( VK_ERROR_INITIALIZATION_FAILED, false );
+	ResetInstance( "layer list stays incomplete" ); instanceLayers = { Layer( "VK_LAYER_KHRONOS_validation" ) };
+	layerQuery.incomplete = 20; Layers( VK_INCOMPLETE, false );
+	Require( layerQuery.dataCalls == 4, "layer enumeration retried without bound" );
+	ResetInstance( "layer list grows" ); instanceLayers = { Layer( "VK_LAYER_other" ), Layer( "VK_LAYER_KHRONOS_validation" ) };
+	layerQuery.firstCountLimit = 1; Layers( VK_SUCCESS, true );
+	Require( layerQuery.countCalls == 2, "growing layer list not re-enumerated" );
+
+	ResetInstance( "instance extensions found" );
+	instanceExtensions = { Extension( "VK_KHR_surface" ), Extension( "VK_EXT_debug_utils" ), Extension( "VK_KHR_portability_enumeration" ) };
+	Extensions( VK_SUCCESS, true, true );
+	ResetInstance( "instance extensions absent" ); instanceExtensions = { Extension( "VK_KHR_surface" ) }; Extensions( VK_SUCCESS, false, false );
+	ResetInstance( "layer-provided extensions" ); instanceExtensions = { Extension( "VK_EXT_debug_utils" ) };
+	Extensions( VK_SUCCESS, false, true, "VK_LAYER_KHRONOS_validation" );
+	ResetInstance( "instance extension beyond old fixed arrays" ); instanceExtensions.assign( 600, Extension( "VK_EXT_filler" ) );
+	instanceExtensions.push_back( Extension( "VK_KHR_portability_enumeration" ) ); Extensions( VK_SUCCESS, true, false );
+	ResetInstance( "instance extension count error" ); instanceExtensions = { Extension( "VK_EXT_debug_utils" ) };
+	instanceExtensionQuery.countResult = VK_ERROR_OUT_OF_HOST_MEMORY; Extensions( VK_ERROR_OUT_OF_HOST_MEMORY, false, false );
+	ResetInstance( "missing layer reports its error" ); instanceExtensions = { Extension( "VK_EXT_debug_utils" ) };
+	instanceExtensionQuery.countResult = VK_ERROR_LAYER_NOT_PRESENT;
+	Extensions( VK_ERROR_LAYER_NOT_PRESENT, false, false, "VK_LAYER_KHRONOS_validation" );
+	ResetInstance( "instance extension data error" ); instanceExtensions = { Extension( "VK_EXT_debug_utils" ) };
+	instanceExtensionQuery.dataResult = VK_ERROR_INITIALIZATION_FAILED; Extensions( VK_ERROR_INITIALIZATION_FAILED, false, false );
+	ResetInstance( "instance extension list stays incomplete" ); instanceExtensions = { Extension( "VK_EXT_debug_utils" ) };
+	instanceExtensionQuery.incomplete = 20; Extensions( VK_INCOMPLETE, false, false );
+	Require( instanceExtensionQuery.dataCalls == 4, "instance-extension enumeration retried without bound" );
+	ResetInstance( "instance extension list grows" );
+	instanceExtensions = { Extension( "VK_KHR_surface" ), Extension( "VK_KHR_portability_enumeration" ) };
+	instanceExtensionQuery.firstCountLimit = 1; Extensions( VK_SUCCESS, true, false );
+	Require( instanceExtensionQuery.countCalls == 2, "growing instance-extension list not re-enumerated" );
+
+	ResetInstance( "core present modes" );
+	presentModes = { VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR,
+		VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR };
+	Modes( VK_SUCCESS, Bit( VK_PRESENT_MODE_FIFO_KHR ) | Bit( VK_PRESENT_MODE_MAILBOX_KHR )
+			| Bit( VK_PRESENT_MODE_IMMEDIATE_KHR ) | Bit( VK_PRESENT_MODE_FIFO_RELAXED_KHR ) );
+	ResetInstance( "FIFO only" ); presentModes = { VK_PRESENT_MODE_FIFO_KHR }; Modes( VK_SUCCESS, Bit( VK_PRESENT_MODE_FIFO_KHR ) );
+	ResetInstance( "present mode beyond old fixed array" ); presentModes.assign( 20, VK_PRESENT_MODE_FIFO_KHR );
+	presentModes.push_back( VK_PRESENT_MODE_FIFO_RELAXED_KHR );
+	Modes( VK_SUCCESS, Bit( VK_PRESENT_MODE_FIFO_KHR ) | Bit( VK_PRESENT_MODE_FIFO_RELAXED_KHR ) );
+	ResetInstance( "present-mode count error" ); presentModes = { VK_PRESENT_MODE_FIFO_KHR };
+	presentModeQuery.countResult = VK_ERROR_SURFACE_LOST_KHR; Modes( VK_ERROR_SURFACE_LOST_KHR, 0 );
+	ResetInstance( "present-mode data error" ); presentModes = { VK_PRESENT_MODE_FIFO_KHR };
+	presentModeQuery.dataResult = VK_ERROR_SURFACE_LOST_KHR; Modes( VK_ERROR_SURFACE_LOST_KHR, 0 );
+	ResetInstance( "partial present-mode list is not accepted" ); presentModes = { VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR };
+	presentModeQuery.incomplete = 20; Modes( VK_INCOMPLETE, 0 );
+	ResetInstance( "present-mode list grows" ); presentModes = { VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR };
+	presentModeQuery.firstCountLimit = 1; Modes( VK_SUCCESS, Bit( VK_PRESENT_MODE_FIFO_KHR ) | Bit( VK_PRESENT_MODE_IMMEDIATE_KHR ) );
+	ResetInstance( "empty present-mode list" ); Modes( VK_SUCCESS, 0 );
+
+	std::printf( "Vulkan device selection: %d renderer cases, %d probe cases and %d instance/presentation cases passed\n",
+			rendererCases, probeCases, passed - rendererCases - probeCases );
 	return 0;
 }

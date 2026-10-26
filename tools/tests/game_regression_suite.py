@@ -69,6 +69,12 @@ def main():
     for result in results:
         if not result['passed']:
             print(f'FAILED {result["test"]}: {result["log"]}')
+            # Keep the actual compiler/runtime error in the job log even when
+            # the platform fails before it can publish a staged package.
+            output = Path(result['log']).read_text(encoding='utf-8', errors='replace')
+            if len(output) > 12000:
+                print('[last 12000 characters; complete output is in the test log]')
+            print(output[-12000:], flush=True)
     print(f'game regressions: {sum(r["passed"] for r in results)}/{len(results)} passed')
     return 0 if all(r['passed'] for r in results) else 1
 

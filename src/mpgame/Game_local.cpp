@@ -3,6 +3,7 @@
 
 #include "Game_local.h"
 
+#include "../idlib/NumericString.h"
 #include "../sys/AutoVersion.h"
 
 struct game_name_s {
@@ -47,6 +48,7 @@ idCollisionModelManager *	collisionModelManager = NULL;
 rvBSEManager *				bse = NULL;
 // RAVEN END
 idVRSystem *				vrSystem = NULL;
+idUsercmdGen *				usercmdGen = NULL;
 
 idCVar *					idCVar::staticVars = NULL;
 
@@ -173,6 +175,7 @@ extern "C" gameExport_t *GetGameAPI( gameImport_t *import ) {
 		bse							= import->bse;
 // RAVEN END
 		vrSystem					= import->vrSystem;
+		usercmdGen					= import->usercmdGen;
 
 // RAVEN BEGIN
 // dluetscher: import the memory system variables
@@ -341,6 +344,7 @@ void idGameLocal::Clear( void ) {
 	spawnedEntities.Clear();
 	activeEntities.Clear();
 	presentationEntities.Clear();
+	presentationClientEntities.Clear();
 	numEntitiesToDeactivate = 0;
 	sortPushers = false;
 	sortTeamMasters = false;
@@ -371,6 +375,10 @@ void idGameLocal::Clear( void ) {
 	previousTime = 0;
 	time = 0;
 	presentationClock.Reset();
+	presentationGameplayCount = 0;
+	presentationRendererDepth = 0;
+	presentationRendererEffectCount = 0;
+	presentationPrepStartTicks = 0.0;
 	presentationClockSample = -1.0f;
 	presentationSceneFraction = -1.0f;
 	presentationAnimationTime = -1;
@@ -431,6 +439,8 @@ void idGameLocal::Clear( void ) {
 	isTVClient = false;
 	realClientTime = 0;
 	isNewFrame = true;
+	clientReplayTics = 0;
+	lastChainReplayTics = 0;
 	entityDefBits = 0;
 
 	nextGibTime = 0;
@@ -569,6 +579,10 @@ void idGameLocal::Init( void ) {
 	// openQ4: fail loudly if the gametype table, the enum and the si_gameType
 	// completion list have drifted apart
 	MPValidateGameTypeTable();
+
+	// openQ4: the first user info a connection sends must already say what this client
+	// extrapolates, before ClientRun keeps it current.
+	UpdateAdvertisedRemoteExtrapolation();
 
 // RAVEN BEGIN
 // rjohnson: new help system for cvar ui
@@ -1757,6 +1771,7 @@ void idGameLocal::LoadMap( const char *mapName, int randseed ) {
 	spawnedEntities.Clear();
 	activeEntities.Clear();
 	presentationEntities.Clear();
+	presentationClientEntities.Clear();
 	numEntitiesToDeactivate = 0;
 	sortTeamMasters = false;
 	sortPushers = false;
@@ -2860,6 +2875,7 @@ void idGameLocal::MapClear( bool clearClients, int instance ) {
 	}
 // RAVEN END
 	presentationEntities.Clear();
+	presentationClientEntities.Clear();
 
 	if ( !clearClients ) {
 		// add back the hashes of the clients/stuff in other instances
@@ -4303,6 +4319,15 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds, int activeEdito
 
 	player = GetLocalPlayer();
 
+	// openQ4: clear the debug lines each server frame, as single player does.
+	// A remote client clears them on every snapshot (ClientReadSnapshot), but a
+	// listen server reads none, so bot_debugNav and every other server-side
+	// draw piled up until the renderer's fixed line pool was full and new lines
+	// were silently dropped.
+	if ( gameRenderWorld != NULL ) {
+		gameRenderWorld->DebugClear( time );
+	}
+
 	do {
 
 		previousTime = time;
@@ -4783,6 +4808,22 @@ void idGameLocal::CalcFov( float base_fov, float &fov_x, float &fov_y ) const {
 void ClearClipProfile( void );
 void DisplayClipProfile( void );
 
+// What the frozen scene's camera shows against the authoritative view, for the
+// late-look latency analysis (tools/tests/presentation_look_runtime.py). Noted
+// once per prepared draw, before the capture records it.
+static struct {
+	float	drawnYaw, authoritativeYaw, lookYaw, inputYaw, drawnZ;
+	int		look;
+} presentationLookDiagnostic;
+
+static void NotePresentationLookDiagnostic( idPlayer *player ) {
+	presentationLookDiagnostic.drawnYaw = player->GetRenderView() != NULL ? player->GetRenderView()->viewaxis.ToAngles().yaw : 0.0f;
+	presentationLookDiagnostic.drawnZ = player->GetRenderView() != NULL ? player->GetRenderView()->vieworg.z : 0.0f;
+	presentationLookDiagnostic.authoritativeYaw = player->viewAngles.yaw;
+	presentationLookDiagnostic.look = player->GetPresentationLookDiagnostic( presentationLookDiagnostic.inputYaw, presentationLookDiagnostic.lookYaw ) ? 1 : 0;
+}
+
+
 /*
 ================
 idGameLocal::PreparePlayerSceneForRender
@@ -4799,6 +4840,7 @@ void idGameLocal::PreparePlayerSceneForRender( idPlayer *player ) {
 	if ( player == NULL || GetDemoState() == DEMO_PLAYING || IsTimeDemo() ) {
 		return;
 	}
+	presentationPrepStartTicks = idLib::sys->GetClockTicks();
 
 	// Freeze one draw sample before CalculateRenderView() asks for the camera
 	// fraction.  Animation lives on the previous-to-current interval, whereas
@@ -4816,6 +4858,7 @@ void idGameLocal::PreparePlayerSceneForRender( idPlayer *player ) {
 		presentationAnimationTime = time;
 	}
 	player->CalculateRenderView();
+	NotePresentationLookDiagnostic( player );
 	// The weapon's scope GUI is an in-world surface drawn with the 3D scene, so
 	// its yaw has to be current before that scene is rendered.  Updating it from
 	// DrawHUD set it during the 2D overlay, after R_RenderGuiSurf had already
@@ -8473,6 +8516,10 @@ static const int MAX_PRESENTATION_CLOCK_SAMPLES = 8192;
 struct presentationClockSample_t {
 	double	realTimeHighRes;
 	int		gameStep, rate;
+	float	drawnYaw, authoritativeYaw, lookYaw, inputYaw, drawnZ;
+	int		look;
+	int		clientDebris, afBlends, listed, afFrames, gameplay, bse;
+	float	prepMs;
 	float	clockFraction;
 	int		realTime;
 	int		gameTime;
@@ -8481,6 +8528,51 @@ struct presentationClockSample_t {
 static presentationClockSample_t presentationClockCaptureSamples[ MAX_PRESENTATION_CLOCK_SAMPLES ];
 static int presentationClockCaptureCount = 0;
 static bool presentationClockCaptureDumped = false;
+
+/*
+================
+idGameLocal::NotePresentationGameplay
+
+A prepared draw (PreparePlayerSceneForRender to EndPresentationSceneForRender)
+may move what is drawn but must never dispatch events, run scripts, step
+physics or start effects: repeated draws, stereo eyes and subviews would run
+them again. Entry points call this; inside a scene it counts the breach for
+g_presentationClockCapture and names the first few.
+================
+*/
+void idGameLocal::NotePresentationGameplay( const char *what ) {
+	if ( presentationClockSample < 0.0f ) {
+		return;
+	}
+	presentationGameplayCount++;
+	static int reported = 0;
+	if ( reported < 8 ) {
+		reported++;
+		Printf( "presentationGameplay: %s ran inside a prepared draw\n", what );
+	}
+}
+
+/*
+================
+idGameLocal::NotePresentationEffect
+
+PlayEffect's guard. The renderer services BSE inside RenderScene, and a particle
+impact or nested segment may start an effect through idGame::PlayEffect there,
+once per particle or authoritative effect step rather than once per draw. Those
+are counted apart (bse=); any other effect started inside a prepared draw is
+gameplay.
+================
+*/
+void idGameLocal::NotePresentationEffect( void ) {
+	if ( presentationClockSample < 0.0f ) {
+		return;
+	}
+	if ( presentationRendererDepth > 0 ) {
+		presentationRendererEffectCount++;
+		return;
+	}
+	NotePresentationGameplay( "idGameLocal::PlayEffect" );
+}
 
 /*
 ================
@@ -8508,6 +8600,25 @@ void idGameLocal::RecordPresentationClockSample( void ) {
 	sample.realTime = Sys_Milliseconds();
 	sample.gameTime = time;
 	sample.fraction = presentationSceneFraction;
+	sample.drawnYaw = presentationLookDiagnostic.drawnYaw;
+	sample.drawnZ = presentationLookDiagnostic.drawnZ;
+	// the camera, look, entity poses and client debris prepared for this draw
+	sample.prepMs = static_cast<float>( ( idLib::sys->GetClockTicks() - presentationPrepStartTicks ) * 1000.0 /
+		idLib::sys->ClockTicksPerSecond() );
+	sample.authoritativeYaw = presentationLookDiagnostic.authoritativeYaw;
+	sample.lookYaw = presentationLookDiagnostic.lookYaw;
+	sample.inputYaw = presentationLookDiagnostic.inputYaw;
+	sample.look = presentationLookDiagnostic.look;
+	sample.clientDebris = presentationClientEntities.Num();
+	sample.afBlends = idAnimator::presentationAFBlendCount;
+	idAnimator::presentationAFBlendCount = 0;
+	sample.listed = presentationEntities.Num();
+	sample.afFrames = idAnimator::presentationAFFrameCount;
+	idAnimator::presentationAFFrameCount = 0;
+	sample.gameplay = presentationGameplayCount;
+	presentationGameplayCount = 0;
+	sample.bse = presentationRendererEffectCount;
+	presentationRendererEffectCount = 0;
 	if ( presentationClockCaptureCount < wanted ) {
 		return;
 	}
@@ -8515,14 +8626,27 @@ void idGameLocal::RecordPresentationClockSample( void ) {
 	presentationClockCaptureDumped = true;
 	Printf( "presentationClock: %d samples\n", presentationClockCaptureCount );
 	for ( int i = 0; i < presentationClockCaptureCount; i++ ) {
-		Printf( "presentationClockSample rt=%d t=%d f=%.4f hrt=%.6f step=%d hz=%d phase=%.9f\n",
+		Printf( "presentationClockSample rt=%d t=%d f=%.4f hrt=%.6f step=%d hz=%d phase=%.9f drawYaw=%.4f authYaw=%.4f look=%d lookYaw=%.4f inYaw=%.4f debris=%d afBlends=%d listed=%d afFrames=%d gameplay=%d bse=%d drawZ=%.3f prepMs=%.4f\n",
 			presentationClockCaptureSamples[ i ].realTime,
 			presentationClockCaptureSamples[ i ].gameTime,
 			presentationClockCaptureSamples[ i ].fraction,
 			presentationClockCaptureSamples[ i ].realTimeHighRes,
 			presentationClockCaptureSamples[ i ].gameStep,
 			presentationClockCaptureSamples[ i ].rate,
-			presentationClockCaptureSamples[ i ].clockFraction );
+			presentationClockCaptureSamples[ i ].clockFraction,
+			presentationClockCaptureSamples[ i ].drawnYaw,
+			presentationClockCaptureSamples[ i ].authoritativeYaw,
+			presentationClockCaptureSamples[ i ].look,
+			presentationClockCaptureSamples[ i ].lookYaw,
+			presentationClockCaptureSamples[ i ].inputYaw,
+			presentationClockCaptureSamples[ i ].clientDebris,
+			presentationClockCaptureSamples[ i ].afBlends,
+			presentationClockCaptureSamples[ i ].listed,
+			presentationClockCaptureSamples[ i ].afFrames,
+			presentationClockCaptureSamples[ i ].gameplay,
+			presentationClockCaptureSamples[ i ].bse,
+			presentationClockCaptureSamples[ i ].drawnZ,
+			presentationClockCaptureSamples[ i ].prepMs );
 	}
 	presentationClockCaptureCount = 0;
 }
@@ -8614,6 +8738,14 @@ void idGameLocal::ClearPresentationEntityPoses( void ) {
 		ent->RestoreAuthoritativePresentationPose();
 		ent->presentationNode.Remove();
 	}
+
+	rvClientEntity *cent;
+	rvClientEntity *nextCent;
+	for ( cent = presentationClientEntities.Next(); cent != NULL; cent = nextCent ) {
+		nextCent = cent->presentationNode.Next();
+		cent->RestoreAuthoritativePresentationPose();
+		cent->presentationNode.Remove();
+	}
 }
 
 /*
@@ -8690,6 +8822,15 @@ void idGameLocal::UpdatePresentationEntityPoses( void ) {
 		next = ent->presentationNode.Next();
 		ent->UpdatePresentationPose();
 		updated++;
+	}
+
+	// Unbound client debris, brass and gibs, which run their own physics. They
+	// list themselves from Think() while they move; see rvClientMoveable.
+	rvClientEntity *cent;
+	rvClientEntity *nextCent;
+	for ( cent = presentationClientEntities.Next(); cent != NULL; cent = nextCent ) {
+		nextCent = cent->presentationNode.Next();
+		cent->UpdatePresentationPose();
 	}
 
 	// Whether the local player's own body reached the presentation clock is not
@@ -9243,6 +9384,7 @@ rvClientEffect* idGameLocal::PlayEffect(
 	effectCategory_t		category,
 	const idVec4&			effectTint ) {
 
+	gameLocal.NotePresentationEffect();
 	if ( !effect ) {
 		return NULL;
 	}
@@ -9491,24 +9633,17 @@ bool idGameLocal::SelectMPLagCompensationFrame( int clientNum, int targetTime, m
 
 /*
 ================
-idGameLocal::ComputeMPLagCompensationRewind
+idGameLocal::EstimateMPLagCompensation
+
+How old the remote players on one client's screen are, from numbers the server bounds itself.
+Valid for any slot whether or not lag compensation is on, so lagCompStatus can show what a
+rewind would be before anybody turns it on.
 ================
 */
-bool idGameLocal::ComputeMPLagCompensationRewind( const idPlayer *shooter, int &rewindMS ) const {
-	rewindMS = 0;
-
-	if ( !isServer || !isMultiplayer || !shooter || !net_mpLagCompensation.GetBool() ) {
-		return false;
-	}
-
-	const int maxRewindMS = idMath::ClampInt( 0, 1000, net_mpLagCompMaxMS.GetInteger() );
-	if ( maxRewindMS <= 0 ) {
-		return false;
-	}
-
-	const int clientNum = shooter->entityNumber;
+void idGameLocal::EstimateMPLagCompensation( int clientNum, mpLagCompEstimate_t &estimate ) const {
+	memset( &estimate, 0, sizeof( estimate ) );
 	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
-		return false;
+		return;
 	}
 
 	// This used to start from time - shooter->usercmd.gameTime, which cannot measure anything:
@@ -9538,31 +9673,108 @@ bool idGameLocal::ComputeMPLagCompensationRewind( const idPlayer *shooter, int &
 	const int claim = ( reported > 0 ) ? reported + GetMSec() : 0;
 	const int ceiling = ( measured > 0 ) ? measured + net_mpLagCompSlackMS.GetInteger() : 0;
 
+	estimate.leadMS = reported;
+	estimate.measuredMS = measured;
+	estimate.advertisedTics = AdvertisedRemoteExtrapolationTics( clientNum );
+	estimate.extrapolationMS = RemoteExtrapolationMS( clientNum, reported );
+
 	// A listen server's own player and a bot both leave these at zero and rewind nothing, which
 	// is right: neither has a wire between it and the world it aimed at.
-	int rewindEstimateMS = Min( claim, ceiling ) - RemoteExtrapolationMS();
+	estimate.poseAgeMS = Max( 0, Min( claim, ceiling ) - estimate.extrapolationMS );
+}
 
-	rewindEstimateMS += net_mpLagCompBiasMS.GetInteger();
+/*
+================
+idGameLocal::ComputeMPLagCompensationRewind
+================
+*/
+bool idGameLocal::ComputeMPLagCompensationRewind( const idPlayer *shooter, int &rewindMS, mpLagCompEstimate_t *estimate ) const {
+	rewindMS = 0;
+
+	if ( !isServer || !isMultiplayer || !shooter || !net_mpLagCompensation.GetBool() ) {
+		return false;
+	}
+
+	const int maxRewindMS = idMath::ClampInt( 0, 1000, net_mpLagCompMaxMS.GetInteger() );
+	if ( maxRewindMS <= 0 ) {
+		return false;
+	}
+
+	const int clientNum = shooter->entityNumber;
+	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
+		return false;
+	}
+
+	mpLagCompEstimate_t local;
+	mpLagCompEstimate_t &used = ( estimate != NULL ) ? *estimate : local;
+	EstimateMPLagCompensation( clientNum, used );
+
+	// The rewind is the displayed pose age: the lead the shooter draws the world behind by, less
+	// what it extrapolates remote players forward for itself.
+	const int rewindEstimateMS = used.poseAgeMS + net_mpLagCompBiasMS.GetInteger();
 	rewindMS = idMath::ClampInt( 0, maxRewindMS, rewindEstimateMS );
 	return rewindMS > 0;
 }
 
 /*
 ================
+idGameLocal::AdvertisedRemoteExtrapolationTics
+
+The net_mpRemoteExtrapolation a client put in its user info.  The text is client-authored, so
+only a plain decimal inside net_mpPredictMaxFrames' own range counts; anything else - an older
+client without the key included - is read as legacy prediction, which extrapolates nothing.
+================
+*/
+int idGameLocal::AdvertisedRemoteExtrapolationTics( int clientNum ) const {
+	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
+		return 0;
+	}
+	int tics = 0;
+	if ( !idNumericString::ParseUnsignedBounded( userInfo[ clientNum ].GetString( "net_mpRemoteExtrapolation", "0" ), 64, tics ) ) {
+		return 0;
+	}
+	return tics;
+}
+
+/*
+================
 idGameLocal::RemoteExtrapolationMS
 
-How far ahead of the last snapshot a client already draws remote players for itself.
+How far ahead of its last snapshot a client already draws remote players for itself.
 
 Lag compensation and client-side remote extrapolation are two corrections to the same error,
 and applying both at full strength does not halve it - it inverts it, and the shooter has to
-lead backwards.  So whatever a client extrapolates forward has to come off the rewind.  While
-net_mpPredictMode is a client-local choice the server cannot observe, the honest answer is
-that the server does not know, and the two features must not both be on: that is why
-net_mpLagCompensation ships at 0.
+lead backwards.  So whatever a client extrapolates forward has to come off the rewind.
+
+In mode 1 a client re-simulates each remote player across the replay passes from the snapshot
+up to its own predicted frame, at most net_mpPredictMaxFrames tics a chain
+(idPlayer::AllowsFullRemotePrediction), so it draws remotes min( lead, those tics ) ahead of
+the snapshot.  In legacy mode a remote moves once per client frame and sits a whole lead
+behind.  The client advertises the tic budget (net_mpRemoteExtrapolation); the server bounds
+it by the lead it already trusts, so the advertisement can only ever shorten the rewind.
 ================
 */
-int idGameLocal::RemoteExtrapolationMS( void ) const {
-	return 0;
+int idGameLocal::RemoteExtrapolationMS( int clientNum, int leadMS ) const {
+	if ( leadMS <= 0 ) {
+		return 0;
+	}
+	return Min( leadMS, AdvertisedRemoteExtrapolationTics( clientNum ) * GetMSec() );
+}
+
+/*
+================
+idGameLocal::UpdateAdvertisedRemoteExtrapolation
+
+Keep net_mpRemoteExtrapolation equal to what this client actually simulates.  Called every
+client frame: a change to either prediction cvar, or a server echoing a different value back in
+the user info, is corrected on the next frame, and the engine sends the user info again.
+================
+*/
+void idGameLocal::UpdateAdvertisedRemoteExtrapolation( void ) {
+	const int advertised = net_mpPredictMode.GetBool() ? idMath::ClampInt( 1, 64, net_mpPredictMaxFrames.GetInteger() ) : 0;
+	if ( net_mpRemoteExtrapolation.GetInteger() != advertised ) {
+		net_mpRemoteExtrapolation.SetInteger( advertised );
+	}
 }
 
 
@@ -9575,7 +9787,8 @@ bool idGameLocal::BeginMPLagCompensation( const idPlayer *shooter, mpLagCompRest
 	restoreCount = 0;
 
 	int rewindMS = 0;
-	if ( !ComputeMPLagCompensationRewind( shooter, rewindMS ) ) {
+	mpLagCompEstimate_t estimate;
+	if ( !ComputeMPLagCompensationRewind( shooter, rewindMS, &estimate ) ) {
 		return false;
 	}
 
@@ -9616,8 +9829,9 @@ bool idGameLocal::BeginMPLagCompensation( const idPlayer *shooter, mpLagCompRest
 	}
 
 	if ( net_mpLagCompDebug.GetInteger() > 0 ) {
-		common->DPrintf( "MPLagComp: shooter=%d rewind=%dms targetTime=%d rewound=%d\n",
-			shooter->entityNumber, rewindMS, targetTime, restoreCount );
+		common->DPrintf( "MPLagComp: shooter=%d lead=%dms rtt=%dms extrap=%dms (tics %d) age=%dms rewind=%dms targetTime=%d rewound=%d\n",
+			shooter->entityNumber, estimate.leadMS, estimate.measuredMS, estimate.extrapolationMS, estimate.advertisedTics,
+			estimate.poseAgeMS, rewindMS, targetTime, restoreCount );
 	}
 
 	return restoreCount > 0;

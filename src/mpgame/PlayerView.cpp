@@ -630,6 +630,7 @@ void idPlayerView::SingleView( idUserInterface *hud, const renderView_t *view, i
 	}
 
 	if ( !( RF_GUI_ONLY & renderFlags ) ) {
+		idPresentationRendererScope rendererScope;
 		// jscott: portal sky rendering with KRABS
 		idCamera *portalSky = gameLocal.GetPortalSky();
 		if ( portalSky ) {

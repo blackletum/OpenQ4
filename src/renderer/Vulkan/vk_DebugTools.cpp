@@ -1429,10 +1429,15 @@ when the frame's fence has signalled, a frame or two later.
 ====================
 */
 static void VK_Debug_QueueStencilReadback( int mode ) {
-	if ( !vkDbg.active || !VK_Exec_QueueStencilReadback( mode ) ) {
-		common->Printf( "%s: the stencil buffer could not be read back\n",
-				mode == VK_STENCIL_READBACK_SCAN ? "stencil values" : "overdraw" );
+	const char *failure = NULL;
+	if ( !vkDbg.active ) {
+		failure = "the debug tools are not active";
+	} else if ( VK_Exec_QueueStencilReadback( mode, &failure ) ) {
+		return;
 	}
+	common->Printf( "%s: the stencil buffer could not be read back (%s)\n",
+			mode == VK_STENCIL_READBACK_SCAN ? "stencil values" : "overdraw",
+			failure != NULL ? failure : "unknown reason" );
 }
 
 void RB_CountStencilBuffer( void ) {

@@ -1188,6 +1188,7 @@ void rvWeapon::ResetPresentationViewModelState( void ) {
 	presentationCurViewModelAxis.Identity();
 	presentationRestoreViewModelOrigin.Zero();
 	presentationRestoreViewModelAxis.Identity();
+	presentationFlashlightBackoff.Zero();
 }
 
 /*
@@ -1278,6 +1279,10 @@ void rvWeapon::GetPresentationViewModelTransform( idVec3 &origin, idMat3 &axis )
 	if ( presentationViewModelTime < 0 || !presentationViewModelCanInterpolate || owner == NULL ) {
 		origin = viewModelOrigin;
 		axis = viewModelAxis;
+		// late look turns the drawn eye past this tick's; keep the gun in front of it
+		if ( owner != NULL ) {
+			owner->ApplyPresentationLookToEyeAttachment( playerViewOrigin, playerViewAxis, origin, axis );
+		}
 		return;
 	}
 
@@ -1455,21 +1460,69 @@ void rvWeapon::UpdatePresentationEffects( void ) {
 	}
 
 	renderLight_t &guiLight = lights[ WPLIGHT_GUI ];
-	if ( guiLight.lightRadius[0] == 0.0f || guiLightJointView == INVALID_JOINT ) {
+	if ( guiLight.lightRadius[0] != 0.0f && guiLightJointView != INVALID_JOINT ) {
+		// The colour is an evaluated GUI expression driven by GUI time, so sample it
+		// on the same frame the light is placed rather than reusing the tic's value.
+		if ( viewModel->GetRenderEntity()->gui[0] != NULL ) {
+			const idVec4 color = viewModel->GetRenderEntity()->gui[0]->GetLightColor();
+			guiLight.shaderParms[ SHADERPARM_RED ]   = color[0] * color[3];
+			guiLight.shaderParms[ SHADERPARM_GREEN ] = color[1] * color[3];
+			guiLight.shaderParms[ SHADERPARM_BLUE ]  = color[2] * color[3];
+		}
+
+		GetGlobalJointTransform( true, guiLightJointView, guiLight.origin, guiLight.axis, guiLightOffset );
+		UpdateLight( WPLIGHT_GUI );
+	}
+
+	// The view muzzle flash and the flashlight are placed by Think from this
+	// tic's eye and gun, so between tics they slid off the drawn gun the same way
+	// the GUI light did, and late look would leave them a whole turn behind.
+	// Re-place only lights that are already live: Think creates, re-times and
+	// frees them, and these handles are never touched otherwise. A VR hand keeps
+	// its tracked placement.
+	idVec3 vrOrigin;
+	idMat3 vrAxis;
+	if ( owner->GetVRWeaponTransform( vrOrigin, vrAxis, true ) ) {
 		return;
 	}
-
-	// The colour is an evaluated GUI expression driven by GUI time, so sample it
-	// on the same frame the light is placed rather than reusing the tic's value.
-	if ( viewModel->GetRenderEntity()->gui[0] != NULL ) {
-		const idVec4 color = viewModel->GetRenderEntity()->gui[0]->GetLightColor();
-		guiLight.shaderParms[ SHADERPARM_RED ]   = color[0] * color[3];
-		guiLight.shaderParms[ SHADERPARM_GREEN ] = color[1] * color[3];
-		guiLight.shaderParms[ SHADERPARM_BLUE ]  = color[2] * color[3];
+	if ( lightHandles[ WPLIGHT_MUZZLEFLASH ] != -1 ) {
+		idVec3 eyeOrigin;
+		idMat3 eyeAxis;
+		GetPresentationEye( eyeOrigin, eyeAxis );
+		renderLight_t &light = lights[ WPLIGHT_MUZZLEFLASH ];
+		light.origin = eyeOrigin + ( eyeAxis * muzzleFlashViewOffset );
+		light.axis = eyeAxis;
+		UpdateLight( WPLIGHT_MUZZLEFLASH );
 	}
+	if ( lightHandles[ WPLIGHT_FLASHLIGHT ] != -1 && flashlightJointView != INVALID_JOINT ) {
+		// Think backs the flashlight off nearby walls with a trace; a draw frame
+		// must not trace, so it carries that tic's back-off with the drawn gun.
+		renderLight_t &light = lights[ WPLIGHT_FLASHLIGHT ];
+		GetGlobalJointTransform( true, flashlightJointView, light.origin, light.axis, flashlightViewOffset );
+		light.origin += presentationFlashlightBackoff;
+		UpdateLight( WPLIGHT_FLASHLIGHT );
+	}
+}
 
-	GetGlobalJointTransform( true, guiLightJointView, guiLight.origin, guiLight.axis, guiLightOffset );
-	UpdateLight( WPLIGHT_GUI );
+/*
+================
+rvWeapon::GetPresentationEye
+
+The eye the drawn view model is held in front of on this draw: the
+interpolated camera when the gun interpolates with it, otherwise this tic's
+eye turned by any late look.
+================
+*/
+void rvWeapon::GetPresentationEye( idVec3 &origin, idMat3 &axis ) const {
+	if ( owner != NULL && presentationViewModelTime >= 0 && presentationViewModelCanInterpolate ) {
+		owner->GetPresentationViewPos( origin, axis );
+		return;
+	}
+	origin = playerViewOrigin;
+	axis = playerViewAxis;
+	if ( owner != NULL ) {
+		owner->ApplyPresentationLookToView( origin, axis );
+	}
 }
 
 /*
@@ -2676,12 +2729,14 @@ void rvWeapon::UpdateFlashlight ( void ) {
 
 	// the flash has an explicit joint for locating it
 	GetGlobalJointTransform( true, flashlightJointView, light.origin, light.axis, flashlightViewOffset );
+	const idVec3 jointOrigin = light.origin;
 
 	// if the desired point is inside or very close to a wall, back it up until it is clear
 	gameLocal.TracePoint( owner, tr, light.origin - playerViewAxis[0] * 8.0f, light.origin, MASK_SHOT_BOUNDINGBOX, owner );
 
 	// be at least 8 units away from a solid
 	light.origin = tr.endpos - (tr.fraction < 1.0f ? (playerViewAxis[0] * 8) : vec3_origin);
+	presentationFlashlightBackoff = light.origin - jointOrigin;
 
 	// put the world muzzle flash on the end of the joint, no matter what
 	if ( flashlightJointWorld != INVALID_JOINT ) {

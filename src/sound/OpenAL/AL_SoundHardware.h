@@ -122,6 +122,21 @@ public:
 		return directChannelsMode;
 	}
 	bool			HasCenterChannelOutput() const;
+	// Counts the output changes that can stop, move or re-lay-out every source: a
+	// reopen, an in-place reset, a centre speaker appearing or going away, a lost
+	// endpoint returning. Voices compare it with the count they started on
+	// (SoundOutputRecovery.h).
+	unsigned int	GetOutputSerial() const
+	{
+		return outputSerial;
+	}
+	// The endpoint is present (ALC_EXT_disconnect) and no simulated interruption runs.
+	bool			IsOutputConnected() const;
+	// s_testDeviceInterruption: stops every source as a disconnect does and refuses
+	// new voices for msec, then reports the output returned.
+	void			SimulateOutputInterruption( int msec );
+	// listSoundVoices
+	void			ListVoiceOutputState() const;
 	// AL_SOURCE_RESAMPLER_SOFT index for every voice, -1 keeps the runtime default
 	ALint			GetSourceResampler() const
 	{
@@ -144,6 +159,9 @@ public:
 	// high-frequency gain per metre from the listener's reverb preset (0.994, -5 mB, in
 	// every stock preset); 1 while no EFX reverb is playing
 	float			GetAirAbsorptionGainHF() const;
+	// the room rolloff factor of the reverb a slot holds (efxs "room rolloff factor"),
+	// 0 while the slot holds none; every stock preset has 0
+	float			GetReverbSlotRoomRolloff( int slot ) const;
 	int				GetMaxAuxiliarySends() const
 	{
 		return maxAuxiliarySends;
@@ -219,6 +237,11 @@ private:
 	idStr				openedRequestedDeviceName;
 	idStr				openedActiveDeviceName;
 	idStr				openedDefaultDeviceName;
+	unsigned int		outputSerial;
+	bool				outputCenterObserved;		// HasCenterChannelOutput() at the last output check
+	bool				centerRoutingAvailable;		// 5.1 buffers, direct channels and output mode queries
+	bool				disconnectQueryAvailable;	// ALC_EXT_disconnect on the open device
+	int					simulatedInterruptionEnd;	// Sys_Milliseconds() a simulated outage ends, 0 for none
 
 	//int				outputChannels;
 	//int				channelMask;
@@ -241,6 +264,9 @@ private:
 	void			EnableDeviceEventMonitoring();
 	void			DisableDeviceEventMonitoring();
 	bool			TryReopenDevice( const char* requestedDeviceName, const char* reason );
+	bool			TryResetDevice( const char* reason );
+	void			NoteOutputChanged( const char* reason );
+	void			UpdateOutputState();
 	bool			UpdateDeviceMonitoring();
 	void			PrintPerformanceData();
 	void			DetectVoiceFeatures();

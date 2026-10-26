@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "snd_local.h"
 #include "SoundSettings.h"
+#include "SoundMemoryTrim.h"
 #include "VoiceChat.h"
 
 // NOCHEAT as in retail Quake4.exe 1.4.2: a multiplayer spawn or join without
@@ -73,6 +74,8 @@ idCVar s_releaseSamplePayload( "s_releaseSamplePayload", "1", CVAR_ARCHIVE | CVA
 #endif
 
 idCVar preLoad_Samples( "preLoad_Samples", "1", CVAR_SYSTEM | CVAR_BOOL, "preload samples during beginlevelload" );
+idCVar s_trimIdleSeconds( "s_trimIdleSeconds", "30", CVAR_SOUND | CVAR_INTEGER,
+	"on a low-memory notice, also free this level's samples that no sound has started for this many seconds; they reload when next played (-1 keeps them)", -1, 3600 );
 
 idSoundSystemLocal soundSystemLocal;
 idSoundSystem* soundSystem = &soundSystemLocal;
@@ -81,6 +84,13 @@ idSoundSystem* soundSystem = &soundSystemLocal;
 void S_SetDevicePaused( bool paused )
 {
 	soundSystemLocal.hardware.SetDevicePaused( paused );
+}
+
+// Engine/platform lifecycle hook for an operating-system low-memory notice
+// (SDL_EVENT_LOW_MEMORY, delivered on Android and iOS).
+void S_TrimMemory( const char* reason )
+{
+	soundSystemLocal.TrimMemory( reason, s_trimIdleSeconds.GetInteger() );
 }
 
 static const int SOUND_RUMBLE_DURATION_MSEC = 120;
@@ -400,11 +410,27 @@ static void SoundWorlds_f( const idCmdArgs& args ) {
 		for ( int e = 0; e < world->emitters.Num(); ++e ) {
 			channels += world->emitters[e]->channels.Num();
 		}
-		idLib::Printf( "SOUND_WORLD id=%d paused=%d time=%d active=%d channels=%d stamp=%d now=%d\n",
+		// underwater reports the listener muffle the game sets when the view is
+		// in a liquid, so a liquid check can read it from the log.
+		idLib::Printf( "SOUND_WORLD id=%d paused=%d time=%d active=%d channels=%d stamp=%d now=%d underwater=%d\n",
 			id, world->IsPaused() ? 1 : 0, world->GetSoundTime(),
 			soundSystemLocal.GetPlayingSoundWorld() == world ? 1 : 0, channels,
-			soundSystemLocal.SoundTime(), Sys_Milliseconds() );
+			soundSystemLocal.SoundTime(), Sys_Milliseconds(), world->underwaterActive ? 1 : 0 );
 	}
+}
+
+// Each voice's output, routing and position after a device change (listSoundVoices).
+static void ListSoundVoices_f( const idCmdArgs& args )
+{
+	(void)args;
+	soundSystemLocal.hardware.ListVoiceOutputState();
+}
+
+// The low-memory response on demand, for checking it without an operating-system notice.
+static void TrimAudioMemory_f( const idCmdArgs& args )
+{
+	const int idleSeconds = args.Argc() > 1 ? atoi( args.Argv( 1 ) ) : s_trimIdleSeconds.GetInteger();
+	soundSystemLocal.TrimMemory( "console", idleSeconds );
 }
 
 /*
@@ -506,6 +532,9 @@ void idSoundSystemLocal::Init()
 	cmdSystem->AddCommand( "s_soundDistances", SoundDistances_f, CMD_FL_SOUND,
 		"reports authored ranges, mixed distances and OpenAL spatial state", idCmdSystem::ArgCompletion_SoundName );
 	cmdSystem->AddCommand( "s_soundWorlds", SoundWorlds_f, CMD_FL_SOUND, "reports game/menu sound clocks and pause state" );
+	cmdSystem->AddCommand( "listSoundVoices", ListSoundVoices_f, CMD_FL_SOUND, "reports each voice's output, routing and playback position" );
+	cmdSystem->AddCommand( "s_trimAudioMemory", TrimAudioMemory_f, CMD_FL_SOUND,
+		"frees what a low-memory notice frees: earlier levels' samples, retained CPU copies and this level's samples idle for [seconds] (default s_trimIdleSeconds; -1 keeps them)" );
 	cmdSystem->AddCommand( "listSoundDecoders", ListSoundDecoders_f, CMD_FL_SOUND, "list active sound decoders" );
 	cmdSystem->AddCommand( "reloadSounds", ReloadSounds_f, CMD_FL_SOUND | CMD_FL_CHEAT, "reloads all sounds" );
 	cmdSystem->AddCommand( "s_restart", RestartSound_f, CMD_FL_SOUND, "restarts the sound system" );
@@ -1046,6 +1075,94 @@ void idSoundSystemLocal::StopVoicesWithSample( const idSoundSample* const sample
 			}
 		}
 	}
+}
+
+/*
+========================
+idSoundSystemLocal::TrimMemory
+
+The response to an operating-system low-memory notice (SoundMemoryTrim.h):
+earlier levels' samples, CPU copies OpenAL also holds, and with idleSeconds >= 0
+this level's samples no sound has started for that long. Nothing a channel
+references is touched, and a freed sample reloads when a sound starts it again.
+========================
+*/
+void idSoundSystemLocal::TrimMemory( const char* reason, int idleSeconds )
+{
+	// A decoding sample owns its buffers until it is joined.
+	FinishSampleDecodes( true );
+	idList<const idSoundSample*> active;
+	for( int w = 0; w < soundWorlds.Num(); w++ )
+	{
+		const idSoundWorldLocal* world = soundWorlds[w];
+		if( world == NULL )
+		{
+			continue;
+		}
+		for( int e = 0; e < world->emitters.Num(); e++ )
+		{
+			const idSoundEmitterLocal* emitter = world->emitters[e];
+			if( emitter == NULL )
+			{
+				continue;
+			}
+			for( int c = 0; c < emitter->channels.Num(); c++ )
+			{
+				const idSoundChannel* channel = emitter->channels[c];
+				if( channel == NULL )
+				{
+					continue;
+				}
+				if( channel->leadinSample != NULL )
+				{
+					active.AddUnique( channel->leadinSample );
+				}
+				if( channel->loopingSample != NULL )
+				{
+					active.AddUnique( channel->loopingSample );
+				}
+			}
+		}
+	}
+	const int now = Sys_Milliseconds();
+	const int idleLimitMsec = idleSeconds < 0 ? -1 : Min( idleSeconds, 24 * 60 * 60 ) * 1000;
+	int freed = 0, copies = 0, kept = 0;
+	int64 freedBytes = 0, copyBytes = 0;
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		idSoundSample* sample = samples[i];
+		if( !sample->IsLoaded() || sample->IsDefault() )
+		{
+			continue;
+		}
+		SoundTrimSample state;
+		state.active = active.FindIndex( sample ) >= 0;
+		state.neverPurge = sample->GetNeverPurge();
+		state.levelReferenced = sample->GetLevelLoadReferenced();
+		state.streamed = sample->IsStreamed();
+		state.cpuCopy = sample->HasCpuCopy();
+		state.played = sample->GetLastPlayedTime() != 0;
+		state.idleMsec = now - static_cast<int>( sample->GetLastPlayedTime() );
+		switch( SoundTrimDecide( state, idleLimitMsec, insideLevelLoad ) )
+		{
+			case SoundTrimAction::Free:
+				freedBytes += sample->BufferSize();
+				sample->FreeData();
+				freed++;
+				break;
+			case SoundTrimAction::ReleaseCopy:
+				copyBytes += sample->ReleaseCpuCopy();
+				copies++;
+				break;
+			default:
+				kept += state.active ? 1 : 0;
+				break;
+		}
+	}
+	common->Printf( "Audio memory trim (%s): freed %d samples (%.1f MB) and %d CPU copies (%.1f MB); %d samples in use kept\n",
+		reason, freed, freedBytes / ( 1024.0 * 1024.0 ), copies, copyBytes / ( 1024.0 * 1024.0 ), kept );
+	common->Printf( "AUDIO_TRIM reason=%s idle=%d freed=%d freedKiB=%lld copies=%d copyKiB=%lld active=%d\n", reason, idleSeconds,
+		freed, static_cast<long long>( freedBytes / 1024 ), copies, static_cast<long long>( copyBytes / 1024 ), kept );
 }
 
 /*

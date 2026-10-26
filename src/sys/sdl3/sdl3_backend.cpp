@@ -362,6 +362,8 @@ static bool s_touchscreenFingerActive = false;
 static SDL_FingerID s_touchscreenFingerId = 0;
 static SDL_TouchID s_touchscreenDeviceId = 0;
 static bool s_sdlAppInBackground = false;
+// Frees the audio a low-memory notice may take; main thread only.
+void S_TrimMemory(const char *reason);
 #if defined(__ANDROID__)
 // Main-thread state consumed outside SDL's pump, before gameplay/audio resume.
 static bool s_sdlAppSuspendedSinceQuery = false;
@@ -2721,6 +2723,7 @@ static void SDL3_ProcessPendingLifecycleEvents(int eventTime) {
 
 	if ((pendingFlags & SDL3_LIFECYCLE_PENDING_LOW_MEMORY) != 0) {
 		common->Printf("SDL3: low-memory event received from lifecycle event watch.\n");
+		S_TrimMemory("os low-memory");
 	}
 	if ((pendingFlags & SDL3_LIFECYCLE_PENDING_BACKGROUND) != 0) {
 		SDL3_HandleAppBackgroundTransition(eventTime, "event watch");
@@ -5300,6 +5303,7 @@ bool Sys_SDL_PumpEvents(void) {
 			case SDL_EVENT_LOW_MEMORY:
 				SDL3_ClearLifecyclePendingFlag(SDL3_LIFECYCLE_PENDING_LOW_MEMORY);
 				common->Printf("SDL3: low-memory event received from OS.\n");
+				S_TrimMemory("os low-memory");
 				break;
 
 			case SDL_EVENT_KEY_DOWN:

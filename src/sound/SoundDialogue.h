@@ -28,4 +28,20 @@ inline bool SoundIsDialogue( bool music, bool authoredSpeech, std::string_view s
 	return !music && ( authoredSpeech || SoundDialogueSamplePath( samplePath ) );
 }
 
+// Why a playing sample shows a subtitle or not under the mapping policy: it has
+// text; no lipSync declares it; the declaration has no transcript; its text key
+// does not resolve; or only its random-variant shader declares one.
+enum class SoundTranscript { Text, Undeclared, NoText, Unresolved, Variant };
+
+inline const char* SoundTranscriptName( SoundTranscript transcript ) {
+	switch ( transcript ) {
+		case SoundTranscript::Text: return "text";
+		case SoundTranscript::Undeclared: return "undeclared";
+		case SoundTranscript::NoText: return "notext";
+		case SoundTranscript::Unresolved: return "unresolved";
+		case SoundTranscript::Variant: return "variant";
+	}
+	return "unknown";
+}
+
 #endif

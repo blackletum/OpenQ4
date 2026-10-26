@@ -212,12 +212,13 @@ bool ApplicationState(const DocumentModel& model, const idDict& dictionary, Stat
 // operations, never console commands; the session maps each one explicitly.
 bool SessionMenuCommand(const std::string& command) {
 	static const std::set<std::string> commands = {"continue","singlePlayer","loadGame","saveGame","multiplayer","settings",
-		"mods","demos","updates","credits","quit","resume","restartLevel","quitToMenu",
+		"mods","demos","updates","credits","quit","resume","menuResume","restartLevel","quitToMenu",
         "campaigns","campaignQuake4","campaignAwakening","campaignArena","campaignBack","campaignHome",
         "campaignSkill0","campaignSkill1","campaignSkill2","campaignSkill3","campaignSkill4",
         "campaignSkillTurbo","campaignSkillStart","campaignSkillBack","campaignChapterSelect","campaignChapterStart",
         "loadBack","loadSelect","loadSave","loadDelete","loadNewer","loadOlder","loadNewGame",
         "saveBack","saveSelect","saveSave","saveOverwrite","saveNewer","saveOlder","restartBack","restartGo",
+        "saveListRefresh","saveListSort","saveListFilterManual","saveListFilterAuto","saveListClear",
         "demosBack","demosSelect","demosPlay","demosDelete","demosRefresh","demosFilter",
         "demosNewer","demosOlder","modsSelect","modsLoad","deathRestart","deathLoad","deathMenu","creditsBack",
         "arenaBack","arenaTier0","arenaTier1","arenaTier2","arenaTier3","arenaTier4","arenaMatch0","arenaMatch1",
@@ -238,6 +239,48 @@ bool SessionMenuCommand(const std::string& command) {
         "mpAdminApply","mpAdminConsole","mpRefereeLogin","mpSettingsName","mpSettingsClan",
         "arenaRestart","arenaLeave"};
 	return commands.contains(command);
+}
+
+bool SessionMenuPlayerCommand(const std::string& command) {
+	return command == "mpSelectPlayer" || command == "mpMute" || command == "mpFriend";
+}
+
+bool SessionMenuSaveCommand(const std::string& command) {
+	return command == "loadSelect" || command == "saveSelect" || command == "loadSave" || command == "loadDelete";
+}
+
+// Catalog indices only mean something in the generation that published them.
+// Freeze both before the session drains requests (including an earlier refresh).
+std::optional<std::string> SessionMenuSaveRequest(const ActionInvocation& invocation) {
+	const auto command = invocation.arguments.find("command"), index = invocation.arguments.find("index"),
+		generation = invocation.arguments.find("generation");
+	if (invocation.arguments.size() != 3 || command == invocation.arguments.end() || index == invocation.arguments.end() ||
+		generation == invocation.arguments.end() || !std::holds_alternative<std::string>(command->second) ||
+		!SessionMenuSaveCommand(std::get<std::string>(command->second)) || !std::holds_alternative<double>(index->second) ||
+		!std::holds_alternative<double>(generation->second)) return {};
+	const double row = std::get<double>(index->second), serial = std::get<double>(generation->second);
+	if (!std::isfinite(row) || row < 0 || row > 2147483647.0 || std::floor(row) != row ||
+		!std::isfinite(serial) || serial < 1 || serial > 2147483647.0 || std::floor(serial) != serial) return {};
+	return std::get<std::string>(command->second)+" "+std::to_string(static_cast<int>(row))+" "+std::to_string(static_cast<int>(serial));
+}
+
+// Freeze a player operand in the typed queue. Reading card.client when Session
+// drains several events would silently redirect every request to the last row.
+std::optional<std::string> SessionMenuPlayerRequest(const ActionInvocation& invocation) {
+	const auto command = invocation.arguments.find("command"), client = invocation.arguments.find("client"),
+		identity = invocation.arguments.find("identity");
+	if (invocation.arguments.size() != 3 || command == invocation.arguments.end() || client == invocation.arguments.end() ||
+		identity == invocation.arguments.end() || !std::holds_alternative<std::string>(command->second) ||
+		!SessionMenuPlayerCommand(std::get<std::string>(command->second)) || !std::holds_alternative<double>(client->second) ||
+		!std::holds_alternative<std::string>(identity->second)) return {};
+	const double slot = std::get<double>(client->second);
+	const auto& token = std::get<std::string>(identity->second);
+	if (!std::isfinite(slot) || slot < 0 || slot >= 32 || std::floor(slot) != slot || token.empty() || token.size() > 10 ||
+		(token.size() > 1 && token[0] == '0') || std::any_of(token.begin(),token.end(),[](char c) { return c < '0' || c > '9'; })) return {};
+	std::uint32_t packed = 0;
+	const auto parsed = std::from_chars(token.data(),token.data()+token.size(),packed);
+	if (parsed.ec != std::errc{} || parsed.ptr != token.data()+token.size()) return {};
+	return std::get<std::string>(command->second)+" "+std::to_string(static_cast<int>(slot))+" "+token;
 }
 
 // Session verbs a value control may request with its new value: the
@@ -328,10 +371,20 @@ bool ValidOperation(const Action& action) {
 	}
 	if (action.operation == "session.menu") {
 		const auto command = action.arguments.find("command");
-		if (action.arguments.size() != 1 || command == action.arguments.end() || command->second.type != 2) return false;
+		if (command == action.arguments.end() || command->second.type != 2) return false;
 		const auto& expression = command->second;
 		const bool literal = expression.op.empty() && expression.state.empty() && expression.presentation.empty() && !expression.inputValue;
-		return !literal || SessionMenuCommand(std::get<std::string>(expression.literal));
+		if (literal && SessionMenuSaveCommand(std::get<std::string>(expression.literal))) {
+			const auto index = action.arguments.find("index"), generation = action.arguments.find("generation");
+			return action.arguments.size() == 3 && index != action.arguments.end() && index->second.type == 0 &&
+				generation != action.arguments.end() && generation->second.type == 0;
+		}
+		if (literal && SessionMenuPlayerCommand(std::get<std::string>(expression.literal))) {
+			const auto client = action.arguments.find("client"), identity = action.arguments.find("identity");
+			return action.arguments.size() == 3 && client != action.arguments.end() && client->second.type == 0 &&
+				identity != action.arguments.end() && identity->second.type == 2;
+		}
+		return action.arguments.size() == 1 && (!literal || SessionMenuCommand(std::get<std::string>(expression.literal)));
 	}
 	if (action.operation == "settings.player.set") {
 		// A literal setting, and the control's value or a literal one it takes.
@@ -372,6 +425,16 @@ bool ValidInvocation(const ActionInvocation& invocation, std::string& error) {
 	}
 	if (invocation.operation == "session.menu") {
 		const auto command = invocation.arguments.find("command");
+		if (command != invocation.arguments.end() && std::holds_alternative<std::string>(command->second) &&
+			SessionMenuSaveCommand(std::get<std::string>(command->second))) {
+			if (SessionMenuSaveRequest(invocation)) return true;
+			error = "Invalid save catalog identity: "+invocation.action; return false;
+		}
+		if (command != invocation.arguments.end() && std::holds_alternative<std::string>(command->second) &&
+			SessionMenuPlayerCommand(std::get<std::string>(command->second))) {
+			if (SessionMenuPlayerRequest(invocation)) return true;
+			error = "Invalid multiplayer player identity: "+invocation.action; return false;
+		}
 		if (invocation.arguments.size() == 1 && command != invocation.arguments.end() &&
 			std::holds_alternative<std::string>(command->second) && SessionMenuCommand(std::get<std::string>(command->second))) return true;
 		error = "Unsupported session menu request: "+invocation.action; return false;
@@ -811,6 +874,17 @@ struct idUserInterfaceRetained::Impl {
 				state.SetBool(swapped,swap); changed.emplace(swapped,swap);
 			}
 		}
+		// Accept's verb follows focus in the same frame (section 13.4): the
+		// focused button's own, the document's declared verb for any other
+		// control, or empty while nothing focused can be activated.
+		static const char* const accept = "prompt.accept";
+		if (const auto declared = document.Model().state.find(accept); declared != document.Model().state.end()) {
+			const auto* fallback = std::get_if<std::string>(&declared->second.initial);
+			const auto verb = RuntimeView()->AcceptPrompt(fallback ? *fallback : std::string(),RetainedUI_PresentationTime());
+			if (!state.FindKey(accept) || verb != state.GetString(accept)) {
+				state.Set(accept,verb.c_str()); changed.emplace(accept,verb);
+			}
+		}
 		std::string error;
 		if (!changed.empty() && !RuntimeView()->SetState(changed,error,RetainedUI_PresentationTime())) Error(error);
 	}
@@ -928,12 +1002,13 @@ struct idUserInterfaceRetained::Impl {
 	// a page where it declares onSectionPrevious and onSectionNext; the west
 	// face button runs its secondary action (reset, remove, refresh) where it
 	// declares onSecondary, and north its tertiary one (details, search, sort,
-	// filters) where it declares onTertiary (section 13.5). A field being
+	// filters) where it declares onTertiary, and the Menu button its
+	// onMenuButton (section 13.5). A field being
 	// edited keeps its keys, and Ctrl or Alt leave them to shortcuts.
 	bool TabKey(int key, const openq4::KeyEventMetadata* metadata) {
 		const char* name = key == 'q' || key == K_JOY1 ? "onTabPrevious" : key == 'e' || key == K_JOY2 ? "onTabNext" :
 			key == K_JOY16 ? "onSectionPrevious" : key == K_JOY15 ? "onSectionNext" :
-			key == K_JOY6 ? "onSecondary" : key == K_JOY5 ? "onTertiary" : nullptr;
+			key == K_JOY6 ? "onSecondary" : key == K_JOY5 ? "onTertiary" : key == K_JOY7 ? "onMenuButton" : nullptr;
 		if (!name || !RuntimeView()->HasEvent(name)) return false;
 		const bool control = metadata ? metadata->control : held.contains(K_CTRL) || idKeyInput::IsDown(K_CTRL);
 		const bool alt = metadata ? metadata->alt : held.contains(K_ALT) || held.contains(K_RIGHT_ALT) || idKeyInput::IsDown(K_ALT) || idKeyInput::IsDown(K_RIGHT_ALT);
@@ -1307,8 +1382,30 @@ const char* idUserInterfaceRetained::HandleEvent(const sysEvent_t* event, int ti
 				case K_END: action = MenuInput::End; break;
 				case K_PGUP: action = MenuInput::PageUp; break;
 				case K_PGDN: action = MenuInput::PageDown; break;
+				// The triggers page lists and step a slider coarsely (section
+				// 13.5) in a document that declares no section events for them;
+				// on a slider the right trigger raises the value, as Right does.
+				case K_JOY16: case K_JOY15: {
+					auto* runtime = impl->RuntimeView();
+					const auto widget = runtime ? runtime->GetWidgetState(runtime->FocusedControl()) : std::nullopt;
+					const bool forward = (key == K_JOY15) != (widget && widget->role == ControlRole::Slider);
+					action = forward ? MenuInput::PageDown : MenuInput::PageUp;
+					mapped = !runtime || !runtime->HasEvent(key == K_JOY16 ? "onSectionPrevious" : "onSectionNext");
+					break;
+				}
 				case K_ENTER: case K_KP_ENTER: case K_SPACE: case K_JOY3: action = MenuInput::Accept; break;
-				case K_ESCAPE: case K_JOY4: case K_JOY7: case K_JOY8: action = MenuInput::Back; break;
+				case K_ESCAPE: case K_JOY4: case K_JOY8: action = MenuInput::Back; break;
+				// The Menu button applies pending changes or closes the menus and
+				// resumes play (section 13.5) where the document declares it;
+				// elsewhere, and while a dialog or an open list holds the input,
+				// it is Back, which closes them.
+				case K_JOY7: {
+					auto* runtime = impl->RuntimeView();
+					const auto widget = runtime ? runtime->GetWidgetState(runtime->FocusedControl()) : std::nullopt;
+					action = MenuInput::Back;
+					mapped = !runtime || !runtime->HasEvent("onMenuButton") || runtime->ModalOpen() || (widget && widget->popupOpen);
+					break;
+				}
 				default: mapped = false; break;
 			}
 			if (mapped) { impl->pointerVisible = false; impl->input.Menu(key,action,down,repeated,RetainedUI_PresentationTime()); }
@@ -1455,9 +1552,11 @@ bool idUserInterfaceRetained::DispatchApplicationActions(const char* command, bo
 		if (invocation.operation == "session.menu") {
 			// Validated again at resolution; the session maps the verb itself.
 			const auto& command = std::get<std::string>(invocation.arguments.at("command"));
-			const bool accepted = impl->sessionRequests.size() < 64;
-			if (accepted) impl->sessionRequests.push_back(command);
-			else impl->Error("Session menu request queue exceeded 64 requests");
+			const auto request = SessionMenuPlayerCommand(command) ? SessionMenuPlayerRequest(invocation) :
+				SessionMenuSaveCommand(command) ? SessionMenuSaveRequest(invocation) : std::optional<std::string>(command);
+			const bool accepted = request && impl->sessionRequests.size() < 64;
+			if (accepted) impl->sessionRequests.push_back(*request);
+			else impl->Error(request ? "Session menu request queue exceeded 64 requests" : "Invalid session target identity");
 			if (pending.proposalToken) impl->RuntimeView()->AcknowledgeControlProposal(pending.control,pending.proposalToken,accepted);
 			if (cvarSystem->GetCVarBool("ui_retainedTrace")) common->Printf("RETAINED_GUI_SESSION path=%s command=%s accepted=%d\n",
 				Name(),command.c_str(),accepted ? 1 : 0);
@@ -1993,6 +2092,13 @@ bool UI_RetainedViewFailed(idUserInterface* gui) {
 const openq4::ui::DocumentModel* UI_RetainedDocumentModel(idUserInterface* gui) {
 	const auto found = std::find(diagnosticViews.begin(),diagnosticViews.end(),gui);
 	return found == diagnosticViews.end() || (*found)->impl->document.Source().empty() ? nullptr : &(*found)->impl->document.Model();
+}
+
+std::string UI_RetainedFocusedControl(idUserInterface* gui) {
+	const auto found = std::find(diagnosticViews.begin(),diagnosticViews.end(),gui);
+	if (found == diagnosticViews.end()) return {};
+	const auto* runtime = (*found)->impl->RuntimeView();
+	return runtime ? runtime->FocusedControl() : std::string();
 }
 
 int UI_RetainedStateNames(idUserInterface* gui, const char* prefix, std::vector<std::string>& names) {

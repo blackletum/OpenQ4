@@ -1,6 +1,10 @@
 <div align="center">
 
-# Building openQ4 from Source
+# Building openQ4
+
+These instructions build the current development tree. The latest available
+release is **0.13.2**; **0.14.0 was withdrawn**. See
+[release status](docs/user/release-status.md) for downloads and matching player guides. from Source
 
 </div>
 
@@ -714,9 +718,9 @@ To include the icon set synchronisation step before building (validated and gene
 $env:OPENQ4_SKIP_ICON_SYNC = "1"
 ```
 
-The manually dispatched GitHub release workflow injects `version_base_override` from `tools/build/openq4_release_version.py`. That helper uses the repo version in `meson.build` as the release floor and, once stable `v*` tags exist, automatically chooses between a patch bump (`0.11.0` -> `0.11.1`) and a minor bump (`0.11.0` -> `0.12.0`) based on the scale of changes since the previous release. The workflow also accepts manual `bump_mode` choices for `auto`, `major (x..)`, `minor (.x.)`, and `patch (..x)`, plus `version_override` when a release needs an explicit version.
+The manually dispatched GitHub release workflow injects `version_base_override` from `tools/build/openq4_release_version.py`. That helper uses the repo version in `meson.build` as the release floor and, once stable `v*` tags exist, automatically chooses between a patch bump (`0.13.2` -> `0.13.003`) and a minor bump (`0.13.2` -> `0.14.001`, skipping withdrawn `0.14.000`) based on the scale of changes since the previous release. The workflow also accepts manual `bump_mode` choices for `auto`, `major (x..)`, `minor (.x.)`, and `patch (..x)`, plus `version_override` when a release needs an explicit version.
 
-Builds that do **not** pin `version_base_override` (local builds, CI validation builds) resolve their base version through `tools/build/openq4_version.py`, which raises the `meson.build` floor to the newest published `v*` tag when git history is available. That keeps a development build reporting `openQ4 0.11.0-dev+g<sha>` — the release line it was branched from — instead of a stale floor version that was never published. When there is no git history (an exported tarball), the `meson.build` floor is used as-is. The same helper emits `OPENQ4_VERSION_DATE`, the commit date of `HEAD` (falling back to `SOURCE_DATE_EPOCH`, then the current UTC date), which is what the main game window caption renders.
+Builds that do **not** pin `version_base_override` (local builds, CI validation builds) resolve their base version through `tools/build/openq4_version.py`, which raises the `meson.build` floor to the newest non-withdrawn `v*` tag when git history is available. That keeps a development build reporting `openQ4 0.13.2-dev+g<sha>` — development since the latest available release — instead of a stale floor version that was never published. This does not make current source identical to the published 0.13.2 binaries. Withdrawals are recorded numerically in `tools/build/openq4_release_status.py`, so `0.14.0` and `0.14.000` are treated alike. Build baselines and changelog ranges skip withdrawn tags, explicit release overrides reject them, and automatic version selection skips to the next unused patch number. Historical tags are retained for reproduction. When there is no git history (an exported tarball), the `meson.build` floor is used as-is. The same helper emits `OPENQ4_VERSION_DATE`, the commit date of `HEAD` (falling back to `SOURCE_DATE_EPOCH`, then the current UTC date), which is what the main game window caption renders.
 
 ---
 

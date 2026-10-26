@@ -1,5 +1,7 @@
 # Light Grid and Irradiance Volume Guide
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 This guide covers openQ4's user-facing light-grid system: what it does, how to enable or disable it, how to bake data for one map or many maps, where the baked files go, and how to troubleshoot common problems.
 
 openQ4 keeps the existing feature naming in the engine and README, so you will see both of these terms:
@@ -359,7 +361,7 @@ Fix:
 
 Cause:
 - The bake keeps temporary probe captures, readback buffers, and atlas write buffers alive while each batch is processed.
-- Before 0.13.2, memory also grew with every probe face the bake captured, until the bake finished, so large maps such as Air Defense Trenches could run out of memory partway through. That no longer happens.
+- Published 0.13.2 can retain each captured probe face until the bake finishes, so large maps such as Air Defense Trenches can run out of memory partway through. Current development builds release each capture; that fix has not shipped in an available release.
 
 Fix:
 - Lower `r_lightGridBakeMemoryMB`. Start with `8`, then `4` if needed.
@@ -403,12 +405,12 @@ Fix:
 - None is needed to play: the bundled light grid keeps working.
 - Developers who re-bake a bundled map replace its files under `content/baseoq4/pak1/` with the bake's output and rebuild the package.
 
-### A map I baked with 0.13.1 or earlier lights oddly
+### A map I baked with 0.13.2 or earlier lights oddly
 
-Bakes made with openQ4 0.13.1 or earlier are only right if the game window was 640x480 while baking. At any other window size, each probe recorded a magnified corner of its surroundings instead of its full view, so its indirect light could come from the wrong direction. From 0.13.2 the window size makes no difference.
+Bakes made with published openQ4 0.13.2 or earlier are only right if the game window was 640x480 while baking. At any other window size, each probe recorded a magnified corner of its surroundings instead of its full view, so its indirect light could come from the wrong direction. The window-size fix is in current development builds, not in the available 0.13.2 package.
 
 Fix:
-- Re-bake the map with `bakeLightGrids force`.
+- On 0.13.2, use a 640x480 window when re-baking with `bakeLightGrids force`, or use a development build containing the fix.
 
 ### I want to turn the feature off completely
 

@@ -38,6 +38,13 @@ rvClientMoveable::rvClientMoveable ( void ) {
 	memset ( &renderEntity, 0, sizeof(renderEntity) );
 	entityDefHandle = -1;
 	scale.Init( 0, 0, 1.0f, 1.0f );
+	presentationPoseTime = -1;
+	presentationPoseCanInterpolate = false;
+	presentationPosePushed = false;
+	presentationPrevOrigin.Zero();
+	presentationPrevAxis.Identity();
+	presentationCurOrigin.Zero();
+	presentationCurAxis.Identity();
 }
 
 /*
@@ -207,6 +214,132 @@ void rvClientMoveable::Think ( void ) {
 	} else {
 		gameRenderWorld->UpdateEntityDef( entityDefHandle, &renderEntity );
 	}		
+	presentationPosePushed = false;
+	SamplePresentationPose();
+}
+
+static const float CLIENT_PRESENTATION_MAX_STEP			= 32.0f;
+static const float CLIENT_PRESENTATION_STEP_TOLERANCE	= 4.0f;
+static const float CLIENT_PRESENTATION_MAX_ANGLE		= 90.0f;
+
+/*
+================
+rvClientMoveable::SamplePresentationPose
+
+Debris, brass and gibs run their own rigid-body physics once per tic, so at
+high refresh rates they stepped at 60 Hz under an interpolated camera. Take
+this tic's authoritative sample after Think() has pushed it; draw frames then
+present the previous-to-current pose on the camera's clock. Physics, clip
+models, bounce sounds and lifetime stay in Think().
+================
+*/
+void rvClientMoveable::SamplePresentationPose( void ) {
+	if ( bindMaster || entityDefHandle == -1 || !g_presentationInterpolation.GetBool() ) {
+		presentationPoseTime = -1;
+		presentationPoseCanInterpolate = false;
+		presentationNode.Remove();
+		return;
+	}
+
+	const idVec3 simOrigin = worldOrigin;
+	const idMat3 simAxis = worldAxis;
+	if ( presentationPoseTime < 0 ) {
+		presentationPoseTime = gameLocal.time;
+		presentationPoseCanInterpolate = false;
+		presentationPrevOrigin = simOrigin;
+		presentationPrevAxis = simAxis;
+		presentationCurOrigin = simOrigin;
+		presentationCurAxis = simAxis;
+		presentationNode.Remove();
+		return;
+	}
+	if ( presentationPoseTime == gameLocal.time ) {
+		return;
+	}
+
+	const int deltaTime = gameLocal.time - presentationPoseTime;
+	const int maxSequentialDelta = static_cast<int>( idMath::Ceil( common->GetUserCmdMsecFloat() ) );
+	const bool sequentialFrame = deltaTime > 0 && deltaTime <= maxSequentialDelta;
+	const idVec3 lastStep = presentationCurOrigin - presentationPrevOrigin;
+	const idVec3 originDelta = simOrigin - presentationCurOrigin;
+	idAngles angleDelta = simAxis.ToAngles() - presentationCurAxis.ToAngles();
+	angleDelta.Normalize180();
+	const float maxStep = CLIENT_PRESENTATION_MAX_STEP + lastStep.Length() * CLIENT_PRESENTATION_STEP_TOLERANCE;
+	const bool continuousPose =
+		originDelta.LengthSqr() <= Square( maxStep ) &&
+		angleDelta.Length() <= CLIENT_PRESENTATION_MAX_ANGLE;
+
+	presentationPrevOrigin = presentationCurOrigin;
+	presentationPrevAxis = presentationCurAxis;
+	presentationCurOrigin = simOrigin;
+	presentationCurAxis = simAxis;
+	presentationPoseTime = gameLocal.time;
+	const bool moved = presentationCurOrigin != presentationPrevOrigin || presentationCurAxis != presentationPrevAxis;
+	presentationPoseCanInterpolate =
+		gameLocal.GetMHz() == common->GetUserCmdHz() &&
+		sequentialFrame &&
+		continuousPose &&
+		moved;
+
+	if ( presentationPoseCanInterpolate ) {
+		if ( !presentationNode.InList() ) {
+			presentationNode.AddToEnd( gameLocal.presentationClientEntities );
+		}
+	} else {
+		presentationPrevOrigin = presentationCurOrigin;
+		presentationPrevAxis = presentationCurAxis;
+		presentationNode.Remove();
+	}
+}
+
+/*
+================
+rvClientMoveable::UpdatePresentationPose
+
+Presentation-only. Re-push a copy of the render entity, and any trail effect,
+at the camera's interpolated time. Never creates a def: a debris piece that
+has not been added yet is drawn by its next Think().
+================
+*/
+void rvClientMoveable::UpdatePresentationPose( void ) {
+	if ( entityDefHandle == -1 || !presentationPoseCanInterpolate || presentationPoseTime != gameLocal.time ) {
+		return;
+	}
+
+	const float fraction = gameLocal.GetPresentationInterpolationFraction();
+	idVec3 origin;
+	origin.Lerp( presentationPrevOrigin, presentationCurOrigin, fraction );
+	const idMat3 axis = gameLocal.InterpolatePresentationAxis( presentationPrevAxis, presentationCurAxis, fraction );
+
+	renderEntity_t presentationRenderEntity = renderEntity;
+	presentationRenderEntity.origin = origin;
+	presentationRenderEntity.axis = axis * scale.GetCurrentValue( gameLocal.GetTime() );
+	gameRenderWorld->UpdateEntityDef( entityDefHandle, &presentationRenderEntity );
+	if ( trailEffect ) {
+		trailEffect->PresentAt( origin, axis );
+	}
+	presentationPosePushed = true;
+}
+
+/*
+================
+rvClientMoveable::RestoreAuthoritativePresentationPose
+
+Hand the renderer back this tic's pose when the scene leaves the
+presentation clock between Think()s (a cinematic or private camera starts).
+================
+*/
+void rvClientMoveable::RestoreAuthoritativePresentationPose( void ) {
+	if ( !presentationPosePushed ) {
+		return;
+	}
+	presentationPosePushed = false;
+	if ( entityDefHandle != -1 ) {
+		gameRenderWorld->UpdateEntityDef( entityDefHandle, &renderEntity );
+	}
+	if ( trailEffect ) {
+		trailEffect->PresentAt( worldOrigin, worldAxis );
+	}
 }
 
 /*

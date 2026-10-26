@@ -1,6 +1,7 @@
 // Copyright (C) 2026 openQ4 contributors.
 #include "src/game/gamesys/SubtitlePaging.h"
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 using namespace OpenQ4Subtitles;
@@ -15,6 +16,33 @@ int main() {
 		assert(bottom < 360 + 202.5f * aspect && bottom > 360);
 		assert(bottom - (12 + 2 * 34 * 1.4f * 2) > 360 - 202.5f * aspect);
 	}
+	// Portrait cinematics: when two lines fit under the artwork, the panel hangs
+	// 12 below it, clear of every title row Awakening's intro draws in the
+	// picture (GUI y 270-310) and in its lower band (GUI y 430-470).
+	for (float aspect : {9.0f/16, 10.0f/16, 3.0f/4}) {
+		const float artworkTop = 360 - 270 * aspect, artworkBottom = 360 + 270 * aspect;
+		for (float pitch : {17 * 1.4f, 17 * 1.6f * 1.4f, 17 * 2 * 1.4f, 17 * 2 * 2 * 1.4f}) {
+			const bool fits = artworkBottom + 24 + 2 * pitch <= 708;
+			for (int lines : {1, 2}) {
+				const float bottom = CanvasBottom(aspect, true, pitch, lines);
+				const float top = bottom - (12 + pitch * lines);
+				if (fits) {
+					assert(std::fabs(top - (artworkBottom + 12)) < 0.01f && bottom <= 708.01f);
+					for (float y : {270.0f, 310.0f, 430.0f, 470.0f})
+						assert(artworkTop + (artworkBottom - artworkTop) * y / 480 < top);
+				} else {
+					assert(bottom == CanvasBottom(aspect, true)); // too tall below: stays in the picture
+				}
+			}
+		}
+	}
+	assert(CanvasBottom(9.0f/16, true, 17 * 1.4f, 2) <= 708 && CanvasBottom(9.0f/16, true, 17 * 2 * 2 * 1.4f, 2) == CanvasBottom(9.0f/16, true));
+	// 4:3 and wider, gameplay, and an unusable pitch keep the earlier placement.
+	assert(CanvasBottom(4.0f/3, true, 17 * 1.4f, 2) == CanvasBottom(4.0f/3, true));
+	assert(CanvasBottom(16.0f/9, true, 17 * 1.4f, 2) == 640 && CanvasBottom(9.0f/16, false, 17 * 1.4f, 2) == 570);
+	assert(CanvasBottom(9.0f/16, true, std::numeric_limits<float>::quiet_NaN(), 2) == CanvasBottom(9.0f/16, true));
+	assert(CanvasBottom(9.0f/16, true, -5, 2) == CanvasBottom(9.0f/16, true));
+	assert(CanvasBottom(std::numeric_limits<float>::quiet_NaN(), true, 17 * 1.4f, 2) == 640);
 	auto pages = Paginate("one two three four five six", 7, 2, Glyph);
 	assert(pages.size() == 3 && pages[0].lines[0] == "one two" && pages[0].lines[1] == "three");
 	assert(pages[1].lines[0] == "four" && pages[1].lines[1] == "five");
@@ -37,5 +65,5 @@ int main() {
 	assert(pages.back().end == 4096 && pages.size() < 256);
 	pages = Paginate("abcdef", 2, 1, [](const char*,int,float& w) { w=1;return 0; });
 	assert(pages.size() == 3); // Malformed input cannot stall pagination.
-	std::puts("Subtitle pagination: wrapping, timing, overlap rows, UTF-8 and bounds passed");
+	std::puts("Subtitle pagination: wrapping, timing, overlap rows, UTF-8, bounds and cinematic placement passed");
 }

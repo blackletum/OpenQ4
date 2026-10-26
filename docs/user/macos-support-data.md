@@ -1,5 +1,7 @@
 # macOS Support Data
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 macOS support is a preview for Apple Silicon/arm64 Macs. If openQ4 crashes on
 macOS, a complete report is much more useful than a screenshot because the
 maintainer may not have access to a Mac. Reports that it simply works are useful

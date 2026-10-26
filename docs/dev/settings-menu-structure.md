@@ -201,6 +201,8 @@ The Game Options pane is `p_settings_game` and is included from `content/baseoq4
 | Trigger Threshold | `sliderDef` + `editDef` | `set_game_controller_trigger_slider_bar`, `set_game_controller_trigger_value` | `in_joystickTriggerThreshold` | `0..1.0`, step `0.01` | Analog trigger press threshold. Edit field `maxchars 4`. |
 | Rumble | `choiceDef` | `set_game_controller_rumble_value` | `in_joystickRumble` | `No;Yes` | Boolean picker. |
 | Rumble Strength | `sliderDef` + `editDef` | `set_game_controller_rumble_strength_slider_bar`, `set_game_controller_rumble_strength_value` | `in_joystickRumbleScale` | `0..2.0`, step `0.05` | `0` effectively mutes rumble. Edit field `maxchars 4`. |
+| Prompt Style | `choiceDef` | `set_game_controller_prompt_style_value` | `in_promptStyle` | `0 Automatic`, `1 Xbox`, `2 PlayStation`, `3 Nintendo`, `4 Steam Deck`, `5 Generic` | Controller prompt family for the menus and the HUD; after Low Battery Rumble Cap. |
+| Swap Confirm and Back | `choiceDef` | `set_game_controller_swap_confirm_value` | `in_swapConfirmBack` | `0 Automatic`, `1 Off`, `2 On` | Which face button confirms in menus; the prompts follow. |
 
 ### Crosshair
 

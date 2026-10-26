@@ -1,5 +1,7 @@
 # Multiplayer chat
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 ## Voice chat
 
 In a multiplayer match, open the **Voice** tab (or **Voice Config** in the

@@ -1,5 +1,7 @@
 # Virtual reality (OpenXR)
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 can play Quake 4 on a PC VR headset through OpenXR, the cross-vendor
 VR standard. You see the game in stereo at your headset's resolution, look
 around with your head and aim with a motion controller. The HUD floats in

@@ -132,6 +132,14 @@ paths share a single arm, so simultaneous input streams cannot both own one
 activation. Device adapters must aggregate their physical inputs into these
 semantic transitions; this API does not implement a platform repeat scheduler.
 
+A button's optional string-expression `context` identifies the subject of its
+activation. A changed evaluated value cancels its held press and invalidates
+queued activations, including when the value later changes back. Unchanged
+context retains valid work through unrelated state refresh. Context revisions
+are transient; modal/document ownership still guards restoration. The
+[multiplayer identity increment](player-identity.md) uses this for player rows
+and Mute/Friend controls.
+
 `PushModal(root)` constrains input to that existing subtree immediately, chooses
 its first eligible control and remembers prior focus. Further scopes must be
 descendants. `PopModal()` cancels the arm and restores eligible prior focus, or

@@ -26,9 +26,10 @@ own title does when nothing carried it.
 """
 from __future__ import annotations
 
-from build_retained_screens import (CANVAS_W, FULL, LANGUAGES, OLIVE, ORANGE, TITLE_SLOT, U, Document, absolute, colour,
-                                    confirmation, font, group, keyword, label, length, number, objectives_scrollbar, page_prompts,
-                                    path, rgb, solid, stroke, text_width, track, typeface, vector)
+from build_retained_screens import (CANVAS_W, FULL, LANGUAGES, OLIVE, ORANGE, TITLE_SLOT, U, VERB_DELETE, VERB_PLAY,
+                                    Document, absolute, colour, confirmation, font, group, keyword, label, length, number,
+                                    objectives_scrollbar, page_prompts, path, rgb, row_prompt, solid, stroke, text_width, track,
+                                    typeface, vector)
 from retained_saves import (ERROR, ERROR_LINE, ERROR_STRIP, HEADING, LIST_H, LIST_LEFT, LIST_TOP, LIST_W, PLACEHOLDER, PREVIEW,
                             ROW_H, ROW_W, RULE_Y, backing, lines_needed, pager_row, picture_frame, row_plates, row_states,
                             section_plate, table_text)
@@ -36,11 +37,16 @@ from retained_saves import (ERROR, ERROR_LINE, ERROR_STRIP, HEADING, LIST_H, LIS
 ROWS = 64                      # RETAINED_DEMO_ROWS in the session: the demos the list holds at a time
 TITLE = "#str_41500"           # DEMOS, the plinth link that opens the page
 DETAIL_LEFT, DETAIL_W, KIND_TOP, STATUS_TOP, NOTE_TOP = 37.0, 165.0, 215.0, 230.0, 245.0
-PLATES = (("demo_play", "#str_41512", 21.0, 256.0, "play"), ("demo_delete", "#str_41513", 20.0, 293.0, None),
-          ("demo_refresh", "#str_41514", 20.0, 330.0, "refresh"))
+# The plates and headings in capitals, as Join Game's and the save pages'
+# are (RmlUi's text-transform changes ASCII letters only): the pages' PLAY
+# and DELETE verbs, the stock capital MAP and DATE, and openQ4's REFRESH,
+# NAME and DURATION (the stock capital NAME names a player in Ukrainian, and
+# REFRESH LIST runs past a plate in German).
+PLATES = (("demo_play", "#str_231523", 21.0, 256.0, "play"), ("demo_delete", "#str_231521", 20.0, 293.0, None),
+          ("demo_refresh", "#str_231536", 20.0, 330.0, "refresh"))
 # The columns' tabstops across the 394 u row (the scrollbar takes the last 16 u).
-COLUMNS = (("name", "#str_41507", 0.0, 146.0), ("map", "#str_41509", 150.0, 96.0), ("date", "#str_41557", 250.0, 72.0),
-           ("length", "#str_41510", 324.0, 70.0))
+COLUMNS = (("name", "#str_231530", 0.0, 146.0), ("map", "#str_200040", 150.0, 96.0), ("date", "#str_200243", 250.0, 72.0),
+           ("length", "#str_231531", 324.0, 70.0))
 HEAD_TOP = 63.0
 # The filter tags over the headings: the legacy browser's filters after ALL,
 # which no tag set stands for (demos.filter 1-4, as demoFilter names them).
@@ -134,7 +140,9 @@ def demo_row(doc: Document, index: int) -> dict:
     return group(ident, {"position": keyword("relative"), "display": keyword("none"), "width": length(width), "height": length(height),
                          "flex-shrink": number(0)},
                  [*row_plates(ident, width, height), *cells],
-                 control={"role": "button", "label": PLACEHOLDER, "event": event, "states": ids})
+                 control={"role": "button", "label": PLACEHOLDER, "event": event, "states": ids,
+                          "prompt": row_prompt(VERB_PLAY, {"op": "&&", "args": [
+                              {"op": "==", "args": [{"state": "demos.selected"}, demo]}, {"state": "demos.canPlay"}]})})
 
 
 def check_demo_text_fits() -> None:
@@ -219,6 +227,8 @@ def demos_document() -> dict:
     plates = []
     for ident, key, left, top, action in PLATES:
         plates.append(section_plate(doc, ident, key, left, top, action=action, event=None if action else "deleteModalShow"))
+        if ident in ("demo_play", "demo_delete"):
+            plates[-1]["control"]["prompt"] = VERB_PLAY if ident == "demo_play" else VERB_DELETE
     doc.bind("demo_play.enabled", "demo_play", "enabled", {"state": "demos.canPlay"})
     doc.bind("demo_delete.enabled", "demo_delete", "enabled", {"state": "demos.canDelete"})
 
@@ -259,7 +269,7 @@ def demos_document() -> dict:
     doc.bind("demo-empty-text.text", "demo-empty-text", "text",
              {"op": "select", "args": [{"op": "==", "args": [{"state": "demos.filter"}, 0]}, "#str_231115", "#str_231118"]})
 
-    back = page_prompts(doc, "demo_back", action="back")
+    back = page_prompts(doc, "demo_back", action="back", verbs=(VERB_PLAY, VERB_DELETE))
     title = label("demo-title", TITLE, {**absolute(left=U * TITLE_SLOT[0], top=U * TITLE_SLOT[1], width=U * 300, height=U * 24.4 * 0.75),
                   **typeface("marine", 18, U * 24.4 * 0.75, [1, 1, 1, 0.5]), "white-space": keyword("nowrap")})
     # The plates show at once; the title, the panel and the backing fade in

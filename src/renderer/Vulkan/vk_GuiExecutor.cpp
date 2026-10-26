@@ -142,7 +142,9 @@ static const int VK_MAX_GUI_PIPELINES = 64;
 static const int VK_MAX_SCREEN_PIPELINES = 64;
 static const int VK_MAX_CUBE_PIPELINES = 32;
 static const int VK_MAX_ENV_PIPELINES = 32;
-static const int VK_MAX_PROGRAM_PIPELINES = 128;
+// Native ARB/GLSL families, glass warp and authored versions share this cache;
+// evicted authored versions return their entries.
+static const int VK_MAX_PROGRAM_PIPELINES = 512;
 static const int VK_MAX_BLEND_LIGHT_PIPELINES = 32;
 static const int VK_MAX_SPECIAL_PIPELINES = 96;
 static const int VK_MAX_TEMPORAL_RESOLVE_PIPELINES = 8;
@@ -173,6 +175,10 @@ typedef struct vkRing_s {
 	int				capacity;
 	int				cursor;
 	bool			overflowWarned;	// latched per frame so one oversized scene cannot emit a warning per failed surface allocation
+	// Frames in which the ring overflowed. Reported at the first and then at
+	// each power of two, so a scene saturating it every frame stays readable.
+	int				overflowFrames;
+	const char *	label;			// vertex, index or uniform
 } vkRing_t;
 
 typedef struct vkPipelineTarget_s {
@@ -723,6 +729,8 @@ Rings
 ====================
 */
 static bool VK_Ring_Create( vkRing_t &ring, int capacity, VkBufferUsageFlags usage ) {
+	ring.label = ( usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT ) != 0 ? "uniform"
+			: ( usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT ) != 0 ? "index" : "vertex";
 	VkBufferCreateInfo bci;
 	memset( &bci, 0, sizeof( bci ) );
 	bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -745,13 +753,28 @@ static bool VK_Ring_Create( vkRing_t &ring, int capacity, VkBufferUsageFlags usa
 	return true;
 }
 
+// The first failure of a frame counts that frame; the warning prints for the
+// first such frame and at each power of two after it.
+static bool VK_Ring_CountOverflowFrame( vkRing_t &ring ) {
+	if ( ring.overflowWarned ) {
+		return false;
+	}
+	ring.overflowWarned = true;
+	const int frames = ++ring.overflowFrames;
+	return ( frames & ( frames - 1 ) ) == 0;
+}
+
+static const char *VK_Ring_Label( const vkRing_t &ring ) {
+	return ring.label != NULL ? ring.label : "geometry";
+}
+
 static int VK_Ring_Alloc( vkRing_t &ring, const void *data, size_t bytes, int alignment ) {
 	if ( data == NULL || ring.mapped == NULL || bytes == 0 || ring.capacity <= 0 ||
 			ring.cursor < 0 || ring.cursor > ring.capacity || alignment <= 0 ||
 			( alignment & ( alignment - 1 ) ) != 0 ) {
-		if ( !ring.overflowWarned ) {
-			common->Warning( "Vulkan: invalid frame geometry ring allocation" );
-			ring.overflowWarned = true;
+		if ( VK_Ring_CountOverflowFrame( ring ) ) {
+			common->Warning( "Vulkan: invalid frame %s ring allocation (%d frames so far)",
+				VK_Ring_Label( ring ), ring.overflowFrames );
 		}
 		return -1;
 	}
@@ -760,9 +783,9 @@ static int VK_Ring_Alloc( vkRing_t &ring, const void *data, size_t bytes, int al
 	const size_t alignmentMask = static_cast<size_t>( alignment - 1 );
 	const size_t offset = ( static_cast<size_t>( ring.cursor ) + alignmentMask ) & ~alignmentMask;
 	if ( offset > capacity || bytes > capacity - offset ) {
-		if ( !ring.overflowWarned ) {
-			common->Warning( "Vulkan: frame geometry ring overflow (%zu + %zu > %zu)", offset, bytes, capacity );
-			ring.overflowWarned = true;
+		if ( VK_Ring_CountOverflowFrame( ring ) ) {
+			common->Warning( "Vulkan: frame %s ring overflow (%zu + %zu > %zu; %d frames so far); the draw is skipped",
+				VK_Ring_Label( ring ), offset, bytes, capacity, ring.overflowFrames );
 		}
 		return -1;
 	}
@@ -780,9 +803,9 @@ static int VK_Ring_Reserve( vkRing_t &ring, size_t bytes, int alignment ) {
 	if ( ring.mapped == NULL || bytes == 0 || ring.capacity <= 0
 			|| ring.cursor < 0 || ring.cursor > ring.capacity || alignment <= 0
 			|| ( alignment & ( alignment - 1 ) ) != 0 ) {
-		if ( !ring.overflowWarned ) {
-			common->Warning( "Vulkan: invalid frame geometry ring reservation" );
-			ring.overflowWarned = true;
+		if ( VK_Ring_CountOverflowFrame( ring ) ) {
+			common->Warning( "Vulkan: invalid frame %s ring reservation (%d frames so far)",
+				VK_Ring_Label( ring ), ring.overflowFrames );
 		}
 		return -1;
 	}
@@ -791,10 +814,9 @@ static int VK_Ring_Reserve( vkRing_t &ring, size_t bytes, int alignment ) {
 	const size_t alignmentMask = static_cast<size_t>( alignment - 1 );
 	const size_t offset = ( static_cast<size_t>( ring.cursor ) + alignmentMask ) & ~alignmentMask;
 	if ( offset > capacity || bytes > capacity - offset ) {
-		if ( !ring.overflowWarned ) {
-			common->Warning( "Vulkan: frame geometry ring reservation overflow (%zu + %zu > %zu)",
-				offset, bytes, capacity );
-			ring.overflowWarned = true;
+		if ( VK_Ring_CountOverflowFrame( ring ) ) {
+			common->Warning( "Vulkan: frame %s ring reservation overflow (%zu + %zu > %zu; %d frames so far)",
+				VK_Ring_Label( ring ), offset, bytes, capacity, ring.overflowFrames );
 		}
 		return -1;
 	}
@@ -1977,7 +1999,10 @@ static VkPipeline VK_Exec_GetProgramPipeline( vkMaterialProgramFamily_t family,
 		}
 	}
 	if ( vkExec.numProgramPipelines >= VK_MAX_PROGRAM_PIPELINES ) {
-		common->Warning( "Vulkan: material-program pipeline cache exhausted" );
+		if ( VK_MaterialPrograms_ReportOnce( "program pipelines", "capacity" ) ) {
+			common->Warning( "Vulkan: material-program pipeline cache exhausted (%d pipelines); further program stages are skipped",
+				VK_MAX_PROGRAM_PIPELINES );
+		}
 		return VK_NULL_HANDLE;
 	}
 
@@ -2080,7 +2105,9 @@ VkPipeline VK_Exec_AuthoredMaterialPipeline( int identity, VkShaderModule vertex
         bool separateColor, unsigned int vertexInputMask ) {
     const int key = 0x10000 + identity;
     separateColor = separateColor && ( vertexInputMask & ( 1u << 1 ) ) != 0;
-    const int bits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS | GLS_COLORMASK | GLS_ALPHAMASK );
+    // Alpha to coverage follows the stage state, as OpenGL's GL_State does for
+    // program stages and as the native program families already do.
+    const int bits = stateBits & ( GLS_ALPHA_COVERAGE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS | GLS_COLORMASK | GLS_ALPHAMASK );
     const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
     for ( int i = 0; i < vkExec.numProgramPipelines; ++i ) {
         const vkProgramPipeline_t &entry = vkExec.programPipelines[i];
@@ -2111,6 +2138,21 @@ VkPipeline VK_Exec_AuthoredMaterialPipeline( int identity, VkShaderModule vertex
     return pipeline;
 }
 
+void VK_Exec_ReleaseAuthoredMaterialPipelines( int identity ) {
+    const int key = 0x10000 + identity;
+    int kept = 0;
+    for ( int i = 0; i < vkExec.numProgramPipelines; ++i ) {
+        vkProgramPipeline_t &entry = vkExec.programPipelines[i];
+        if ( entry.family == key ) {
+            if ( entry.pipeline != VK_NULL_HANDLE ) { vkDestroyPipeline( vkCtx.device, entry.pipeline, NULL ); }
+            continue;
+        }
+        if ( kept != i ) { vkExec.programPipelines[kept] = entry; }
+        ++kept;
+    }
+    vkExec.numProgramPipelines = kept;
+}
+
 static VkPipeline VK_Exec_GetGLSLMaterialPipeline( vkGLSLProgramFamily_t family,
 		int stateBits, bool separateColor ) {
 	if ( family <= VK_GLSL_PROGRAM_FAMILY_UNKNOWN
@@ -2134,7 +2176,10 @@ static VkPipeline VK_Exec_GetGLSLMaterialPipeline( vkGLSLProgramFamily_t family,
 		}
 	}
 	if ( vkExec.numProgramPipelines >= VK_MAX_PROGRAM_PIPELINES ) {
-		common->Warning( "Vulkan: material-program pipeline cache exhausted" );
+		if ( VK_MaterialPrograms_ReportOnce( "program pipelines", "capacity" ) ) {
+			common->Warning( "Vulkan: material-program pipeline cache exhausted (%d pipelines); further program stages are skipped",
+				VK_MAX_PROGRAM_PIPELINES );
+		}
 		return VK_NULL_HANDLE;
 	}
 
@@ -6397,9 +6442,26 @@ typedef struct vkStencilReadback_s {
 	int				width;
 	int				height;
 	int				mode;		// vkStencilReadbackMode_t; 0 when nothing is pending
+	// What was read, printed with the result a frame or two later so it is
+	// never mistaken for the frame on screen when it prints.
+	int				frameCount;	// tr.frameCount of the recorded frame
+	int				viewID;
+	bool			subview;
+	bool			renderTarget;	// a render texture or cube face, not the frame's main target
 } vkStencilReadback_t;
 
 static vkStencilReadback_t vkStencilReadbacks[ VK_FRAMES_IN_FLIGHT ][ VK_STENCIL_READBACKS_PER_SLOT ];
+
+// A failed submission never ran its copies: drop them instead of printing the
+// stale contents of a buffer as this frame's result.
+static void VK_Exec_DiscardStencilReadbacks( int slot ) {
+	if ( slot < 0 || slot >= VK_FRAMES_IN_FLIGHT ) {
+		return;
+	}
+	for ( int i = 0; i < VK_STENCIL_READBACKS_PER_SLOT; i++ ) {
+		vkStencilReadbacks[ slot ][ i ].mode = 0;
+	}
+}
 
 static void VK_Exec_ReleaseStencilReadbacks( void ) {
 	for ( int slot = 0; slot < VK_FRAMES_IN_FLIGHT; slot++ ) {
@@ -6423,6 +6485,11 @@ static void VK_Exec_PrintStencilReadbacks( int slot ) {
 			continue;
 		}
 		vmaInvalidateAllocation( vkCtx.allocator, readback.allocation, 0, VK_WHOLE_SIZE );
+		const int age = tr.frameCount - readback.frameCount;
+		common->Printf( "Vulkan stencil readback: frame %d (%d frame%s ago), view %d%s, %dx%d %s\n",
+				readback.frameCount, age, age == 1 ? "" : "s", readback.viewID,
+				readback.subview ? " (subview)" : "", readback.width, readback.height,
+				readback.renderTarget ? "render target" : "frame target" );
 		VK_DebugTools_PrintStencilReadback( (const byte *)readback.mapped,
 				readback.width, readback.height, readback.mode );
 		readback.mode = 0;
@@ -6484,12 +6551,21 @@ static void VK_Exec_CopyStencilToBuffer( VkImage image, VkBuffer buffer,
 			buffer, 1, &copy );
 }
 
-bool VK_Exec_QueueStencilReadback( int mode ) {
-	if ( !VK_Exec_MainRenderingScopeOpen() || !VK_Exec_ActiveTargetHasStencil() ) {
+bool VK_Exec_QueueStencilReadback( int mode, const char **failure ) {
+	const char *unused = NULL;
+	const char *&reason = failure != NULL ? *failure : unused;
+	reason = NULL;
+	if ( !VK_Exec_MainRenderingScopeOpen() ) {
+		reason = "no open rendering scope";
+		return false;
+	}
+	if ( !VK_Exec_ActiveTargetHasStencil() ) {
+		reason = "the active target has no stencil";
 		return false;
 	}
 	const int slot = vkExec.frameSlot;
 	if ( slot < 0 || slot >= VK_FRAMES_IN_FLIGHT ) {
+		reason = "no frame slot";
 		return false;
 	}
 	vkStencilReadback_t *readback = NULL;
@@ -6501,9 +6577,14 @@ bool VK_Exec_QueueStencilReadback( int mode ) {
 	vkImageEntry_t *depthEntry = vkExec.activeDepthEntry;
 	const uint32_t width = vkExec.activeExtent.width;
 	const uint32_t height = vkExec.activeExtent.height;
-	if ( readback == NULL || width == 0 || height == 0
+	if ( readback == NULL ) {
+		reason = va( "%d readbacks already pending this frame", VK_STENCIL_READBACKS_PER_SLOT );
+		return false;
+	}
+	if ( width == 0 || height == 0
 			|| ( depthEntry != NULL && depthEntry->samples == VK_SAMPLE_COUNT_1_BIT
 				&& ( depthEntry->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) == 0 ) ) {
+		reason = "the stencil attachment cannot be copied";
 		return false;
 	}
 
@@ -6533,6 +6614,7 @@ bool VK_Exec_QueueStencilReadback( int mode ) {
 				&readback->allocation, &allocationInfo ) != VK_SUCCESS ) {
 			readback->buffer = VK_NULL_HANDLE;
 			readback->allocation = NULL;
+			reason = "readback buffer allocation failed";
 			return false;
 		}
 		readback->mapped = allocationInfo.pMappedData;
@@ -6581,6 +6663,12 @@ bool VK_Exec_QueueStencilReadback( int mode ) {
 		readback->width = (int)width;
 		readback->height = (int)height;
 		readback->mode = mode;
+		readback->frameCount = tr.frameCount;
+		readback->viewID = backEnd.viewDef != NULL ? backEnd.viewDef->renderView.viewID : 0;
+		readback->subview = backEnd.viewDef != NULL && backEnd.viewDef->isSubview;
+		readback->renderTarget = depthEntry != NULL;
+	} else {
+		reason = "the multisampled stencil could not be resolved";
 	}
 	VK_Exec_TransitionActiveTargetToAttachments();
 	VK_Exec_BeginMainRendering( false );
@@ -6929,8 +7017,18 @@ bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixel
 	if ( components != 3 && components != 4 ) {
 		return false;
 	}
-	if ( pixels == NULL || width <= 0 || height <= 0 || !VK_GuiExecutor_BeginFrame()
-			|| !vkCtx.swapchainTransferSrc ) {
+	if ( pixels == NULL || width <= 0 || height <= 0 ) {
+		return false;
+	}
+	// A capture reads the frame the caller just rendered. Opening one here would
+	// return its clear colour as a successful capture.
+	if ( !vkExec.frameOpen ) {
+		common->Warning( "Vulkan: glReadPixels has no rendered frame to read" );
+		return false;
+	}
+	// Hidden-window frames render into per-slot offscreen images, which always
+	// allow transfer reads, whatever the unused swapchain's surface supports.
+	if ( !VK_GuiExecutor_BeginFrame() || ( !vkCtx.offscreenFrames && !vkCtx.swapchainTransferSrc ) ) {
 		return false;
 	}
 	VK_TemporalPresentation_ObserveHistoryAndCapture();
@@ -6942,23 +7040,14 @@ bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixel
 		return false;
 	}
 
+	// The caller sizes and strides its buffer from the rectangle it asked for.
+	// A rectangle the frame no longer covers (the window resized under the
+	// capture) cannot be clipped without skewing every row, so it fails.
 	const int framebufferWidth = (int)vkCtx.swapchainExtent.width;
 	const int framebufferHeight = (int)vkCtx.swapchainExtent.height;
-	if ( x < 0 ) {
-		width += x;
-		x = 0;
-	}
-	if ( y < 0 ) {
-		height += y;
-		y = 0;
-	}
-	if ( x + width > framebufferWidth ) {
-		width = framebufferWidth - x;
-	}
-	if ( y + height > framebufferHeight ) {
-		height = framebufferHeight - y;
-	}
-	if ( width <= 0 || height <= 0 ) {
+	if ( x < 0 || y < 0 || x + width > framebufferWidth || y + height > framebufferHeight ) {
+		common->Warning( "Vulkan: glReadPixels rectangle %d,%d %dx%d is outside the %dx%d frame",
+				x, y, width, height, framebufferWidth, framebufferHeight );
 		return false;
 	}
 	const bool bgra = vkCtx.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM
@@ -7202,6 +7291,7 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 	if ( submitted != VK_SUCCESS ) {
 		VK_GpuFrameTiming_SubmitFailed( slot );
 		VK_Exec_DiscardHDRReadback( slot );
+		VK_Exec_DiscardStencilReadbacks( slot );
 		// OOM leaves acquisition unconsumed; device loss offers no guarantee
 		// about queued work. Do not synthesize a signaled fence or reuse either
 		// semaphore. The device latch guards all later waits and acquisitions.
@@ -9987,6 +10077,29 @@ static int VK_Exec_GLSLCanonicalParmSlot( vkGLSLProgramFamily_t family,
 	return -1;
 }
 
+// The per-light vectors VK_Exec_EvaluateGLSLParm only has inside an interaction.
+static bool VK_Exec_GLSLParmIsInteractionOnly( glslShaderParmBinding_t binding ) {
+	switch ( binding ) {
+		case GLSL_SHADERPARM_LOCAL_LIGHT_ORIGIN:
+		case GLSL_SHADERPARM_LOCAL_VIEW_ORIGIN:
+		case GLSL_SHADERPARM_LIGHT_PROJECT_S:
+		case GLSL_SHADERPARM_LIGHT_PROJECT_T:
+		case GLSL_SHADERPARM_LIGHT_PROJECT_Q:
+		case GLSL_SHADERPARM_LIGHT_FALLOFF_S:
+		case GLSL_SHADERPARM_BUMP_MATRIX_S:
+		case GLSL_SHADERPARM_BUMP_MATRIX_T:
+		case GLSL_SHADERPARM_DIFFUSE_MATRIX_S:
+		case GLSL_SHADERPARM_DIFFUSE_MATRIX_T:
+		case GLSL_SHADERPARM_SPECULAR_MATRIX_S:
+		case GLSL_SHADERPARM_SPECULAR_MATRIX_T:
+		case GLSL_SHADERPARM_DIFFUSE_COLOR:
+		case GLSL_SHADERPARM_SPECULAR_COLOR:
+			return true;
+		default:
+			return false;
+	}
+}
+
 static bool VK_Exec_EvaluateGLSLParm( const viewDef_t *viewDef,
 		const drawSurf_t *drawSurf, const shaderStage_t *stage,
 		int authoredSlot, float value[ 4 ], const drawInteraction_t *din = NULL ) {
@@ -10231,14 +10344,23 @@ bool VK_Exec_BuildAuthoredMaterialUniforms( const viewDef_t *viewDef, const draw
     if ( drawSurf->space == NULL || drawSurf->shaderRegisters == NULL ) { return false; }
     block = {};
     for ( int i = 0; i < newStage->numShaderParms; ++i ) {
-        if ( !VK_Exec_EvaluateGLSLParm( viewDef, drawSurf, stage, i, block.parameters[i].data(), din ) ) {
-            static idStr lastUnsupported;
-            if ( lastUnsupported != newStage->shaderParmNames[i] ) {
-                common->Warning( "Vulkan authored GLSL '%s': unsupported shaderParm binding '%s'",
-                    newStage->glslProgramName, newStage->shaderParmNames[i] );
-                lastUnsupported = newStage->shaderParmNames[i];
-            }
-            return false;
+        float *value = block.parameters[i].data();
+        if ( VK_Exec_EvaluateGLSLParm( viewDef, drawSurf, stage, i, value, din ) ) { continue; }
+        // OpenGL's RB_BindGLSLShaderParm declines a binding it has no value for
+        // here (a per-light vector on an ambient stage, a sample array) and the
+        // stage still draws: the parameter takes its registers, or keeps its
+        // default. Do the same instead of skipping the whole stage. Per-light
+        // bindings outside an interaction are expected and stay quiet, as on GL.
+        const int count = newStage->shaderParmNumRegisters[i];
+        for ( int j = 0; j < count && j < 4; ++j ) {
+            value[j] = drawSurf->shaderRegisters[newStage->shaderParmRegisters[i][j]];
+        }
+        if ( din == NULL && VK_Exec_GLSLParmIsInteractionOnly( newStage->shaderParmBindings[i] ) ) { continue; }
+        const idStr subject = va( "GLSL|%s", newStage->glslProgramName );
+        const idStr reason = va( "shaderParm %s", newStage->shaderParmNames[i] );
+        if ( VK_MaterialPrograms_ReportOnce( subject.c_str(), reason.c_str() ) ) {
+            common->Warning( "Vulkan authored GLSL '%s': shaderParm binding '%s' has no Vulkan value; it uses %s, as OpenGL does",
+                newStage->glslProgramName, newStage->shaderParmNames[i], count > 0 ? "its registers" : "zero" );
         }
     }
     memcpy( block.modelView.data(), drawSurf->space->modelViewMatrix, sizeof( float ) * 16 );
@@ -11175,15 +11297,19 @@ static void VK_Exec_DrawProgramStage( const viewDef_t *viewDef,
 			return;
 		}
 		if ( authored ) {
-			static bool loggedUnknownProgram = false;
-			if ( !loggedUnknownProgram ) {
-				loggedUnknownProgram = true;
-				common->Printf( "Vulkan: unsupported ARB material program skipped (%s)\n",
-						shader->GetName() );
+			// Once per material until the next program reload; the program's own
+			// compile or bind diagnostic, when it has one, names the cause.
+			if ( VK_MaterialPrograms_ReportOnce( "ARB material", shader->GetName() ) ) {
+				common->Printf( "Vulkan: authored ARB material program stage skipped (%s%s)\n", shader->GetName(),
+						translation >= 1 ? "" : "; r_vkARBTranslation 0" );
 			}
 			return;
 		}
 		// A stock pair whose diagnostic translation failed keeps its native path.
+		if ( VK_MaterialPrograms_ReportOnce( "ARB stock pair", shader->GetName() ) ) {
+			common->Printf( "Vulkan: r_vkARBTranslation 2 could not translate the stock pair in '%s'; its native implementation draws instead\n",
+					shader->GetName() );
+		}
 	}
 
 	if ( family == VK_MATERIAL_PROGRAM_FAMILY_MONOCHROME ) {
@@ -14384,7 +14510,12 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 				backEnd.currentRenderCopied = false;
 			}
 			if ( !VK_HDRScene_EndOpaque( viewDef ) ) {
-				common->Warning( "Vulkan: HDR scene composition failed" );
+				// Counted per view in rendererVulkanHDRInfo; warn once here.
+				static bool compositionWarned = false;
+				if ( !compositionWarned ) {
+					compositionWarned = true;
+					common->Warning( "Vulkan: HDR scene composition failed; the view is abandoned" );
+				}
 				VK_TemporalPresentation_EndView( viewDef, sceneScaleState, false );
 				return;
 			}

@@ -25,9 +25,6 @@ void idPlayerView::DrawSubtitles() {
 	subtitleGui->SetStateFloat("x", (720.0f * renderSystem->GetScreenWidth() / Max(1, renderSystem->GetScreenHeight()) - width) * 0.5f);
 	subtitleGui->SetStateFloat("size", size);
 	subtitleGui->SetStateFloat("pitch", pitch);
-	subtitleGui->SetStateFloat("bottom", OpenQ4Subtitles::CanvasBottom(
-		static_cast<float>(renderSystem->GetScreenWidth()) / Max(1, renderSystem->GetScreenHeight()),
-		gameLocal.GetCamera() || player->GetPrivateCameraView()));
 	subtitleGui->SetStateFloat("background", idMath::ClampFloat(0, 1, cvarSystem->GetCVarFloat("ui_subtitleBackground")));
 	renderFontMetrics_t metrics;
 	idStr fontName = va("fonts/%s/lowpixel", cvarSystem->GetCVarString("sys_lang"));
@@ -86,6 +83,10 @@ void idPlayerView::DrawSubtitles() {
 		}
 	}
 	subtitleGui->SetStateFloat("lines", static_cast<float>(visibleLines));
+	// Placed once the line count is known: below a portrait cinematic's artwork it hangs from its top.
+	subtitleGui->SetStateFloat("bottom", OpenQ4Subtitles::CanvasBottom(
+		static_cast<float>(renderSystem->GetScreenWidth()) / Max(1, renderSystem->GetScreenHeight()),
+		gameLocal.GetCamera() || player->GetPrivateCameraView(), pitch, visibleLines));
 	subtitleGui->StateChanged(gameLocal.time);
 	const bool previous = renderSystem->GetUseUIViewportFor2D();
 	renderSystem->SetUseUIViewportFor2D(true);

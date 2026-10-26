@@ -446,6 +446,8 @@ def compile_prediction_clock_harness() -> None:
 #include <cassert>
 #include <cstdio>
 static int GetMSec() { return 16; }
+// The clock block also counts replay passes for net_mpPredictDebug's pose age.
+static int clientReplayTics = 0;
 static int PausedDelta(int time, int &realClientTime) {
     bool isNewFrame = false;
     @CLOCK@

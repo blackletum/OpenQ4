@@ -184,8 +184,9 @@ static void CheckSchema() {
 }
 
 static const std::set<std::string> SessionCommands = {"continue","singlePlayer","loadGame","saveGame","multiplayer","settings",
-	"mods","demos","updates","credits","quit","resume","restartLevel","quitToMenu",
+	"mods","demos","updates","credits","quit","resume","menuResume","restartLevel","quitToMenu",
 	"loadBack","loadSelect","loadSave","loadDelete","loadNewer","loadOlder","loadNewGame",
+	"saveListRefresh","saveListSort","saveListFilterManual","saveListFilterAuto","saveListClear",
 	"saveBack","saveSelect","saveSave","saveOverwrite","saveNewer","saveOlder","restartBack","restartGo",
 	"demosBack","demosSelect","demosPlay","demosDelete","demosRefresh","demosFilter","demosNewer","demosOlder","modsSelect","modsLoad","deathRestart","deathLoad","deathMenu","creditsBack",
 	"arenaBack","arenaTier0","arenaTier1","arenaTier2","arenaTier3","arenaTier4","arenaMatch0","arenaMatch1","arenaMatch2","arenaMatch3",
@@ -249,7 +250,13 @@ static void CheckSessionActions(const Document& document) {
 		const bool value = action.operation == "session.menuValue";
 		Check(action.operation == "session.menu" || value,"production screens request only session operations");
 		const auto command = action.arguments.find("command");
-		Check(command != action.arguments.end() && action.arguments.size() == (value ? 2u : 1u),"one command argument, and a value");
+		Check(command != action.arguments.end(),"session operation names a command");
+		const auto& verb = std::get<std::string>(command->second.literal);
+		const bool player = verb == "mpSelectPlayer" || verb == "mpMute" || verb == "mpFriend";
+		const bool save = verb == "loadSelect" || verb == "saveSelect" || verb == "loadSave" || verb == "loadDelete";
+		Check(!save || (action.arguments.at("index").type == 0 && action.arguments.at("generation").type == 0),"save command carries catalog operands");
+		Check(action.arguments.size() == (player || save ? 3u : value ? 2u : 1u),"command carries exactly its typed operands");
+		Check(!player || (action.arguments.at("client").type == 0 && action.arguments.at("identity").type == 2),"player command carries client and connection identity");
 		Check((value ? SessionValueCommands : SessionCommands).contains(std::get<std::string>(command->second.literal)),
 			"every command is in the session allowlist");
 		Check(!value || (action.arguments.at("value").inputValue && action.inputType),"a value verb carries its control's value");
@@ -493,7 +500,7 @@ static void CheckEscape(ScreenHost& host, const char* path) {
 		std::get<double>(runtime.GetState().at("card.client")) == 4,"Friend asks for the selected player");
 	Check(runtime.RunEvent("players_mute",3.7,effects,error) && effects.actions.size() == 1 &&
 		std::get<std::string>(effects.actions[0].arguments.at("command")) == "mpMute","and so does Mute");
-	// Sixteen entries take the narrowest pitch and still fit the page.
+	// A full roster keeps readable rows and scrolls under fixed headings.
 	StateValues full;
 	for (const auto& [list,count] : std::vector<std::pair<std::string,int>>{{"a",8},{"b",7},{"s",1}}) {
 		full["mp.players."+list+".count"] = static_cast<double>(count);
@@ -501,17 +508,16 @@ static void CheckEscape(ScreenHost& host, const char* path) {
 	}
 	Check(runtime.SetState(full,error,3.75),"sixteen players");
 	runtime.Frame(viewport,3.8);
-	const auto last = bounds("players-s-0"), page = bounds("page-players");
-	// 325 dp less the headings and three bands leaves 231 dp for sixteen rows.
-	Check(Near(bounds("players-a-0").height,231/16.f,.02f) && last.y+last.height <= page.y+page.height+.5f,
-		"sixteen players share what the bands leave and fit");
-	// Past sixteen clients the rows keep 14 dp and the last ones are clipped.
+	const auto fullScroll = runtime.GetWidgetState("players-scroll");
+	Check(Near(bounds("players-a-0").height,24,.02f) && fullScroll && fullScroll->scroll && fullScroll->scroll->geometry.usable,
+		"sixteen players retain their pitch with scrolling available");
+	// More connections extend the scrollable list without shrinking text.
 	StateValues over = full;
 	over["mp.players.a.count"] = 16.0;
 	for (int row = 8; row < 16; ++row) over["mp.players.a"+std::to_string(row)+".client"] = static_cast<double>(row+30);
 	Check(runtime.SetState(over,error,3.8),"twenty-four clients");
 	runtime.Frame(viewport,3.82);
-	Check(Near(bounds("players-a-0").height,14,.02f),"rows never shrink below 14 dp");
+	Check(Near(bounds("players-a-0").height,24,.02f),"long rosters preserve their row pitch");
 	Check(runtime.SetState(lists,error,3.85),"back to six players");
 	// The strip wraps both ways; choosing the current tab changes nothing.
 	Check(runtime.RunEvent("tab_admin",4,effects,error) && runtime.RunEvent("onTabNext",4.01,effects,error),"E past the last tab");
@@ -831,6 +837,24 @@ static void CheckAdmin(ScreenHost& host, const char* path) {
 	Check(runtime.RunEvent("admin_apply",4.9,effects,error) && effects.actions.empty(),"Apply changes asks nothing while nothing changes");
 	Check(runtime.SetState({{"mp.admin.apply.available",true}},error,5) && runtime.RunEvent("admin_apply",5.05,effects,error) &&
 		asked("mpAdminApply"),"Apply changes sends the draft");
+	// The Menu button presses Apply while the Server section has changes, and
+	// otherwise closes the card as Back does (section 13.5).
+	Check(runtime.RunEvent("onMenuButton",5.06,effects,error) && asked("mpAdminApply"),"Menu applies the server's changes");
+	Check(runtime.SetState({{"mp.admin.apply.available",false}},error,5.07) && runtime.RunEvent("onMenuButton",5.08,effects,error) &&
+		asked("mpClose"),"with nothing to apply Menu closes the card");
+	Check(runtime.SetState({{"mp.admin.apply.available",true}},error,5.09),"changes to apply again");
+	// Apply changes ends with the controller's Menu button, which presses it;
+	// the keyboard has no key for it and shows none.
+	runtime.Frame(viewport,5.1);
+	for (const char* family : {"xbox","playstation","nintendo","steamdeck","generic"})
+		Check(text(std::string("admin-apply-menu-")+family,"display") == "none","no Menu glyph for the keyboard");
+	Check(runtime.SetState({{"prompt.glyphs",3.0}},error,5.11),"a Nintendo controller");
+	runtime.Frame(viewport,5.12);
+	const auto plate = bounds("admin-apply"), menuGlyph = bounds("admin-apply-menu"), applyLabel = bounds("admin-apply-label");
+	Check(text("admin-apply-menu-nintendo","display") == "block" && text("admin-apply-menu-xbox","display") == "none" &&
+		menuGlyph.x+menuGlyph.width <= plate.x+plate.width && applyLabel.x+applyLabel.width <= menuGlyph.x,
+		"the Nintendo Menu glyph ends the Apply plate, after its label");
+	Check(runtime.SetState({{"prompt.glyphs",0.0}},error,5.13),"the keyboard again");
 	const auto apply = bounds("admin-apply"), page = bounds("page-admin");
 	Check(apply.y+apply.height <= page.y+page.height+.5f,"Apply changes stands inside the page");
 	// Console: the newest lines and the command field.
@@ -840,6 +864,13 @@ static void CheckAdmin(ScreenHost& host, const char* path) {
 	runtime.Frame(viewport,5.5);
 	Check(text("admin-section-console","display") == "block" && text("admin-console-1","text") == "map: mp/q4dm1","the console shows them");
 	Check(runtime.RunEvent("admin_command_entered",5.6,effects,error) && asked("mpAdminConsole"),"Enter runs the command");
+	Check(runtime.RunEvent("onMenuButton",5.61,effects,error) && asked("mpClose"),"away from the Server section Menu closes the card");
+	Check(runtime.SetState({{"prompt.glyphs",2.0}},error,5.62),"a PlayStation controller");
+	runtime.Frame(viewport,5.65);
+	const auto adminStrip = bounds("admin-strip"), adminTriggers = bounds("admin-triggers"), console = bounds("admin-tab-console");
+	Check(text("admin-triggers-lt-playstation","display") == "block" && adminTriggers.x+adminTriggers.width <= adminStrip.x+adminStrip.width+.5f &&
+		console.x+console.width <= adminTriggers.x,"the Admin strip ends with the PlayStation triggers");
+	Check(runtime.SetState({{"prompt.glyphs",0.0}},error,5.66),"the keyboard again");
 	// The triggers step the sections, wrapping.
 	Check(runtime.RunEvent("onSectionNext",5.7,effects,error) && std::get<double>(runtime.GetState().at("card.admin_section")) == 0,
 		"the next trigger wraps to Players");
@@ -886,6 +917,22 @@ static void CheckMatch(ScreenHost& host, const char* path) {
 	Check(text("match-waiting","display") == "block" && text("match-status-live","display") == "none","with no view the page waits");
 	Check(runtime.FocusedControl() == "match-tab-status" && text("match-section-status","display") == "block" &&
 		text("match-section-teams","display") == "none","the page opens on its Status section");
+	// The triggers' glyphs end the strip, for a controller only (section 13.5).
+	for (const char* family : {"xbox","playstation","nintendo","steamdeck","generic"})
+		Check(text(std::string("match-triggers-lt-")+family,"display") == "none" &&
+			text(std::string("match-triggers-rt-")+family,"display") == "none","no trigger glyphs for the keyboard");
+	Check(runtime.SetState({{"prompt.glyphs",1.0}},error,1.45),"an Xbox controller");
+	runtime.Frame(viewport,1.5);
+	Check(text("match-triggers-lt-xbox","display") == "block" && text("match-triggers-rt-xbox","display") == "block" &&
+		text("match-triggers-lt-playstation","display") == "none","the Xbox triggers");
+	const auto strip = bounds("match-strip"), triggers = bounds("match-triggers"), last = bounds("match-tab-evidence");
+	Check(triggers.x+triggers.width <= strip.x+strip.width+.5f && last.x+last.width <= triggers.x,
+		"the glyphs end the strip, after its last section");
+	Check(runtime.SetState({{"prompt.glyphs",5.0}},error,1.55),"a generic controller");
+	runtime.Frame(viewport,1.6);
+	Check(text("match-triggers-rt-generic","display") == "block" && text("match-triggers-rt-xbox","display") == "none","generic triggers");
+	Check(runtime.SetState({{"prompt.glyphs",0.0}},error,1.65),"the keyboard again");
+	runtime.Frame(viewport,1.7);
 	// A warm-up a referee steers: Set ready and Abort unavailable, the rest not.
 	StateValues page = {{"mp.match.available",true},{"mp.match.phase",std::string("Warm-up | Round 1")},
 		{"mp.match.status0",std::string("Live | Round inactive")},{"mp.match.status1",std::string("Running | No pause")},
@@ -1871,7 +1918,8 @@ static void CheckLoadPage(ScreenHost& host, const char* path, bool strogg = fals
 	};
 	// Three saves, newest first, the second selected.
 	StateValues values{{"load.count",3.0},{"load.first",0.0},{"load.selected",1.0},{"load.shot",std::string("savegames/bunker_door")},
-		{"load.date",std::string("10/05/2026")},{"load.time",std::string("06:40pm")},{"load.error",std::string()}};
+		{"load.date",std::string("10/05/2026")},{"load.time",std::string("06:40pm")},{"load.error",std::string()},
+		{"load.skill",std::string("Lieutenant")},{"load.played",std::string("2:13:05 played")}};
 	const char* names[] = {"Medic","Bunker door","Trench entry"};
 	for (int row = 0; row < 3; ++row) {
 		values["load.row"+std::to_string(row)+".name"] = std::string(names[row]);
@@ -1899,6 +1947,22 @@ static void CheckLoadPage(ScreenHost& host, const char* path, bool strogg = fals
 	Check(text("row-1-selected","display") == "block" && text("row-0-selected","display") == "none","the selected save is lit");
 	Check(text("row-0-name","text") == "Medic" && text("row-2-location","text") == "Air Defense Trenches","each row names its save and its level");
 	Check(text("load-date","text") == "10/05/2026" && text("load-time","text") == "06:40pm","the date and time stand under the picture");
+	// The date and time share the line under the picture; the difficulty and
+	// the run's play time follow on the Demos page's detail lines, clear of
+	// LOAD GAME's band (13 u into its plate).
+	const auto date = bounds("load-date"), time = bounds("load-time"), skill = bounds("load-skill"), played = bounds("load-played");
+	Check(Near(date.x,x0+37*u) && Near(date.y,215*u) && Near(time.y,date.y) && time.x >= date.x+date.width,
+		"the time follows the date on its line");
+	Check(Near(skill.x,date.x) && Near(skill.y,230*u) && Near(played.x,date.x) && Near(played.y,245*u) &&
+		played.y+played.height <= load.y+13*u,"the difficulty and play time stand under them, clear of LOAD GAME's band");
+	Check(text("load-skill","text") == "Lieutenant" && text("load-played","text") == "2:13:05 played","the save's difficulty and play time show");
+	// The Menu button closes the menus and resumes play during a game; at
+	// the title it goes back (section 13.5).
+	Check(runtime.RunEvent("onMenuButton",1.01,effects,error) && effects.actions.size() == 1 && effects.actions[0].action == "back",
+		"the Menu button goes back at the title");
+	Check(runtime.SetState({{"load.ingame",true}},error,1.02) && runtime.RunEvent("onMenuButton",1.03,effects,error) &&
+		effects.actions.size() == 1 && effects.actions[0].action == "menuResume","in game the Menu button resumes play");
+	Check(runtime.SetState({{"load.ingame",false}},error,1.04),"back at the title");
 	Check(text("load-error","display") == "none" && text("load-empty","display") == "none","no failure and no empty state");
 	Check(text("page-newer","display") == "none" && text("page-older","display") == "none","one page holds three saves");
 	Check(std::find(host.materials.begin(),host.materials.end(),"savegames/bunker_door") != host.materials.end(),"the selected save's picture shows");
@@ -1912,6 +1976,22 @@ static void CheckLoadPage(ScreenHost& host, const char* path, bool strogg = fals
 	runtime.MenuAction(MenuInput::Down,true,2.3); runtime.MenuAction(MenuInput::Down,false,2.31);
 	runtime.Frame(viewport,2.32);
 	Check(runtime.FocusedControl() == "row-1","Down moves to the next save");
+	// The prompt bar names what Accept does (section 13.4): LOAD on the
+	// chosen save and on LOAD GAME, SELECT on another save, DELETE on DELETE
+	// GAME.
+	const std::string select = "#str_231042";
+	Check(runtime.AcceptPrompt(select,2.33) == "#str_231520","Accept loads the chosen save");
+	Check(runtime.FocusControl("row-0",2.34) && runtime.AcceptPrompt(select,2.34) == select,"Accept selects another save");
+	Check(runtime.FocusControl("load_go",2.35) && runtime.AcceptPrompt(select,2.35) == "#str_231520" &&
+		runtime.FocusControl("load_delete",2.36) && runtime.AcceptPrompt(select,2.36) == "#str_231521","the plates name their verbs");
+	Check(runtime.SetState({{"prompt.accept",std::string("#str_231521")}},error,2.37),"the adapter publishes DELETE");
+	runtime.Frame(viewport,2.38);
+	Check(text("prompt-231042-verb","text") == "#str_231521" && text("prompts-lead","display") == "flex","the bar shows the published verb");
+	Check(runtime.SetState({{"prompt.accept",std::string()}},error,2.39),"nothing to accept");
+	runtime.Frame(viewport,2.4);
+	Check(text("prompts-lead","display") == "none","Accept leaves the bar while nothing focused can act");
+	Check(runtime.SetState({{"prompt.accept",select}},error,2.41) && runtime.FocusControl("row-1",2.41),"back to the chosen save");
+	runtime.Frame(viewport,2.42);
 	// A row's first Accept selects its save; Accept on the selected save loads it.
 	Check(runtime.RunEvent("loadRow0",3,effects,error) && requested("select") && effects.stateChanges.count("load.pick") &&
 		std::get<double>(effects.stateChanges.at("load.pick")) == 0,"Accept on another save selects it");
@@ -1919,9 +1999,15 @@ static void CheckLoadPage(ScreenHost& host, const char* path, bool strogg = fals
 		"Accept on the selected save loads it");
 	// The plates need a selection; DELETE GAME asks first.
 	Check(runtime.CanActivateControl("load_go",3.2) && runtime.CanActivateControl("load_delete",3.2),"a selection enables the plates");
-	Check(runtime.RunEvent("deleteModalShow",3.3,effects,error) && effects.actions.empty(),"DELETE GAME asks first");
+	Check(runtime.RunEvent("deleteRequested",3.3,effects,error) && effects.actions.empty(),"DELETE GAME asks first");
 	runtime.Frame(viewport,3.6);
 	Check(text("deleteModal","display") == "block" && runtime.FocusedControl() == "deleteModal_no","the confirmation opens on NO");
+	// The Strogg page asks in the Strogg pause's family; the Marine page keeps
+	// the stock dialog.
+	Check(strogg ? text("deleteModal-title","font-family") == "r_strogg" && text("deleteModal_no-label","font-family") == "r_strogg" &&
+			document.Model().FindNode("deleteModal_no-rune") && runtime.HasEvent("deleteModalShow") :
+		text("deleteModal-title","font-family") == "marine" && !document.Model().FindNode("deleteModal_no-rune"),
+		"the confirmation takes the page's family");
 	Check(runtime.RunEvent("deleteConfirmed",3.7,effects,error) && requested("delete"),"YES deletes and closes the confirmation");
 	runtime.Frame(viewport,4.2);
 	Check(text("deleteModal","display") == "none","the confirmation has closed");
@@ -1975,6 +2061,39 @@ static void CheckLoadPage(ScreenHost& host, const char* path, bool strogg = fals
 	for (double t = 12.3; t < 15; t += 1.0/60) runtime.Frame(viewport,t);
 	runtime.Frame(viewport,15);
 	Check(runtime.Statistics().motionInputsScanned == 0,"and the page settles once more");
+	// Catalog controls work independently of the list, and a filtered empty
+	// state explains how to recover without offering an unrelated New Game.
+	Check(runtime.SetState({{"browser.filter",2.0}},error,16),"filter the catalog");
+	runtime.Frame(viewport,16.1);
+	Check(text("browser-automatic-cross","display") == "block" && text("browser-manual-cross","display") == "none" &&
+		text("browser-clear","display") == "block" && text("load_newgame","display") == "none" &&
+		text("load-empty-heading","text") == "#str_231423", "filtered empty state and clear action");
+	Check(runtime.RunEvent("onSecondary",16.2,effects,error) && requested("refresh"),"controller secondary refreshes");
+	Check(runtime.RunEvent("onTertiary",16.3,effects,error) && requested("sort"),"controller tertiary sorts");
+	for (int sort=0; sort<6; ++sort) {
+		const double t=17+sort;
+		Check(runtime.SetState({{"browser.sort",double(sort)}},error,t),"set each sort"); runtime.Frame(viewport,t+.1);
+		Check(text("browser-sort-label","text") == (sort<2 ? "#str_41557" : sort<4 ? "#str_200925" : "#str_200926"),"sort names its key");
+		const bool up=sort==1 || sort==2 || sort==4;
+		Check(text("browser-sort-up","display") == (up ? "block":"none") && text("browser-sort-down","display") == (up ? "none":"block"),"sort marker shows direction");
+	}
+	Check(runtime.SetState({{"load.first",64.0},{"load.selected",65.0},{"browser.generation",7.0},
+		{"load.count",67.0},{"load.row0.context",std::string("7:first")},{"load.context",std::string("7:selected")}},error,24),"publish paged identities");
+	runtime.Frame(viewport,24.1);
+	Check(runtime.RunEvent("loadRow0",24.2,effects,error) && requested("select") &&
+		std::get<double>(effects.actions[0].arguments.at("index"))==64 && std::get<double>(effects.actions[0].arguments.at("generation"))==7,
+		"row request freezes absolute index and catalog generation");
+	Check(runtime.RunEvent("deleteRequested",24.3,effects,error),"capture delete target"); runtime.Frame(viewport,24.6);
+	Check(runtime.SetState({{"load.selected",66.0},{"browser.generation",8.0}},error,24.7),"selection changes after confirmation opens");
+	Check(runtime.RunEvent("deleteConfirmed",24.8,effects,error) && requested("delete") &&
+		std::get<double>(effects.actions[0].arguments.at("index"))==65 && std::get<double>(effects.actions[0].arguments.at("generation"))==7,
+		"confirmation retains the save it asked about");
+	runtime.Frame(viewport,25.5);
+	Check(runtime.FocusControl("row-0",25.6),"focus save before refresh");
+	runtime.TakeActions(); runtime.MenuAction(MenuInput::Accept,true,25.7);
+	Check(runtime.SetState({{"load.row0.context",std::string("8:replacement")}},error,25.8),"refresh while held");
+	runtime.MenuAction(MenuInput::Accept,false,25.9);
+	Check(runtime.TakeActions().empty(),"refresh cancels the held row");
 }
 
 // The Save Game page: the saves under SAVE NAME and LOCATION, the name in a
@@ -2037,6 +2156,12 @@ static void CheckSavePage(ScreenHost& host, const char* path, bool strogg = fals
 	Check(text("row-1-selected","display") == "block" && text("save-name-hint","display") == "none" && filled &&
 		std::get<std::string>(filled->accepted) == "Bunker door","the selected save is lit and its name fills the field");
 	Check(runtime.CanActivateControl("save_go",3.2),"a name enables SAVE GAME");
+	// The prompt bar names Accept SAVE on SAVE GAME and on the chosen save,
+	// SELECT on another save (section 13.4).
+	const std::string select = "#str_231042";
+	Check(runtime.FocusControl("save_go",3.21) && runtime.AcceptPrompt(select,3.21) == "#str_231522" &&
+		runtime.FocusControl("row-1",3.22) && runtime.AcceptPrompt(select,3.22) == "#str_231522" &&
+		runtime.FocusControl("row-0",3.23) && runtime.AcceptPrompt(select,3.23) == select,"Accept's verb follows the focus");
 	Check(runtime.RunEvent("saveRow1",3.3,effects,error) && requested("save"),"Accept on the selected save saves under its name");
 	Check(runtime.RunEvent("saveRequested",3.4,effects,error) && requested("save"),"SAVE GAME saves under the name");
 	// A name typed but not entered: SAVE GAME returns the focus to it.
@@ -2069,6 +2194,12 @@ static void CheckSavePage(ScreenHost& host, const char* path, bool strogg = fals
 	runtime.Frame(viewport,6.3);
 	Check(text("noticeModal","display") == "block" && runtime.FocusedControl() == "noticeModal_close" && text("noticeModal-body","text") == "You cannot save over an autosave." &&
 		!document.Model().FindNode("noticeModal_yes") && !document.Model().FindNode("noticeModal_no"),"the notice says why and offers CLOSE alone");
+	// Both dialogs take the page's family: the Strogg ones ask in R_Strogg
+	// over runes on Strogg plates.
+	Check(strogg ? text("overwriteModal-title","font-family") == "r_strogg" && text("noticeModal_close-label","font-family") == "r_strogg" &&
+			document.Model().FindNode("overwriteModal_yes-rune") && document.Model().FindNode("noticeModal_close-rune") :
+		text("overwriteModal-title","font-family") == "marine" && !document.Model().FindNode("noticeModal_close-rune"),
+		"the dialogs take the page's family");
 	Check(runtime.RunEvent("noticeModalHide",6.4,effects,error),"CLOSE closes it");
 	runtime.Frame(viewport,6.9);
 	Check(text("noticeModal","display") == "none","the notice has closed");
@@ -2222,6 +2353,11 @@ static void CheckDemosPage(ScreenHost& host, const char* path) {
 	Check(runtime.RunEvent("demosRow0",3.1,effects,error) && requested("play"),"Accept on the selected demo plays it");
 	Check(runtime.CanActivateControl("demo_play",3.2) && runtime.CanActivateControl("demo_delete",3.2) &&
 		runtime.CanActivateControl("demo_refresh",3.2),"a playable, deletable selection enables the plates");
+	// Accept's verb (section 13.4): PLAY on PLAY and on a chosen demo that can
+	// play, DELETE on DELETE, SELECT on REFRESH.
+	Check(runtime.FocusControl("demo_play",3.21) && runtime.AcceptPrompt("#str_231042",3.21) == "#str_231523" &&
+		runtime.FocusControl("demo_delete",3.22) && runtime.AcceptPrompt("#str_231042",3.22) == "#str_231521" &&
+		runtime.FocusControl("demo_refresh",3.23) && runtime.AcceptPrompt("#str_231042",3.23) == "#str_231042","the plates name their verbs");
 	// A demo this build cannot play: PLAY rests disabled, Accept on it does
 	// nothing, and its status takes the error color.
 	Check(runtime.SetState({{"demos.canPlay",false},{"demos.playable",false},{"demos.canDelete",false},
@@ -3066,6 +3202,7 @@ static void CheckJoinGamePage(ScreenHost& host, const char* path) {
 		"a favorite offers REMOVE FAVORITE, and its levelshot fills the frame");
 	Check(runtime.RunEvent("serverRow1",1.25,effects,error) && effects.actions.empty() && runtime.FocusedControl() == "join_server",
 		"Accept on the chosen server moves on to JOIN SERVER");
+	Check(runtime.AcceptPrompt("#str_231042",1.26) == "#str_231033","and the prompt bar names Accept JOIN there (section 13.4)");
 	// More servers than a page: the pagers.
 	Check(runtime.SetState({{"join.count",70.0}},error,1.3),"seventy servers");
 	runtime.Frame(viewport,1.35);
@@ -3705,7 +3842,17 @@ static void CheckSubtitles(ScreenHost& host, const char* path) {
 	Check(host.errors==0,"subtitle rendering has no diagnostics");
 }
 
+#include "UiRetainedRosterChecks.inl"
+
 int main(int argc, char** argv) {
+ if (argc == 5 && std::string(argv[1]) == "--rosters") {
+     ScreenHost host;
+     CheckRosterCapacity(host,argv[2],"players","players",true);
+     CheckRosterCapacity(host,argv[3],"players","players",false);
+     CheckRosterCapacity(host,argv[4],"statistics","statistics",true);
+     CheckRosterCapacity(host,argv[4],"scoreboard","board",false);
+     std::printf("retained rosters: %d checks passed\n",checks); return 0;
+ }
  if (argc == 3 && std::string(argv[1]) == "--subtitles") {
      ScreenHost host; CheckSubtitles(host,argv[2]);
      std::printf("subtitles: %d checks passed\n",checks); return 0;
@@ -4085,6 +4232,20 @@ int main(int argc, char** argv) {
 		const auto stats = runtime.PresentedValue("level-stats","text");
 		const auto rule = runtime.PresentedValue("level-stats-rule","display");
 		Check(stats && stats->text == "0:42:10 in mission" && rule && rule->text == "block","the time in the mission shows under a rule");
+		// The newest save's age takes the next line; the rule stays while
+		// either line has text.
+		Check(runtime.SetState({{"pause_stats",std::string()},{"pause_saved",std::string("saved 4 min ago")}},error,1.61),
+			"publish only the save's age");
+		runtime.Frame(viewport,1.62);
+		const auto saved = runtime.PresentedValue("level-saved","text");
+		const auto kept = runtime.PresentedValue("level-stats-rule","display");
+		Check(saved && saved->text == "saved 4 min ago" && kept && kept->text == "block","the save's age shows under the rule");
+		Bounds statsBox, savedBox, ruleBox, firstRow;
+		Check(runtime.GetBounds("level-stats",statsBox) && runtime.GetBounds("level-saved",savedBox) &&
+			runtime.GetBounds("level-stats-rule",ruleBox) && runtime.GetBounds("level-objective-0",firstRow),"the level block's foot is laid out");
+		Check(savedBox.y >= statsBox.y+statsBox.height-.01f && statsBox.y >= ruleBox.y && firstRow.y+3*firstRow.height <= ruleBox.y,
+			"the two time lines stack under the rule, below the third objective row");
+		Check(runtime.SetState({{"pause_stats",std::string("0:42:10 in mission")}},error,1.63),"restore the time line");
 		ActionInvocation invocation;
 		Check(runtime.ResolveAction("resume",invocation,error) && std::get<std::string>(invocation.arguments.at("command")) == "resume","RESUME returns to the game");
 		// SAVE GAME's label carries from its row at 212.2 u into the title slot.
@@ -4359,6 +4520,10 @@ int main(int argc, char** argv) {
 		const auto face = runtime.PresentedValue("nav_resume-label","font-family");
 		const auto runeFace = runtime.PresentedValue("nav_resume-rune","font-family");
 		Check(face && face->text == "r_strogg" && runeFace && runeFace->text == "strogg","labels are R_Strogg over a rune copy");
+		const auto strogStats = runtime.PresentedValue("level-stats","text");
+		const auto strogSaved = runtime.PresentedValue("level-saved","text");
+		Check(strogStats && strogStats->text == "0:18:40 in mission" && strogSaved && strogSaved->text.empty(),
+			"the Strogg level block keeps the Marine block's two time lines");
 		const auto rowRunes = runtime.PresentedValue("level-objective-0-text-rune","text");
 		const auto nameRunes = runtime.PresentedValue("level-name-rune","text");
 		Check(rowRunes && rowRunes->text == "Escape the medical facility" && nameRunes && nameRunes->text == "Strogg Medical Facilities",
@@ -4473,6 +4638,58 @@ int main(int argc, char** argv) {
 		runtime.Frame(viewport,21.05);
 		const auto translating = runtime.PresentedValue("nav_resume-latin","opacity");
 		Check(translating && Near(static_cast<float>(translating->data[0]),0,.001f),"returning plays the translation again");
+		// The quit confirmation asks in the Strogg family: R_Strogg labels over
+		// rune copies on Strogg plates, arriving in runes as the contents show
+		// at modal.enter's end and translating, the title over 300 ms and the
+		// actions 45 ms apart after it.
+		const auto opacity = [&](const char* node, const char* property, int channel) {
+			const auto value = runtime.PresentedValue(node,property); return value ? static_cast<float>(value->data[channel]) : -1.f;
+		};
+		const auto family = [&](const char* node) { const auto value = runtime.PresentedValue(node,"font-family"); return value ? value->text : std::string(); };
+		Check(document.Model().FindNode("quitModal-title-rune") && document.Model().FindNode("quitModal_yes-rune") &&
+			document.Model().FindNode("exitModal_no-rune") && runtime.HasEvent("quitModalShow") && runtime.HasEvent("exitModalShow"),
+			"both confirmations carry rune copies");
+		Runtime::EventEffects modal;
+		Check(runtime.RunEvent("quitModalShow",30,modal,error),"QUIT TO MENU asks first");
+		runtime.Frame(viewport,30.1);
+		Check(Near(opacity("quitModal-title-latin","opacity",0),0,.001f) && Near(opacity("quitModal-title-rune","color",3),.8f,.001f) &&
+			Near(opacity("quitModal_no-latin","opacity",0),0,.001f),"the hidden contents wait in runes");
+		Check(family("quitModal-title") == "r_strogg" && family("quitModal-title-rune") == "strogg" && family("quitModal-body") == "r_strogg" &&
+			family("quitModal_yes-label") == "r_strogg" && family("quitModal_no-rune") == "strogg","the dialog sets R_Strogg over runes");
+		runtime.Frame(viewport,30.21);
+		const auto shownContents = runtime.PresentedValue("quitModal-contents","display");
+		Check(shownContents && shownContents->text == "block" && opacity("quitModal-title-latin","opacity",0) < .1f &&
+			opacity("quitModal-title-rune","color",3) > .7f,"the contents show at modal.enter's end, the title still in runes");
+		runtime.Frame(viewport,30.33);
+		Check(opacity("quitModal_yes-latin","opacity",0) > .02f && opacity("quitModal_yes-latin","opacity",0) < .9f &&
+			Near(opacity("quitModal_no-latin","opacity",0),0,.001f),"YES translates while NO waits its turn");
+		runtime.Frame(viewport,30.7);
+		Check(Near(opacity("quitModal-title-latin","opacity",0),1,.001f) && Near(opacity("quitModal-title-rune","color",3),0,.001f) &&
+			Near(opacity("quitModal_yes-latin","opacity",0),1,.001f) && Near(opacity("quitModal_no-latin","opacity",0),1,.001f) &&
+			Near(opacity("quitModal_no-rune","color",3),0,.001f) && Near(opacity("quitModal-body","color",3),.85f,.002f),
+			"every label has translated and the body has faded in");
+		const auto noColour = runtime.PresentedValue("quitModal_no-label","color");
+		Check(runtime.FocusedControl() == "quitModal_no" && noColour && Near(static_cast<float>(noColour->data[0]),1,.001f) &&
+			Near(static_cast<float>(noColour->data[1]),.8f,.002f) && Near(static_cast<float>(noColour->data[2]),0,.001f),
+			"the confirmation opens on NO, its label #FFCC00");
+		ActionInvocation quitInvocation;
+		Check(runtime.ResolveAction("quitToMenu",quitInvocation,error),"YES still quits to the menu");
+		Check(runtime.RunEvent("quitModalHide",31,modal,error),"NO closes the confirmation");
+		runtime.Frame(viewport,31.4);
+		const auto closedModal = runtime.PresentedValue("quitModal","display");
+		Check(closedModal && closedModal->text == "none","the confirmation has closed");
+		Check(runtime.RunEvent("quitModalShow",32,modal,error),"the confirmation opens again");
+		runtime.Frame(viewport,32.1);
+		Check(Near(opacity("quitModal-title-latin","opacity",0),0,.001f) && Near(opacity("quitModal-title-rune","color",3),.8f,.001f),
+			"reopening starts in runes again");
+		Check(runtime.RunEvent("quitModalHide",32.5,modal,error),"and closes");
+		runtime.Frame(viewport,33);
+		runtime.SetReducedMotion(true,33.1);
+		Check(runtime.RunEvent("exitModalShow",33.1,modal,error),"EXIT asks with reduced motion");
+		runtime.Frame(viewport,33.2); runtime.Frame(viewport,33.32);
+		Check(Near(opacity("exitModal-title-latin","opacity",0),1,.001f) && Near(opacity("exitModal-title-rune","color",3),0,.001f) &&
+			Near(opacity("exitModal_no-latin","opacity",0),1,.001f),"reduced motion shows the confirmation translated at once");
+		runtime.SetReducedMotion(false,33.4);
 	}
 	// Loading: progress, the continue prompt and the multiplayer server card.
 	if (runs("loading-hud")) {

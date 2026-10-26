@@ -735,6 +735,9 @@ public:
 	idList<idSoundSample*>		decodingSamples;
 	// uploads the samples whose decode has finished, or all of them, waiting
 	void						FinishSampleDecodes( bool all );
+	// frees the audio a low-memory notice may take (SoundMemoryTrim.h); idleSeconds < 0
+	// keeps the current level's samples
+	void						TrimMemory( const char* reason, int idleSeconds );
 
 	//-------------------------
 

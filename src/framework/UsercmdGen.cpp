@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "NativeInputDispatch.h"
+#include "PresentationLook.h"
 #include "Session_local.h"
 #include "../idlib/NumericString.h"
 #include "../ui/RetainedUI.h"
@@ -407,7 +408,7 @@ public:
 	void			ResetTouchMotion();
 	void			SetTouchButtons( unsigned buttons );
 #endif
-	bool			GetPresentationViewDelta( float &yawDelta, float &pitchDelta );
+	bool			GetPresentationViewAngles( float &yaw, float &pitch );
 
 private:
 	void			MakeCurrent( void );
@@ -434,6 +435,8 @@ private:
 	void			CmdButtons( void );
 
 	void			Mouse( void );
+	void			MouseProbe( void );
+	bool			PresentationLookRate( float &yawRate, float &pitchRate );
     void MouseEvent(int action,int value);
 	void			Keyboard( void );
 	void			Joystick( void );
@@ -482,6 +485,9 @@ private:
 	bool			mouseDown;
 
 	int				mouseDx, mouseDy;	// added to by mouse events
+	double			mouseProbeLastMsec;	// in_presentationViewProbe's last delivery, host ms
+	double			mouseProbeRemainder;
+	double			lastBuildMsec;		// when MakeCurrent last built a usercmd, host ms
 	idFile *		mouseAccelDebugLog;
 	float			mouseFilterYaw[MOUSE_FILTER_SAMPLES];
 	float			mouseFilterPitch[MOUSE_FILTER_SAMPLES];
@@ -518,6 +524,8 @@ private:
 	static idCVar	cl_mouseAccelPower;
 	static idCVar	cl_mouseSensCap;
 	static idCVar	in_presentationView;
+	static idCVar	in_presentationViewProbe;
+	static idCVar	in_presentationViewProbeZoom;
 };
 
 idCVar idUsercmdGenLocal::in_yawSpeed( "in_yawspeed", "140", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "yaw change speed when holding down _left or _right button" );
@@ -544,7 +552,9 @@ idCVar idUsercmdGenLocal::cl_mouseAccelDebug( "cl_mouseAccelDebug", "0", CVAR_SY
 idCVar idUsercmdGenLocal::cl_mouseAccelOffset( "cl_mouseAccelOffset", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "movement rate subtracted before mouse acceleration is applied" );
 idCVar idUsercmdGenLocal::cl_mouseAccelPower( "cl_mouseAccelPower", "2", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "mouse acceleration exponent; 2 matches QuakeLive", 1, 8 );
 idCVar idUsercmdGenLocal::cl_mouseSensCap( "cl_mouseSensCap", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "maximum accelerated mouse sensitivity; 0 disables the cap", 0, 100000 );
-idCVar idUsercmdGenLocal::in_presentationView( "in_presentationView", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "sample accumulated mouse movement on presentation frames so the view can rotate between 60 Hz usercmds; requires game-side consumption of GetPresentationViewDelta" );
+idCVar idUsercmdGenLocal::in_presentationView( "in_presentationView", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "late look: turn the drawn view with mouse, gyro, look-key and stick input on every presented frame instead of up to a 60 Hz tick later; aiming, firing and the network still use the authoritative usercmd" );
+idCVar idUsercmdGenLocal::in_presentationViewProbe( "in_presentationViewProbe", "0", CVAR_SYSTEM | CVAR_CHEAT | CVAR_FLOAT, "development probe: synthetic horizontal mouse counts per second, delivered through the ordinary mouse path for no-input latency measurements; requires cheats" );
+idCVar idUsercmdGenLocal::in_presentationViewProbeZoom( "in_presentationViewProbeZoom", "0", CVAR_SYSTEM | CVAR_CHEAT | CVAR_BOOL, "development probe: hold the zoom button, for no-input zoomed late-look measurements; requires cheats" );
 
 static idUsercmdGenLocal localUsercmdGen;
 idUsercmdGen	*usercmdGen = &localUsercmdGen;
@@ -567,6 +577,9 @@ idUsercmdGenLocal::idUsercmdGenLocal( void ) {
 	toggled_run.on = in_alwaysRun.GetBool();
 
 	mouseAccelDebugLog = NULL;
+	mouseProbeLastMsec = -1.0;
+	mouseProbeRemainder = 0.0;
+	lastBuildMsec = -1.0;
 	memset( mouseFilterYaw, 0, sizeof( mouseFilterYaw ) );
 	memset( mouseFilterPitch, 0, sizeof( mouseFilterPitch ) );
 	mouseFilterCount = 0;
@@ -1223,6 +1236,10 @@ void idUsercmdGenLocal::CmdButtons( void ) {
 	if ( ButtonState( UB_QUICKCHAT ) ? ButtonState( UB_ZOOM ) != 0 : toggled_zoom.on ) {
 		cmd.buttons |= BUTTON_ZOOM;
 	}
+	// in_presentationViewProbeZoom holds zoom the way a held button would
+	if ( in_presentationViewProbeZoom.GetBool() ) {
+		cmd.buttons |= BUTTON_ZOOM;
+	}
 
 	// check the scoreboard button
 	if ( ButtonState( UB_SHOWSCORES ) || ButtonState( UB_IMPULSE19 ) ) {
@@ -1362,6 +1379,8 @@ void idUsercmdGenLocal::MakeCurrent( void ) {
 	flags = cmd.flags;
 	impulse = cmd.impulse;
 
+	// late look measures held rates from here to the next usercmd
+	lastBuildMsec = Sys_GetClockTicks() * 1000.0 / Sys_ClockTicksPerSecond();
 }
 
 //=====================================================================
@@ -1553,6 +1572,8 @@ void idUsercmdGenLocal::Key( int keyNum, bool down ) {
 	SetButtonAction( action, down );
 }
 
+void Usercmd_ArmLatencyFlash( void );
+
 /*
 ===================
 idUsercmdGenLocal::SetButtonAction
@@ -1564,6 +1585,10 @@ the inputs currently holding the action down.
 */
 void idUsercmdGenLocal::SetButtonAction( int action, bool down ) {
 	if ( down ) {
+		// the press itself, as the event arrives, not the next usercmd build
+		if ( action == UB_ATTACK && buttonState[ action ] == 0 ) {
+			Usercmd_ArmLatencyFlash();
+		}
 		if ( action == UB_WEAPONWHEEL || action == UB_QUICKCHAT || IsWeaponSelectionImpulse( action ) ) {
 			toggled_zoom.Clear();
 		}
@@ -1673,7 +1698,37 @@ void idUsercmdGenLocal::MouseEvent(int action,int value) {
 					}
 				}
 }
+
+/*
+===================
+idUsercmdGenLocal::MouseProbe
+
+in_presentationViewProbe: a development stand-in for a hand on the mouse, so
+late look can be measured without synthesising device input. Counts accrue
+with host time and enter mouseDx exactly where device motion does, so the
+late-look sampler and the next usercmd both see them through the ordinary
+sensitivity path. They never move a GUI cursor.
+===================
+*/
+void idUsercmdGenLocal::MouseProbe( void ) {
+	const float rate = in_presentationViewProbe.GetFloat();
+	if ( rate == 0.0f ) {
+		mouseProbeLastMsec = -1.0;
+		mouseProbeRemainder = 0.0;
+		return;
+	}
+	const double now = Sys_GetClockTicks() * 1000.0 / Sys_ClockTicksPerSecond();
+	if ( mouseProbeLastMsec >= 0.0 && now > mouseProbeLastMsec ) {
+		mouseProbeRemainder += rate * ( now - mouseProbeLastMsec ) * 0.001;
+		const int counts = static_cast<int>( mouseProbeRemainder );
+		mouseProbeRemainder -= counts;
+		mouseDx += counts;
+	}
+	mouseProbeLastMsec = now;
+}
+
 void idUsercmdGenLocal::Mouse( void ) {
+	MouseProbe();
     if (NativeInput_BeginMouse()) {
         int action=0,value=0;
         while (NativeInput_NextMouse(action,value)) {
@@ -1789,6 +1844,28 @@ void idUsercmdGenLocal::RetainedInputChanged() {
 	ResetMouseFilter();
 }
 void Usercmd_RetainedInputChanged() { localUsercmdGen.RetainedInputChanged(); }
+
+/*
+===================
+Usercmd_ConsumeLatencyFlash
+
+com_latencyFlash, for click-to-photon sensors such as NVIDIA LDAT and OSLTT:
+the console's overlay pass takes the pending press and draws a white bar on
+the first frame drawn after the attack button went down, the frame whose
+late-look view already reflects input sampled that late.
+===================
+*/
+static bool usercmdLatencyFlashPending = false;
+
+bool Usercmd_ConsumeLatencyFlash( void ) {
+	const bool pending = usercmdLatencyFlashPending;
+	usercmdLatencyFlashPending = false;
+	return pending;
+}
+
+void Usercmd_ArmLatencyFlash( void ) {
+	usercmdLatencyFlashPending = true;
+}
 bool idUsercmdGenLocal::NativeKeyBlocked(int key) const noexcept {
     if(nativeSourceExhausted || nativeUnknownKeyBlocked[key])return true;
     for(const auto& source:nativeHeldSources)if(source.down && source.key==key)return true;
@@ -1870,42 +1947,148 @@ void idUsercmdGenLocal::UsercmdInterrupt( void ) {
 
 /*
 ================
-idUsercmdGenLocal::GetPresentationViewDelta
+idUsercmdGenLocal::GetPresentationViewAngles
 
-Presentation-frame view sampling groundwork. Drains pending mouse input into
-the same accumulators the next 60 Hz usercmd consumes, then reports the
-accumulated, not-yet-consumed view rotation in degrees so the presentation
-view can rotate between simulation tics. Movement is never consumed here, so
-gameplay input timing is unchanged. Smoothing/filtering is intentionally not
-applied; the authoritative usercmd path keeps that behavior.
+Late look. Drains pending mouse input into the same accumulators the next
+usercmd consumes and reports the angles that usercmd would carry if it were
+built now. Nothing is consumed and no usercmd field changes, so gameplay
+input timing is unchanged. The game compares the result with the usercmd it
+last applied and turns only the drawn view by the difference.
 ================
 */
-bool idUsercmdGenLocal::GetPresentationViewDelta( float &yawDelta, float &pitchDelta ) {
-	yawDelta = 0.0f;
-	pitchDelta = 0.0f;
+bool idUsercmdGenLocal::GetPresentationViewAngles( float &yaw, float &pitch ) {
+	yaw = 0.0f;
+	pitch = 0.0f;
 
 	if ( !in_presentationView.GetBool() || !initialized || Inhibited() ) {
 		return false;
 	}
+#ifdef __ANDROID__
+	// touch look arrives as a per-usercmd delta with no continuous sample
+	return false;
+#else
+	// Smoothed or filtered views blend several usercmds of motion; showing the
+	// raw motion ahead of them would turn the view one way and then settle it
+	// another. Those settings keep the authoritative view.
+	if ( m_smooth.GetInteger() > 1 || GetMouseFilterSamples() > 0 ) {
+		return false;
+	}
+	// recorded commands drive the game, not this generator
+	if ( sessLocal.cmdDemoFile != NULL || sessLocal.readDemo != NULL ) {
+		return false;
+	}
+	// a tracked headset owns the view angles
+	if ( vrSystem != NULL && vrSystem->IsActive() ) {
+		return false;
+	}
+
+	float yawRate = 0.0f;
+	float pitchRate = 0.0f;
 
 	// the async tic thread runs the same event drain under this lock
 	Sys_EnterCriticalSection();
 	Mouse();
 	float mx = static_cast<float>( mouseDx );
 	float my = static_cast<float>( mouseDy );
+	const idVec3 builtAngles = viewangles;
+	const double builtMsec = lastBuildMsec;
+	// a radial selector turns look input into a cursor, not a view
+	const bool radial = ( cmd.buttons & ( BUTTON_WEAPONWHEEL | BUTTON_QUICKCHAT ) ) != 0 ||
+		ButtonState( UB_WEAPONWHEEL ) || ButtonState( UB_QUICKCHAT );
+	const bool strafe = ButtonState( UB_STRAFE ) != 0;
+	const bool mouseLook = ( ButtonState( UB_MLOOK ) ^ in_freeLook.GetInteger() ) != 0;
+	const bool haveRate = !radial && PresentationLookRate( yawRate, pitchRate );
 	Sys_LeaveCriticalSection();
 
-	if ( mx == 0.0f && my == 0.0f ) {
-		return true;
+	if ( radial || builtMsec < 0.0 ) {
+		return false;
 	}
 
-	float strafeMx = 0.0f;
-	float strafeMy = 0.0f;
-	const float mouseAxisScale = NormalizeMouseDeltasForCpi( mx, my, strafeMx, strafeMy );
-	const float mouseSensitivity = CalculateMouseSensitivity( mx, my, NULL, NULL ) * GetZoomLookSensitivityScale();
-	yawDelta = -m_yaw.GetFloat() * mouseAxisScale * mx * mouseSensitivity;
-	pitchDelta = m_pitch.GetFloat() * mouseAxisScale * my * mouseSensitivity;
+	yaw = builtAngles[YAW];
+	pitch = builtAngles[PITCH];
+
+	// Mouse and gyro motion not yet in a usercmd, scaled exactly as MouseMove
+	// will scale it. m_smooth 1 makes its history average the raw delta.
+	const int maxMouseDelta = m_maxMouseDelta.GetInteger();
+	if ( maxMouseDelta > 0 && ( idMath::Fabs( mx ) > maxMouseDelta || idMath::Fabs( my ) > maxMouseDelta ) ) {
+		mx = my = 0.0f;
+	}
+	if ( mx != 0.0f || my != 0.0f ) {
+		float strafeMx = 0.0f;
+		float strafeMy = 0.0f;
+		const float mouseAxisScale = NormalizeMouseDeltasForCpi( mx, my, strafeMx, strafeMy );
+		const float mouseSensitivity = CalculateMouseSensitivity( mx, my, NULL, NULL ) * GetZoomLookSensitivityScale();
+		if ( !strafe ) {
+			yaw -= m_yaw.GetFloat() * mouseAxisScale * mx * mouseSensitivity;
+			if ( mouseLook ) {
+				pitch += m_pitch.GetFloat() * mouseAxisScale * my * mouseSensitivity;
+			}
+		}
+	}
+
+	// Look keys and stick deflection are rates the next usercmd integrates over
+	// a whole tick; show the share of that tick that has already elapsed.
+	if ( haveRate ) {
+		const double nowMsec = Sys_GetClockTicks() * 1000.0 / Sys_ClockTicksPerSecond();
+		const double elapsedSeconds = ( nowMsec - builtMsec ) * 0.001;
+		const double tickSeconds = common->GetUserCmdSec();
+		yaw += openq4::PresentationRateShare( yawRate, elapsedSeconds, tickSeconds );
+		pitch += openq4::PresentationRateShare( pitchRate, elapsedSeconds, tickSeconds );
+	}
 	return true;
+#endif
+}
+
+/*
+================
+idUsercmdGenLocal::PresentationLookRate
+
+Degrees per second the next usercmd would turn by from held look keys
+(AdjustAngles) and stick deflection (JoystickMove's look branch outside the
+radial selectors). It reads current key and axis state without consuming it.
+Called with the async lock held.
+================
+*/
+bool idUsercmdGenLocal::PresentationLookRate( float &yawRate, float &pitchRate ) {
+	yawRate = 0.0f;
+	pitchRate = 0.0f;
+	const float runScale = IsRunButtonActive() ? in_angleSpeedKey.GetFloat() : 1.0f;
+
+	if ( !ButtonState( UB_STRAFE ) ) {
+		yawRate -= runScale * in_yawSpeed.GetFloat() * ButtonState( UB_RIGHT );
+		yawRate += runScale * in_yawSpeed.GetFloat() * ButtonState( UB_LEFT );
+	}
+	pitchRate -= runScale * in_pitchSpeed.GetFloat() * ButtonState( UB_LOOKUP );
+	pitchRate += runScale * in_pitchSpeed.GetFloat() * ButtonState( UB_LOOKDOWN );
+
+	int axes[MAX_JOYSTICK_AXIS];
+	for ( int axis = 0; axis < MAX_JOYSTICK_AXIS; ++axis ) {
+		int value = 0;
+		if ( !Sys_GetJoystickAxisState( axis, value ) || ( axis != AXIS_ROLL && retainedAxisBlocked[axis] ) ) {
+			value = 0;
+		}
+		axes[axis] = idMath::ClampChar( value );
+	}
+	const bool hasDedicatedLookAxis = axes[AXIS_ROLL] != 0;
+	const float lookAxisX = ( hasDedicatedLookAxis ? axes[AXIS_SIDE] : axes[AXIS_YAW] ) * JOYSTICK_AXIS_LOOK_SCALE;
+	float lookAxisY = ( hasDedicatedLookAxis ? axes[AXIS_FORWARD] : -axes[AXIS_PITCH] ) * JOYSTICK_AXIS_LOOK_SCALE;
+	if ( !hasDedicatedLookAxis && cvarSystem->GetCVarBool( "in_joystickInvertLook" ) ) {
+		lookAxisY = -lookAxisY;
+	}
+	if ( hasDedicatedLookAxis && ScoreboardScrolls() ) {
+		// the right stick scrolls the held scoreboard instead of pitching
+		lookAxisY = 0.0f;
+	}
+	float joystickLookSensitivity = cvarSystem->GetCVarFloat( "in_joystickLookSensitivity" );
+	if ( joystickLookSensitivity <= 0.0f ) {
+		joystickLookSensitivity = 1.0f;
+	}
+	joystickLookSensitivity = idMath::ClampFloat( 0.1f, 4.0f, joystickLookSensitivity ) * GetZoomLookSensitivityScale();
+	if ( hasDedicatedLookAxis || !ButtonState( UB_STRAFE ) ) {
+		yawRate -= runScale * in_yawSpeed.GetFloat() * joystickLookSensitivity * lookAxisX;
+		pitchRate += runScale * in_pitchSpeed.GetFloat() * joystickLookSensitivity * lookAxisY;
+	}
+	return yawRate != 0.0f || pitchRate != 0.0f;
 }
 
 /*

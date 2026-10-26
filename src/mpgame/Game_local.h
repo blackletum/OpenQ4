@@ -2,6 +2,7 @@
 #define	__GAME_LOCAL_H__
 
 #include "../framework/PresentationClock.h"
+#include "../framework/PresentationLook.h"
 
 // RAVEN BEGIN
 // jsinger: attempt to eliminate cross-DLL allocation issues
@@ -551,6 +552,7 @@ public:
 	idLinkList<idEntity>	spawnedEntities;		// all spawned entities
 	idLinkList<idEntity>	activeEntities;			// all thinking entities (idEntity::thinkFlags != 0)
 	idLinkList<idEntity>	presentationEntities;	// entities re-anchored on presentation frames (render-only)
+	idLinkList<rvClientEntity>	presentationClientEntities;	// unbound client debris drawn between tics (render-only)
 	int						numEntitiesToDeactivate;// number of entities that became inactive in current frame
 	bool					sortPushers;			// true if active lists needs to be reordered to place pushers at the front
 	bool					sortTeamMasters;		// true if active lists needs to be reordered to place physics team masters before their slaves
@@ -613,6 +615,10 @@ public:
 	int						mHz;					// hertz
 	mutable openq4::PresentationClock presentationClock;
 	float					presentationClockSample;	// one high-resolution phase for every draw consumer
+	int						presentationGameplayCount;	// gameplay entry points reached inside a prepared draw (diagnostic)
+	int						presentationRendererDepth;	// inside the renderer's scene work for a draw
+	int						presentationRendererEffectCount;	// effects BSE started there (diagnostic)
+	double					presentationPrepStartTicks;	// when this draw's preparation began (diagnostic)
 	float					presentationSceneFraction;	// frozen camera/root fraction for the active Draw
 	int					presentationAnimationTime;	// previous-to-current skeletal sample held only during Draw
 	int						autoExecAfterMapLoadStartTime;
@@ -640,6 +646,11 @@ public:
 	idLinkList<idEntity>	snapshotEntities;		// entities from the last snapshot
 	int						realClientTime;			// real client time
 	bool					isNewFrame;				// true if this is a new game frame, not a rerun due to prediction
+	// openQ4: replay passes run since the last snapshot, and the count for the chain the last
+	// snapshot closed.  net_mpPredictDebug sets a remote's re-simulated tics against it to report
+	// how old that remote is on this screen - the pose age lag compensation rewinds by.
+	int						clientReplayTics;
+	int						lastChainReplayTics;
 	int						entityDefBits;			// bits required to store an entity def number
 	int						clientAckSequence;		// holds frame number updated through GAME_RELIABLE_MESSAGE_EVENT_ACK server->client messages
 
@@ -880,6 +891,9 @@ public:
 	void					RecordPresentationClockSample( void );
 	int						GetPresentationTimeMsec( void ) const;
 	int						GetPresentationAnimationTimeMsec( void ) const { return presentationAnimationTime; }
+	bool					IsPresentationSceneActive( void ) const { return presentationClockSample >= 0.0f; }
+	void					NotePresentationGameplay( const char *what );
+	void					NotePresentationEffect( void );
 	void					EndPresentationSceneForRender( void );
 	float					GetPresentationInterpolationFraction( void ) const;
 	idMat3					InterpolatePresentationAxis( const idMat3 &from, const idMat3 &to, float fraction ) const;
@@ -1401,6 +1415,18 @@ public:
 		idVec3				rewoundOrigin;
 	};
 
+	// How old the remote players on one client's screen are, and therefore how far a shot
+	// from it is rewound.  Every term is bounded on the server: lead is the client's
+	// reported prediction lead, ceiling the round trip the server measured plus slack,
+	// extrapolation the part of the lead the client advertises it draws ahead for itself.
+	struct mpLagCompEstimate_t {
+		int					leadMS;				// reported prediction lead, sanitized
+		int					measuredMS;			// server-measured round trip, 0 if unknown
+		int					advertisedTics;		// net_mpRemoteExtrapolation from user info
+		int					extrapolationMS;	// min( lead, advertised tics )
+		int					poseAgeMS;			// min( lead + one frame, ceiling ) - extrapolation
+	};
+
 	mpLagCompFrame_t		mpLagCompHistory[MAX_CLIENTS][MP_LAGCOMP_HISTORY];
 	int						mpLagCompHistoryHead;
 
@@ -1408,11 +1434,14 @@ public:
 	void					InvalidateMPLagCompensationHistory( int clientNum );
 	void					CaptureMPLagCompensationFrame( void );
 	bool					SelectMPLagCompensationFrame( int clientNum, int targetTime, mpLagCompFrame_t &outFrame ) const;
-	bool					ComputeMPLagCompensationRewind( const idPlayer *shooter, int &rewindMS ) const;
+	void					EstimateMPLagCompensation( int clientNum, mpLagCompEstimate_t &estimate ) const;
+	bool					ComputeMPLagCompensationRewind( const idPlayer *shooter, int &rewindMS, mpLagCompEstimate_t *estimate = NULL ) const;
 	bool					BeginMPLagCompensation( const idPlayer *shooter, mpLagCompRestore_t restoreState[MAX_CLIENTS], int &restoreCount );
 	void					EndMPLagCompensation( mpLagCompRestore_t restoreState[MAX_CLIENTS], int restoreCount );
 	bool					ResolveMPLagCompensationHit( const idEntity *hit, mpLagCompRestore_t restoreState[MAX_CLIENTS], int &restoreCount, trace_t &tr, idVec3 *extraPoint );
-	int						RemoteExtrapolationMS( void ) const;
+	int						AdvertisedRemoteExtrapolationTics( int clientNum ) const;
+	int						RemoteExtrapolationMS( int clientNum, int leadMS ) const;
+	void					UpdateAdvertisedRemoteExtrapolation( void );
 
 	void					LoadBanList();
 	void					SaveBanList();
@@ -1447,6 +1476,14 @@ private:
 //============================================================================
 
 extern idGameLocal			gameLocal;
+
+// The renderer's own scene work inside a prepared draw (RenderScene), where BSE
+// services its effects; see idGameLocal::NotePresentationEffect.
+class idPresentationRendererScope {
+public:
+							idPresentationRendererScope( void ) { gameLocal.presentationRendererDepth++; }
+							~idPresentationRendererScope( void ) { gameLocal.presentationRendererDepth--; }
+};
 // RAVEN BEGIN
 // jsinger: animationLib changed to a pointer to prevent it from allocating memory
 //          before the unified allocator is initialized

@@ -225,13 +225,14 @@ bool Interaction::SetReadbacks(const std::map<std::string,ControlReadback>& read
 	error.clear();
 	size_t expected = 0;
 	for (const auto& [id,item] : items) {
-		if (item.control.role == ControlRole::Button || item.control.role == ControlRole::Scrollbar) continue;
+		if ((item.control.role == ControlRole::Button && !item.control.context) || item.control.role == ControlRole::Scrollbar) continue;
 		++expected;
 		const auto found = readbacks.find(id);
 		if (found == readbacks.end()) { error = "Missing control readback"; return false; }
 		const auto& value = found->second;
 		if (item.control.role == ControlRole::Number && !ValidNumber(item.control)) { error = "Invalid number control policy"; return false; }
-		if (!ValidStateValue(value.value) || !item.control.value || value.value.index() != item.control.value->type ||
+		const auto& expression = item.control.role == ControlRole::Button ? item.control.context : item.control.value;
+		if (!ValidStateValue(value.value) || !expression || value.value.index() != expression->type ||
 			(item.control.role != ControlRole::Toggle && value.mixed)) { error = "Invalid control readback type"; return false; }
 		if (item.control.role == ControlRole::Choice) {
 			const auto options = std::get<ChoiceSpec>(item.control.widget).options.size();
@@ -249,9 +250,9 @@ bool Interaction::SetReadbacks(const std::map<std::string,ControlReadback>& read
 	std::map<std::string,std::uint64_t> revisions;
 	for (const auto& [id,value] : readbacks) {
 		const auto& item = items.at(id);
-		if (item.number && (!item.readback || item.readback->value != value.value)) {
+		if ((item.number || item.control.context) && (!item.readback || item.readback->value != value.value)) {
 			const auto revision = ProposalToken();
-			if (!revision) { error = "Number draft identity exhausted"; return false; }
+			if (!revision) { error = "Control readback identity exhausted"; return false; }
 			revisions.emplace(id,revision);
 		}
 	}
@@ -264,6 +265,10 @@ bool Interaction::SetReadbacks(const std::map<std::string,ControlReadback>& read
 			item.readback->optionCount != value.optionCount)) CancelGesture();
         if(popup==id && HasChoiceBar(item.control) && (changed || item.readback->enabledOptions!=value.enabledOptions))CancelGesture();
 		item.readback = value;
+		if (changed && item.control.context) {
+			item.contextToken = revisions.at(id);
+			if (armed == id) { armed.clear(); armedOption.clear(); popupAcceptArm = false; }
+		}
 		if (changed && item.number) item.number->draftRevision = revisions.at(id);
 		if (changed && item.number && item.number->native) DropNumberNative(id,item);
 		if (changed && item.number && (!item.pending || *item.pending != value.value)) {
@@ -452,6 +457,9 @@ bool Interaction::Propose(const std::string& id, const StateValue& value) {
 	if (actions.size() >= 256) { overflowed = true; return false; }
 	const auto token = ProposalToken(); if (!token) { overflowed = true; return false; }
 	ControlAction action{ControlAction::Kind::Activate,document,id,item.control.action,item.control.event,value,token};
+	action.proposalBaseline = EditingValue(item);
+	action.proposalBaselineMixed = !item.pending && item.readback->mixed;
+	if (!item.pending) item.proposalStart = token;
 	Queue(std::move(action)); item.pending = value; item.proposalToken = token; item.rejected.reset();
 	if (item.number) item.number->draftRevision = token;
 	return true;
@@ -1215,7 +1223,8 @@ bool Interaction::Within(const std::string& id, const std::string& root) const {
 bool Interaction::Eligible(const std::string& id) const {
 	const auto found = items.find(id);
 	return !modalBlocked && found != items.end() && found->second.control.enabled && found->second.bounds.visible && Within(id,Modal()) &&
-		(found->second.control.role == ControlRole::Button ||
+		(found->second.control.role == ControlRole::Button ? (!found->second.control.context ||
+			(found->second.readback && found->second.contextToken)) :
          (found->second.control.role == ControlRole::Scrollbar ? found->second.scroll && found->second.scroll->available &&
           found->second.scroll->geometry.usable && !found->second.scrollRestore : found->second.readback.has_value()));
 }
@@ -1477,10 +1486,22 @@ bool Interaction::CanDispatchControlAction(const ControlAction& action) const {
 	const auto& item = items.at(action.node); const auto& control = item.control;
     if(control.role==ControlRole::Scrollbar) return false;
 	if (action.action != control.action || action.event != control.event) return false;
+	if (control.context && (!action.contextToken || action.contextToken != item.contextToken)) return false;
 	if (control.role == ControlRole::Number)
 		return focused == action.node && item.number && !item.number->detached && !item.number->conflict && item.pending && action.proposal == item.pending &&
 			action.proposalToken != 0 && action.proposalToken == item.proposalToken &&
 			action.editSession == item.number->identity.session && action.editRevision == item.number->identity.revision;
+	if (control.role != ControlRole::Button) {
+		if (!item.pending || !action.proposal || !action.proposalToken || action.proposalToken < item.proposalStart ||
+			action.proposalToken > item.proposalToken || !action.proposalBaseline || !item.readback ||
+			*action.proposalBaseline != item.readback->value || action.proposalBaselineMixed != item.readback->mixed) return false;
+		if (control.role == ControlRole::Choice) {
+			const auto& options = std::get<ChoiceSpec>(control.widget).options;
+			for (size_t i = 0; i < options.size(); ++i)
+				if (options[i].value == *action.proposal && OptionEligible(item,i)) return true;
+			return false;
+		}
+	}
 	return true;
 }
 bool Interaction::PushModal(const std::string& root) {
@@ -1564,6 +1585,10 @@ void Interaction::Refresh() {
 std::optional<ControlState> Interaction::State(const std::string& id) const { const auto found = items.find(id); return found == items.end() ? std::nullopt : std::optional(found->second.state); }
 void Interaction::Queue(ControlAction action) {
 	action.modalToken = modalToken;
+	if (action.kind == ControlAction::Kind::Activate) {
+		const auto found = items.find(action.node);
+		if (found != items.end() && found->second.control.context) action.contextToken = found->second.contextToken;
+	}
 	if (!modalToken || actions.size() >= 256) overflowed = true;
 	else actions.push_back(std::move(action));
 }

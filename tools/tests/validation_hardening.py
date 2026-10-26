@@ -652,6 +652,7 @@ def validate_validation_wiring() -> None:
         # WSL peer or OpenXR runtime on retail assets; the workflows py_compile
         # them and their production-extraction siblings are wired.
         "arena_sound_runtime.py",
+        "presentation_look_runtime.py",
         "mp_wsl_peer_smoke.py",
         "openxr_lifecycle_runtime.py",
         "savegame_restore_cleanup_runtime.py",
@@ -662,8 +663,11 @@ def validate_validation_wiring() -> None:
         "audio_asset_inventory.py",
         "audio_center.py",
         "audio_dialogue.py",
+        "audio_dialogue_coverage.py",
         "audio_memory_runtime.py",
+        "audio_output_recovery_runtime.py",
         "audio_mod_reverb.py",
+        "audio_scene_audit.py",
         "audio_streaming.py",
         "audio_subtitles_runtime.py",
         "voice_chat_runtime.py",

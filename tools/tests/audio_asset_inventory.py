@@ -54,6 +54,7 @@ def inventory(assets, measure_sizes=False):
             entries[path.relative_to(assets).as_posix().lower()] = (None, path)
             loose += 1
     shaders, lips, texts, hashes = {}, {}, set(), {}
+    locale_keys = {}  # language -> keys its installed tables define
     for name, (pak, original) in entries.items():
         if not name.endswith(('.sndshd', '.lipsync', '.lang')):
             continue
@@ -65,7 +66,11 @@ def inventory(assets, measure_sizes=False):
         hashes[name] = hashlib.sha256(data).hexdigest()
         text = data.decode('utf-8', errors='replace')
         if name.endswith('.lang'):
-            texts.update(re.findall(r'"(#str_\d+)"', text))
+            keys = set(re.findall(r'"(#str_\d+)"', text))
+            texts.update(keys)
+            # strings/<language>_<part>.lang, or strings/<language>.lang
+            language = Path(name).stem.split('_')[0]
+            locale_keys.setdefault(language, set()).update(keys)
             continue
         for decl, body in declarations(text):
             if name.endswith('.sndshd'):
@@ -87,6 +92,14 @@ def inventory(assets, measure_sizes=False):
                        'speech_with_text': len(mapped), 'speech_without_text': len(voice) - len(mapped),
                        'unmapped_with_description': sum(voice[n]['has_description'] for n in set(voice) - mapped)},
             'sample_directories': dict(Counter('/'.join(n.split('/')[:2]) for n in entries if n.endswith(('.ogg', '.wav')))),
+            # Which installed language tables carry each mapped line's key. A locale
+            # without its own entry shows the English text (the normal dictionary
+            # fallback); one with no installed table at all is not counted as covered.
+            # Literal declaration text is the same in every language.
+            'locale_coverage': {language: {'keys': len(keys), 'speech_with_text': sum(
+                1 for n in mapped if lips[n]['literal_text'] or lips[n]['text_key'] in keys)}
+                for language, keys in sorted(locale_keys.items())},
+            'literal_text_lines': sum(1 for n in mapped if lips[n]['literal_text']),
             'speech_without_text': sorted(set(voice) - mapped), 'speech': voice, 'lip_sync': lips}
     if measure_sizes:
         sizes, unknown = [], []

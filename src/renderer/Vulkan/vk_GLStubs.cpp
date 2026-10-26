@@ -319,6 +319,16 @@ void glRasterPos4iv(const GLint *v){};
 void glRasterPos4s(GLshort x, GLshort y, GLshort z, GLshort w){};
 void glRasterPos4sv(const GLshort *v){};
 void glReadBuffer(GLenum mode){};
+// glReadPixels returns nothing, so a failure is latched here for the capture
+// code (R_ReadTiledPixels) to collect instead of saving what the buffer held.
+static bool vkReadPixelsFailed = false;
+
+bool VK_GLStubs_ConsumeReadPixelsFailure( void ) {
+	const bool failed = vkReadPixelsFailed;
+	vkReadPixelsFailed = false;
+	return failed;
+}
+
 void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid *pixels){
 	// GL_RGBA is what R_ReadTiledPixels issues since the ES screenshot fix, and
 	// is the only format OpenGL ES guarantees for the default framebuffer.
@@ -326,10 +336,12 @@ void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format
 	if ( ( format == GL_RGB || format == GL_RGBA ) && type == GL_UNSIGNED_BYTE ) {
 		if ( !VK_GuiExecutor_ReadPixels( x, y, width, height, pixels,
 				format == GL_RGBA ? 4 : 3 ) ) {
+			vkReadPixelsFailed = true;
 			common->Warning( "Vulkan glReadPixels failed for %d x %d capture", width, height );
 		}
 		return;
 	}
+	vkReadPixelsFailed = true;
 	common->Warning( "Vulkan glReadPixels does not support format 0x%x/type 0x%x", format, type );
 };
 void glRectd(GLdouble x1, GLdouble y1, GLdouble x2, GLdouble y2){};

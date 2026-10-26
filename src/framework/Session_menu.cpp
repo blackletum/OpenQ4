@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 
 
 
+#include <algorithm>
+#include <vector>
+
 #include "NativeInputDispatch.h"
 #include "Session_local.h"
 #include "NativeInputPublications.h"
@@ -69,7 +72,7 @@ extern glconfig_t glConfig;
 idCVar	idSessionLocal::gui_configServerRate( "gui_configServerRate", "0", CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "" );
 idCVar gui_set_sys_scroll( "gui_set_sys_scroll", "0", CVAR_GUI | CVAR_INTEGER, "display menu scroll step", 0, 28 );
 idCVar gui_set_audio_scroll( "gui_set_audio_scroll", "0", CVAR_GUI | CVAR_INTEGER, "audio menu scroll step", 0, 6 );
-idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 73 );
+idCVar gui_set_game_scroll( "gui_set_game_scroll", "0", CVAR_GUI | CVAR_INTEGER, "game menu scroll step", 0, 75 );
 // The opt-ins are unarchived, so each lasts until the player quits, and
 // CVAR_NOCHEAT, because the engine counts any other unarchived CVar as a
 // cheat: joining or hosting a server without cheats resets it to its default,
@@ -127,7 +130,7 @@ static const char *const RETAINED_MP_ESCAPE_GUI = "guis/menu/mp_escape.q4ui";
 static const char *const RETAINED_MP_WELCOME_GUI = "guis/menu/mp_welcome.q4ui";
 // The version of the game's answer to retainedMultiplayerCover that the card
 // relies on; a game module without it keeps its stock menu.
-static const int RETAINED_MP_PROTOCOL = 1;
+static const int RETAINED_MP_PROTOCOL = 2;
 // Each card's pages that still hand off to their stock pages: none now. While
 // any remain, the gate leaves that card's stock menu in place and only
 // ui_retainedMultiplayer opts into it. ui_retained_gate.py keeps each list
@@ -2206,6 +2209,11 @@ typedef struct sessionMenuSaveDescription_s {
 	bool	noOverwrite;
 } sessionMenuSaveDescription_t;
 
+typedef struct sessionMenuSaveDetails_s {
+	int		skill;			// g_skill, -1 unknown
+	int		playSeconds;	// the run's play time, -1 unknown
+} sessionMenuSaveDetails_t;
+
 static idRectangle Session_MenuFitSaveGamePreviewRect( int imageWidth, int imageHeight ) {
 	float imageAspect = SESSION_MENU_GUI_ASPECT;
 	if ( imageWidth > 0 && imageHeight > 0 ) {
@@ -2374,7 +2382,11 @@ static bool Session_MenuReadSaveGameCString( idFile *file, idStr &string, int ma
 	return false;
 }
 
-static bool Session_MenuSkipSaveGameDict( idFile *file, const char *fieldName, const char *savePath ) {
+// A header dictionary, kept in `dict` when there is one.
+static bool Session_MenuReadSaveGameDict( idFile *file, idDict *dict, const char *fieldName, const char *savePath ) {
+	if ( dict != NULL ) {
+		dict->Clear();
+	}
 	int count = 0;
 	if ( !Session_MenuReadSaveGameInt( file, count, fieldName, savePath ) ) {
 		return false;
@@ -2395,9 +2407,16 @@ static bool Session_MenuSkipSaveGameDict( idFile *file, const char *fieldName, c
 			 !Session_MenuReadSaveGameCString( file, value, MAX_STRING_CHARS, va( "%s value %d", fieldName ? fieldName : "dictionary", i ), savePath ) ) {
 			return false;
 		}
+		if ( dict != NULL ) {
+			dict->Set( key, value );
+		}
 	}
 
 	return true;
+}
+
+static bool Session_MenuSkipSaveGameDict( idFile *file, const char *fieldName, const char *savePath ) {
+	return Session_MenuReadSaveGameDict( file, NULL, fieldName, savePath );
 }
 
 static bool Session_MenuIsSupportedSaveGameName( const idStr &gameName ) {
@@ -2415,7 +2434,10 @@ static bool Session_MenuIsCompatibleSaveGameVersion( const int version ) {
 		version == LEGACY_OPENQ4_SAVEGAME_VERSION_ALT;
 }
 
-static bool Session_MenuIsLoadableSaveGameSlot( const idStr &slotName ) {
+// A save's header: its game name, version, map, entity filter and each
+// client's persistent player info. Whether this build loads the save; with
+// `player`, the first client's persistent info.
+static bool Session_MenuReadSaveGameHeader( const idStr &slotName, idDict *player ) {
 	if ( !Session_MenuIsSafeSaveSlotName( slotName ) ) {
 		common->Warning( "Ignoring savegame slot with unsafe filename '%s'", slotName.c_str() );
 		return false;
@@ -2442,7 +2464,9 @@ static bool Session_MenuIsLoadableSaveGameSlot( const idStr &slotName ) {
 		valid = Session_MenuReadSaveGameString( file, entityFilter, MAX_STRING_CHARS, "entity filter", savePath.c_str() );
 	}
 	for ( int i = 0; valid && i < MAX_ASYNC_CLIENTS; i++ ) {
-		valid = Session_MenuSkipSaveGameDict( file, va( "persistent player info %d", i ), savePath.c_str() );
+		valid = i == 0 && player != NULL ?
+			Session_MenuReadSaveGameDict( file, player, va( "persistent player info %d", i ), savePath.c_str() ) :
+			Session_MenuSkipSaveGameDict( file, va( "persistent player info %d", i ), savePath.c_str() );
 	}
 	if ( valid && saveMap.IsEmpty() ) {
 		common->Warning( "Savegame '%s' has an empty map name", savePath.c_str() );
@@ -2452,6 +2476,29 @@ static bool Session_MenuIsLoadableSaveGameSlot( const idStr &slotName ) {
 	fileSystem->CloseFile( file );
 	return valid;
 }
+
+static bool Session_MenuIsLoadableSaveGameSlot( const idStr &slotName ) {
+	return Session_MenuReadSaveGameHeader( slotName, NULL );
+}
+
+#ifndef ID_DEDICATED
+// What the menus show of a save beyond its description: the difficulty and
+// the run's play time its player carried (idPlayer::SavePersistantInfo),
+// each -1 for a save from an earlier build, which records neither.
+static bool Session_MenuReadSaveDetails( const idStr &slotName, sessionMenuSaveDetails_t &details ) {
+	details.skill = -1;
+	details.playSeconds = -1;
+	idDict player;
+	if ( !Session_MenuReadSaveGameHeader( slotName, &player ) ) {
+		return false;
+	}
+	const idKeyValue *skill = player.FindKey( "openq4_skill" );
+	const idKeyValue *played = player.FindKey( "openq4_playSeconds" );
+	details.skill = skill != NULL ? idMath::ClampInt( 0, 4, atoi( skill->GetValue() ) ) : -1;
+	details.playSeconds = played != NULL ? Max( 0, atoi( played->GetValue() ) ) : -1;
+	return true;
+}
+#endif
 
 static bool Session_MenuReadSaveDescription( const idStr &slotName, sessionMenuSaveDescription_t &description ) {
 	description.saveName.Clear();
@@ -4431,10 +4478,10 @@ static const mainMenuSettingsScrollPage_t MAINMENU_SETTINGS_SCROLL_PAGES[] = {
 		"game_section_choice",
 		21,
 		0,
-		73,
+		75,
 		-24,
 		-41,
-		2066,
+		2114,
 		24.0f
 	}
 };
@@ -4465,19 +4512,19 @@ static int MainMenuSettingsSectionChoiceForScroll( const mainMenuSettingsScrollP
 		if ( scrollValue < 21 ) {
 			return 1;
 		}
-		if ( scrollValue < 39 ) {
+		if ( scrollValue < 41 ) {
 			return 2;
 		}
-		if ( scrollValue < 46 ) {
+		if ( scrollValue < 48 ) {
 			return 3;
 		}
-		if ( scrollValue < 57 ) {
+		if ( scrollValue < 59 ) {
 			return 4;
 		}
-		if ( scrollValue < 62 ) {
+		if ( scrollValue < 64 ) {
 			return 5;
 		}
-		if ( scrollValue < 69 ) {
+		if ( scrollValue < 71 ) {
 			return 6;
 		}
 		return 7;
@@ -5629,8 +5676,20 @@ static void Session_RetainedSaveStamp( ID_TIME_T timeStamp, idStr &date, idStr &
 	time = tab >= 0 ? stamp.Right( stamp.Length() - tab - 1 ) : idStr();
 }
 
+// A save's difficulty and the run's play time as the retained screens name
+// them, each empty when the save records none.
+static void Session_RetainedSaveDetails( const idStr &slot, idStr &skill, idStr &played ) {
+	sessionMenuSaveDetails_t details;
+	Session_MenuReadSaveDetails( slot, details );
+	skill = details.skill >= 0 ? Session_SkillName( details.skill ) : "";
+	played = details.playSeconds >= 0 ?
+		va( common->GetLanguageDict()->GetString( "#str_231525" ), Session_RetainedPlayTime( details.playSeconds ).c_str() ) : "";
+}
+
 // The title screen's CONTINUE resumes the newest save and describes it: its
-// name, then its level and when it was written. Without a picture, none shows.
+// name, then its level, the difficulty and the run's play time (section
+// 13.7). A save from an earlier build records neither and says when it was
+// written instead. Without a picture, none shows.
 static void Session_PublishRetainedTitleState( idUserInterface *gui, idSessionLocal *session ) {
 	idStrList fileList;
 	idList<fileTIME_T> fileTimes;
@@ -5644,8 +5703,18 @@ static void Session_PublishRetainedTitleState( idUserInterface *gui, idSessionLo
 		Session_RetainedSaveLabel( slot, description, described, name, location );
 		Session_RetainedSaveStamp( fileTimes[0].timeStamp, date, time );
 		shot = Session_RetainedSaveShot( slot, description, described, "" );
-		detail = location.Length() > 0 ? va( "%s - %s %s", location.c_str(), date.c_str(), time.c_str() ) :
-			va( "%s %s", date.c_str(), time.c_str() );
+		idStr skill, played;
+		Session_RetainedSaveDetails( slot, skill, played );
+		idStrList parts;
+		parts.Append( location );
+		parts.Append( skill );
+		parts.Append( played );
+		if ( skill.IsEmpty() && played.IsEmpty() ) {
+			parts.Append( va( common->GetLanguageDict()->GetString( "#str_231535" ), date.c_str(), time.c_str() ) );
+		}
+		for ( int i = 0; i < parts.Num(); i++ ) {
+			detail = Session_RetainedList( detail.c_str(), parts[i].c_str() );
+		}
 	}
 	gui->SetStateBool( "menu_continue", hasSave );
 	gui->SetStateString( "menu_continue_title", name.c_str() );
@@ -6213,6 +6282,18 @@ void idSessionLocal::ShowSaveRestoreFailure( const char *saveName ) {
 
 void idSessionLocal::HandleRetainedSessionRequest( idUserInterface *gui, const char *request ) {
 #ifndef ID_DEDICATED
+	if ( request != NULL && !idStr::Icmp( request, "menuResume" ) ) {
+		// The Menu button on one of the pause's pages closes the menus and
+		// resumes a single-player game (section 13.5): the page returns the
+		// pause, whose RESUME closes it.
+		if ( gui != NULL && gui == guiActive && RetainedPageActive() && mapSpawned && !IsMultiplayer() ) {
+			ReturnRetainedPage();
+			if ( guiRetainedHome != NULL ) {
+				HandleRetainedSessionRequest( guiRetainedHome, "resume" );
+			}
+		}
+		return;
+	}
 	if ( gui && request && gui == guiActive && !idStr::Icmp( gui->Name(), RETAINED_SKILL_GUI ) ) {
 		if ( retainedSubpageFrom ) return;
 		Session_HandleCampaignPageRequest( *this, gui, request, true );
@@ -6471,6 +6552,10 @@ bool idSessionLocal::BeginRetainedPage( const char *request ) {
 		return false;
 	}
 	loaded = page;
+	if ( saving || ( !restarting && !credits && !multiplayer && !demos ) ) {
+		page->SetStateInt( "browser.sort", 0 );
+		page->SetStateInt( "browser.filter", 0 );
+	}
 	// The saves, read while the home hands off: the newest selected to load,
 	// none to save over. Each arrival to save starts with no name, as the
 	// stock page's field did; a restart starts at the level's difficulty.
@@ -6639,20 +6724,125 @@ picture (NULL: none). The rows hold the RETAINED_LOAD_ROWS saves around the
 selection.
 ===============
 */
-void idSessionLocal::PublishRetainedLoadPage( idUserInterface *gui, int select, const char *error ) {
+// Six orders: date descending/ascending, name ascending/descending,
+// location ascending/descending. Equal keys use the slot name in either direction.
+void idSessionLocal::BuildRetainedSaveList( idUserInterface *gui, int select ) {
 #ifndef ID_DEDICATED
+	const int sort = idMath::ClampInt( 0, 5, gui->State().GetInt( "browser.sort" ) );
+	const int filter = idMath::ClampInt( 0, 2, gui->State().GetInt( "browser.filter" ) );
 	idStrList files;
 	idList<fileTIME_T> times;
 	GetSaveGameList( files, times );
+	struct entry_t { idStr slot, name, location; ID_TIME_T stamp; };
+	std::vector<entry_t> entries;
+	for ( int i = 0; i < times.Num(); ++i ) {
+		entry_t entry;
+		entry.slot = files[ times[i].index ];
+		entry.stamp = times[i].timeStamp;
+		sessionMenuSaveDescription_t description;
+		const bool described = Session_MenuReadSaveDescription( entry.slot, description );
+		const bool automatic = described && ( description.noOverwrite || description.screenshot.Length() > 0 );
+		if ( ( filter == 1 && automatic ) || ( filter == 2 && !automatic ) ) continue;
+		Session_RetainedSaveLabel( entry.slot, description, described, entry.name, entry.location );
+		entries.push_back( entry );
+	}
+	std::stable_sort( entries.begin(), entries.end(), [sort]( const entry_t &a, const entry_t &b ) {
+		int order = sort < 2 ? ( a.stamp > b.stamp ? -1 : a.stamp < b.stamp ? 1 : 0 ) :
+			sort < 4 ? a.name.Icmp( b.name ) : a.location.Icmp( b.location );
+		if ( order != 0 ) return sort % 2 ? order > 0 : order < 0;
+		order = a.slot.Icmp( b.slot );
+		return order != 0 ? order < 0 : a.slot.Cmp( b.slot ) < 0;
+	} );
 	retainedLoadSlots.Clear();
 	retainedLoadTimes.Clear();
-	for ( int i = 0; i < times.Num(); ++i ) {
-		retainedLoadSlots.Append( files[ times[i].index ] );
-		retainedLoadTimes.Append( times[i].timeStamp );
+	retainedLoadNames.Clear();
+	retainedLoadLocations.Clear();
+	for ( const auto &entry : entries ) {
+		retainedLoadSlots.Append( entry.slot );
+		retainedLoadTimes.Append( entry.stamp );
+		retainedLoadNames.Append( entry.name );
+		retainedLoadLocations.Append( entry.location );
 	}
 	const int count = retainedLoadSlots.Num();
 	retainedLoadSelected = count > 0 && select >= 0 ? idMath::ClampInt( 0, count - 1, select ) : -1;
 	retainedLoadFirst = retainedLoadSelected > 0 ? retainedLoadSelected / RETAINED_LOAD_ROWS * RETAINED_LOAD_ROWS : 0;
+	retainedSaveGeneration = retainedSaveGeneration == 2147483647 ? 1 : retainedSaveGeneration + 1;
+	gui->SetStateInt( "browser.generation", retainedSaveGeneration );
+	gui->SetStateString( "browser.context", va( "%d", retainedSaveGeneration ) );
+	gui->SetStateInt( "browser.total", times.Num() );
+	gui->SetStateInt( "browser.sort", sort );
+	gui->SetStateInt( "browser.filter", filter );
+#endif
+}
+
+// Refresh explicitly, never scan the filesystem every presented frame. Both
+// selection and row focus follow filenames, including across a 64-row boundary.
+bool idSessionLocal::RefreshRetainedSaveList( idUserInterface *gui, const char *request ) {
+#ifndef ID_DEDICATED
+	const bool refresh = !idStr::Icmp( request, "saveListRefresh" );
+	const bool sort = !idStr::Icmp( request, "saveListSort" );
+	const bool manual = !idStr::Icmp( request, "saveListFilterManual" );
+	const bool automatic = !idStr::Icmp( request, "saveListFilterAuto" );
+	const bool clear = !idStr::Icmp( request, "saveListClear" );
+	if ( !refresh && !sort && !manual && !automatic && !clear ) return false;
+	const idStr selected = retainedLoadSelected >= 0 && retainedLoadSelected < retainedLoadSlots.Num() ?
+		retainedLoadSlots[ retainedLoadSelected ] : idStr();
+	const std::string focus = UI_RetainedFocusedControl( gui );
+	idStr focused;
+	for ( int row = 0; row < RETAINED_LOAD_ROWS; ++row ) {
+		if ( focus == va( "row-%d", row ) && retainedLoadFirst + row < retainedLoadSlots.Num() ) {
+			focused = retainedLoadSlots[ retainedLoadFirst + row ];
+			break;
+		}
+	}
+	if ( sort ) gui->SetStateInt( "browser.sort", ( idMath::ClampInt( 0, 5, gui->State().GetInt( "browser.sort" ) ) + 1 ) % 6 );
+	if ( manual || automatic || clear ) {
+		const int filter = manual ? 1 : automatic ? 2 : 0;
+		gui->SetStateInt( "browser.filter", gui->State().GetInt( "browser.filter" ) == filter ? 0 : filter );
+	}
+	BuildRetainedSaveList( gui, -1 );
+	retainedLoadSelected = retainedLoadSlots.FindIndex( selected );
+	const int focusIndex = retainedLoadSlots.FindIndex( focused );
+	const int anchor = focusIndex >= 0 ? focusIndex : retainedLoadSelected;
+	retainedLoadFirst = anchor >= 0 ? anchor / RETAINED_LOAD_ROWS * RETAINED_LOAD_ROWS : 0;
+	PublishRetainedLoadRows( gui );
+	if ( IsRetainedSavePage( gui ) ) PublishRetainedSaveSelection( gui, false );
+	else PublishRetainedLoadSave( gui, NULL );
+	if ( !focused.IsEmpty() ) {
+		gui->HandleNamedEvent( focusIndex >= 0 ? va( "browserFocus%d", focusIndex - retainedLoadFirst ) : "browserFocusRefresh" );
+	}
+	return true;
+#else
+	return false;
+#endif
+}
+
+#ifndef ID_DEDICATED
+// Reject stale catalog operands and malformed integers, including overflow.
+static bool Session_RetainedSaveOperand( const char *request, const char *verb, int generation, int count, int &index ) {
+	idCmdArgs args( request, false );
+	if ( args.Argc() != 3 || idStr::Icmp( args.Argv( 0 ), verb ) ) return false;
+	int values[2];
+	for ( int i = 0; i < 2; ++i ) {
+		const char *text = args.Argv( i + 1 );
+		if ( !*text || strlen( text ) > 10 ) return false;
+		unsigned long long value = 0;
+		for ( const char *c = text; *c; ++c ) {
+			if ( *c < '0' || *c > '9' ) return false;
+			value = value * 10 + ( *c - '0' );
+		}
+		if ( value > 2147483647 ) return false;
+		values[i] = static_cast<int>( value );
+	}
+	if ( values[1] != generation || generation < 1 || values[0] >= count ) return false;
+	index = values[0];
+	return true;
+}
+#endif
+
+void idSessionLocal::PublishRetainedLoadPage( idUserInterface *gui, int select, const char *error ) {
+#ifndef ID_DEDICATED
+	BuildRetainedSaveList( gui, select );
 	PublishRetainedLoadRows( gui );
 	PublishRetainedLoadSave( gui, error );
 #endif
@@ -6666,33 +6856,46 @@ void idSessionLocal::PublishRetainedLoadRows( idUserInterface *gui ) {
 		const int index = retainedLoadFirst + row;
 		idStr name, location;
 		if ( index < retainedLoadSlots.Num() ) {
-			sessionMenuSaveDescription_t description;
-			const bool described = Session_MenuReadSaveDescription( retainedLoadSlots[ index ], description );
-			Session_RetainedSaveLabel( retainedLoadSlots[ index ], description, described, name, location );
+			name = retainedLoadNames[ index ];
+			location = retainedLoadLocations[ index ];
 		}
+		const idStr context = index < retainedLoadSlots.Num() ? va( "%d:%s", retainedSaveGeneration, retainedLoadSlots[ index ].c_str() ) : "";
+		gui->SetStateString( va( "%s.row%d.context", list, row ), context.c_str() );
 		gui->SetStateString( va( "%s.row%d.name", list, row ), name.c_str() );
 		gui->SetStateString( va( "%s.row%d.location", list, row ), location.c_str() );
 	}
 	gui->SetStateInt( va( "%s.count", list ), retainedLoadSlots.Num() );
 	gui->SetStateInt( va( "%s.first", list ), retainedLoadFirst );
+	if ( cvarSystem->GetCVarBool( "ui_retainedTrace" ) ) {
+		common->Printf( "RETAINED_SAVE_CATALOG page=%s generation=%d sort=%d filter=%d count=%d first=%d selected=%d slot=%s\n",
+			list, retainedSaveGeneration, gui->State().GetInt( "browser.sort" ), gui->State().GetInt( "browser.filter" ),
+			retainedLoadSlots.Num(), retainedLoadFirst, retainedLoadSelected,
+			retainedLoadSelected >= 0 ? retainedLoadSlots[ retainedLoadSelected ].c_str() : "<none>" );
+	}
 #endif
 }
 
-// The selected save: its picture, its date and time, and why it failed.
+// The selected save: its picture, its date and time, the difficulty and the
+// run's play time, and why it failed.
 void idSessionLocal::PublishRetainedLoadSave( idUserInterface *gui, const char *error ) {
 #ifndef ID_DEDICATED
-	idStr shot = RETAINED_LOAD_GENERIC_SHOT, date, time;
+	idStr shot = RETAINED_LOAD_GENERIC_SHOT, date, time, context, skill, played;
 	if ( retainedLoadSelected >= 0 && retainedLoadSelected < retainedLoadSlots.Num() ) {
 		const idStr &slot = retainedLoadSlots[ retainedLoadSelected ];
+		context = va( "%d:%s", retainedSaveGeneration, slot.c_str() );
 		sessionMenuSaveDescription_t description;
 		const bool described = Session_MenuReadSaveDescription( slot, description );
 		shot = Session_RetainedSaveShot( slot, description, described, RETAINED_LOAD_GENERIC_SHOT );
 		Session_RetainedSaveStamp( retainedLoadTimes[ retainedLoadSelected ], date, time );
+		Session_RetainedSaveDetails( slot, skill, played );
 	}
 	gui->SetStateInt( "load.selected", retainedLoadSelected );
+	gui->SetStateString( "load.context", context.c_str() );
 	gui->SetStateString( "load.shot", shot.c_str() );
 	gui->SetStateString( "load.date", date.c_str() );
 	gui->SetStateString( "load.time", time.c_str() );
+	gui->SetStateString( "load.skill", skill.c_str() );
+	gui->SetStateString( "load.played", played.c_str() );
 	gui->SetStateString( "load.error", error != NULL ? error : "" );
 	gui->StateChanged( common->GetPresentationTime() );
 #endif
@@ -6709,15 +6912,15 @@ save. A save that cannot be loaded or deleted stays selected and says why.
 */
 void idSessionLocal::HandleRetainedLoadRequest( idUserInterface *gui, const char *request ) {
 #ifndef ID_DEDICATED
+	if ( RefreshRetainedSaveList( gui, request ) ) return;
 	const int count = retainedLoadSlots.Num();
 	if ( !idStr::Icmp( request, "loadBack" ) ) {
 		ReturnRetainedPage();
 		return;
 	}
-	if ( !idStr::Icmp( request, "loadSelect" ) ) {
-		const int row = gui->State().GetInt( "load.pick", "-1" );
-		const int index = retainedLoadFirst + row;
-		if ( row >= 0 && row < RETAINED_LOAD_ROWS && index < count ) {
+	if ( !idStr::Icmpn( request, "loadSelect", 10 ) ) {
+		int index = -1;
+		if ( Session_RetainedSaveOperand( request, "loadSelect", retainedSaveGeneration, count, index ) ) {
 			retainedLoadSelected = index;
 			PublishRetainedLoadSave( gui, NULL );
 		}
@@ -6738,11 +6941,10 @@ void idSessionLocal::HandleRetainedLoadRequest( idUserInterface *gui, const char
 		gui->HandleNamedEvent( older ? "pagedOlder" : "pagedNewer" );
 		return;
 	}
-	const bool chosen = retainedLoadSelected >= 0 && retainedLoadSelected < count;
-	if ( !idStr::Icmp( request, "loadSave" ) ) {
-		if ( !chosen ) {
-			return;
-		}
+	if ( !idStr::Icmpn( request, "loadSave", 8 ) ) {
+		int target = -1;
+		if ( !Session_RetainedSaveOperand( request, "loadSave", retainedSaveGeneration, count, target ) ) return;
+		retainedLoadSelected = target;
 		const idStr slot = retainedLoadSlots[ retainedLoadSelected ];
 		HandleMainMenuCommands( "play main_menu_selection" );
 		// A preflight refusal preserves this page. A deeper restore failure
@@ -6752,10 +6954,10 @@ void idSessionLocal::HandleRetainedLoadRequest( idUserInterface *gui, const char
 		}
 		return;
 	}
-	if ( !idStr::Icmp( request, "loadDelete" ) ) {
-		if ( !chosen ) {
-			return;
-		}
+	if ( !idStr::Icmpn( request, "loadDelete", 10 ) ) {
+		int target = -1;
+		if ( !Session_RetainedSaveOperand( request, "loadDelete", retainedSaveGeneration, count, target ) ) return;
+		retainedLoadSelected = target;
 		// The page asked first. The save that takes the deleted one's place is
 		// selected; one that is still there stays selected and says so.
 		const idStr slot = retainedLoadSlots[ retainedLoadSelected ];
@@ -6790,18 +6992,7 @@ with `select` selected (-1: none).
 */
 void idSessionLocal::PublishRetainedSavePage( idUserInterface *gui, int select ) {
 #ifndef ID_DEDICATED
-	idStrList files;
-	idList<fileTIME_T> times;
-	GetSaveGameList( files, times );
-	retainedLoadSlots.Clear();
-	retainedLoadTimes.Clear();
-	for ( int i = 0; i < times.Num(); ++i ) {
-		retainedLoadSlots.Append( files[ times[i].index ] );
-		retainedLoadTimes.Append( times[i].timeStamp );
-	}
-	const int count = retainedLoadSlots.Num();
-	retainedLoadSelected = count > 0 && select >= 0 ? idMath::ClampInt( 0, count - 1, select ) : -1;
-	retainedLoadFirst = retainedLoadSelected > 0 ? retainedLoadSelected / RETAINED_LOAD_ROWS * RETAINED_LOAD_ROWS : 0;
+	BuildRetainedSaveList( gui, select );
 	PublishRetainedLoadRows( gui );
 	PublishRetainedSaveSelection( gui, false );
 #endif
@@ -6856,8 +7047,17 @@ bool idSessionLocal::RetainedSaveGame( idUserInterface *gui, const char *name ) 
 		gui->HandleNamedEvent( "noticeModalShow" );
 		return false;
 	}
-	// The save is now the newest. The name stays, ready to save again.
-	PublishRetainedSavePage( gui, 0 );
+	// Reveal the saved file even while viewing autosaves. Keep the sort and
+	// typed name; the new file need not occupy the first row in this order.
+	if ( gui->State().GetInt( "browser.filter" ) == 2 ) gui->SetStateInt( "browser.filter", 0 );
+	idStr slot = name;
+	ScrubSaveGameFileName( slot );
+	slot.StripFileExtension();
+	BuildRetainedSaveList( gui, -1 );
+	retainedLoadSelected = retainedLoadSlots.FindIndex( slot );
+	retainedLoadFirst = retainedLoadSelected >= 0 ? retainedLoadSelected / RETAINED_LOAD_ROWS * RETAINED_LOAD_ROWS : 0;
+	PublishRetainedLoadRows( gui );
+	PublishRetainedSaveSelection( gui, false );
 	return true;
 #else
 	return false;
@@ -6875,15 +7075,15 @@ asking first over an existing save and refusing to save over an autosave.
 */
 void idSessionLocal::HandleRetainedSaveRequest( idUserInterface *gui, const char *request ) {
 #ifndef ID_DEDICATED
+	if ( RefreshRetainedSaveList( gui, request ) ) return;
 	const int count = retainedLoadSlots.Num();
 	if ( !idStr::Icmp( request, "saveBack" ) ) {
 		ReturnRetainedPage();
 		return;
 	}
-	if ( !idStr::Icmp( request, "saveSelect" ) ) {
-		const int row = gui->State().GetInt( "save.pick", "-1" );
-		const int index = retainedLoadFirst + row;
-		if ( row >= 0 && row < RETAINED_LOAD_ROWS && index < count ) {
+	if ( !idStr::Icmpn( request, "saveSelect", 10 ) ) {
+		int index = -1;
+		if ( Session_RetainedSaveOperand( request, "saveSelect", retainedSaveGeneration, count, index ) ) {
 			retainedLoadSelected = index;
 			PublishRetainedSaveSelection( gui, true );
 		}
@@ -7669,6 +7869,16 @@ static int Session_NetworkQualityBars( int ping, float lossPercent ) {
 void idSessionLocal::PublishRetainedJoinGame( idUserInterface *gui ) {
 #ifndef ID_DEDICATED
 	idServerScan &servers = idAsyncNetwork::client.serverList;
+	// A focused row's server, by the address its row last showed: the focus
+	// follows it through a new order, a refresh or a filter, onto its page.
+	const std::string focus = UI_RetainedFocusedControl( gui );
+	idStr focusedAddress;
+	if ( focus.rfind( "server-", 0 ) == 0 ) {
+		const int row = atoi( focus.c_str() + 7 );
+		if ( row >= 0 && row < retainedJoinRowAddresses.Num() ) {
+			focusedAddress = retainedJoinRowAddresses[ row ];
+		}
+	}
 	retainedJoinRevision = servers.GetRevision();
 	servers.VisibleServers( retainedJoinServers );
 	const int count = retainedJoinServers.Num();
@@ -7693,10 +7903,21 @@ void idSessionLocal::PublishRetainedJoinGame( idUserInterface *gui ) {
 	if ( retainedJoinFirst < 0 ) {
 		retainedJoinFirst = selected > 0 ? selected / RETAINED_JOIN_ROWS * RETAINED_JOIN_ROWS : 0;
 	}
+	int focusIndex = -1;
+	for ( int i = 0; i < count && focusedAddress.Length() > 0 && focusIndex < 0; ++i ) {
+		if ( !focusedAddress.Icmp( Sys_NetAdrToString( servers[ retainedJoinServers[ i ] ].adr ) ) ) {
+			focusIndex = i;
+		}
+	}
+	if ( focusIndex >= 0 ) {
+		retainedJoinFirst = focusIndex / RETAINED_JOIN_ROWS * RETAINED_JOIN_ROWS;
+	}
 	retainedJoinFirst = idMath::ClampInt( 0, Max( 0, count - 1 ) / RETAINED_JOIN_ROWS * RETAINED_JOIN_ROWS, retainedJoinFirst );
+	retainedJoinRowAddresses.SetNum( RETAINED_JOIN_ROWS );
 	for ( int row = 0; row < RETAINED_JOIN_ROWS; ++row ) {
 		const int index = retainedJoinFirst + row;
 		const networkServer_t *server = index < count ? &servers[ retainedJoinServers[ index ] ] : NULL;
+		retainedJoinRowAddresses[ row ] = server != NULL ? Sys_NetAdrToString( server->adr ) : "";
 		idStr name, ping, players, type, map;
 		if ( server != NULL ) {
 			name = Session_RetainedPlayerText( server->serverInfo.GetString( "si_name" ), 96, 1 );
@@ -7760,6 +7981,9 @@ void idSessionLocal::PublishRetainedJoinGame( idUserInterface *gui ) {
 	// The rows may now hold other servers: the details card's again.
 	PublishRetainedJoinDetail( gui );
 	gui->StateChanged( common->GetPresentationTime() );
+	if ( focusIndex >= 0 && focus != va( "server-%d", focusIndex - retainedJoinFirst ) ) {
+		gui->HandleNamedEvent( va( "joinFocus%d", focusIndex - retainedJoinFirst ) );
+	}
 #endif
 }
 
@@ -9040,16 +9264,27 @@ void idSessionLocal::HandleRetainedMultiplayerRequest( idUserInterface *gui, con
 	const char *command = NULL;
 	idStr gameCommand;
 	int voteField = -1, voteValue = 0;
-	const bool select = !idStr::Icmp( request, "mpSelectPlayer" ), mute = !idStr::Icmp( request, "mpMute" ),
-		befriend = !idStr::Icmp( request, "mpFriend" );
+	const bool select = !idStr::Icmp( request, "mpSelectPlayer" ) || !idStr::Icmpn( request, "mpSelectPlayer ", 15 ),
+		mute = !idStr::Icmp( request, "mpMute" ) || !idStr::Icmpn( request, "mpMute ", 7 ),
+		befriend = !idStr::Icmp( request, "mpFriend" ) || !idStr::Icmpn( request, "mpFriend ", 9 );
 	if ( select || mute || befriend ) {
-		const int client = gui->State().GetInt( "card.client", "-1" );
-		if ( client < 0 || client >= RETAINED_MP_CLIENTS ) {
-			common->Warning( "retained UI: the multiplayer card named client %d", client );
+		const char *payload = strchr( request, ' ' );
+		const idStr operands = payload != NULL ? payload + 1 : "";
+		const int separator = operands.Find( ' ' );
+		const idStr clientText = separator >= 0 ? operands.Left( separator ) : idStr();
+		const idStr identity = separator >= 0 ? operands.Right( operands.Length() - separator - 1 ) : idStr();
+		const auto digits = []( const idStr &text, int maximum ) {
+			if ( text.Length() < 1 || text.Length() > maximum ) return false;
+			for ( int i = 0; i < text.Length(); ++i ) if ( text[i] < '0' || text[i] > '9' ) return false;
+			return true;
+		};
+		const int client = digits( clientText, 2 ) ? atoi( clientText.c_str() ) : -1;
+		if ( client < 0 || client >= RETAINED_MP_CLIENTS || !digits( identity, 10 ) ) {
+			common->Warning( "retained UI: invalid multiplayer player identity" );
 			return;
 		}
 		// None of them closes the menu.
-		gameCommand = va( "play main_menu_selection ; retained %s %d", select ? "select" : mute ? "mute" : "friend", client );
+		gameCommand = va( "play main_menu_selection ; retained %s %d %s", select ? "select" : mute ? "mute" : "friend", client, identity.c_str() );
 		command = gameCommand.c_str();
 	} else if ( !idStr::Icmp( request, "mpWelcomeAction" ) ) {
 		const int slot = gui->State().GetInt( "card.welcome_action", "-1" );

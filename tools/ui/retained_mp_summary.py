@@ -595,7 +595,7 @@ def board_row(doc: Document, kind: str, row: int, width: float) -> dict:
     cells = [slot(f"{ident}-mark", MARK_W, [marker]), speaker, friend, name, clan, bot_tag, *numbers, bars, ping]
     content = row_flex(f"{ident}-content", {**absolute(left=2, top=0, right=0, bottom=0), "pointer-events": keyword("none")}, cells)
     node = group(ident, {"position": keyword("relative"), "display": keyword("none"), "width": length(width), "height": length(ROW_MAX),
-                         "min-height": length(ROW_MIN), "flex-shrink": number(1)}, [band, content])
+                         "flex-shrink": number(0)}, [band, content])
     shown(doc, ident, op("<", row, S(f"mp.players.{kind}.count")))
     return node
 
@@ -603,9 +603,10 @@ def board_row(doc: Document, kind: str, row: int, width: float) -> dict:
 def scoreboard_page(doc: Document, index: int, ident: str, width: float, height: float) -> tuple[dict, list]:
     """The SCOREBOARD page: the headings once, then each list's band in its
     team's color with its title and score over the scoreboard's rows; the
-    spectators' band only while there are spectators. Rows share the room,
-    24 dp each down to 14 dp, as the Players page's lists do."""
-    page_width = width - 2 * INSET
+    spectators' band only while there are spectators. Rows keep a readable
+    24 dp pitch and scroll below fixed headings, as the Players page's lists do."""
+    outer_width = width - 2 * INSET
+    page_width = outer_width - mp.ROSTER_GUTTER
     page_height = height - PAGE_TOP - PROMPT_BOTTOM - PROMPT_H - 16
     heading = [1, 1, 1, 0.4]
     cells = [slot("board-head-lead", 2 + MARK_W + 18 + 20),
@@ -622,7 +623,7 @@ def scoreboard_page(doc: Document, index: int, ident: str, width: float, height:
                                         "height": length(HEAD_H), "flex-shrink": number(0)},
                      [row_flex("board-head-row", absolute(left=0, top=0, right=0, height=HEAD_H), cells),
                       rule("board-head-rule", absolute(left=0, top=HEAD_H - 1, width=page_width, height=1))])
-    children = [headings]
+    children = []
     for kind, tints in mp.PLAYER_LISTS:
         band = f"board-{kind}-band"
         variants = []
@@ -643,10 +644,8 @@ def scoreboard_page(doc: Document, index: int, ident: str, width: float, height:
         shown(doc, band, listed)
         children.append(holder)
         children += [board_row(doc, kind, row, page_width) for row in range(mp.PLAYER_ROWS)]
-    lists = group("board-lists", {**absolute(left=0, top=0, width=page_width, height=page_height), "display": keyword("flex"),
-                                  "flex-direction": keyword("column"), "overflow": keyword("hidden")}, children)
-    # Nothing on the page takes focus; its tab keeps it.
-    return page_group(doc, index, ident, width, height, [lists], []), [{"op": "focus", "control": f"tab-{ident}"}]
+    lists, bar = mp.roster_frame(doc, "board", outer_width, page_height, headings, children, key="#str_200284")
+    return page_group(doc, index, ident, width, height, [lists], [bar]), mp.roster_focus("board", page_height, ident)
 
 
 # ------------------------------------------------------------- the prompts

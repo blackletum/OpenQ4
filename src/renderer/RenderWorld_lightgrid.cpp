@@ -157,7 +157,7 @@ typedef struct lightGridBakeRunStats_s {
 	int					atlasRowCount;
 } lightGridBakeRunStats_t;
 
-void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref );
+bool R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref );
 static void LightGrid_CaptureViewRGB( int width, int height, int blends, renderView_t *ref, byte *rgbOut );
 static void LightGrid_BakeProbeTile( byte *outTile, int probeSize, int borderSize, byte *cubeFaces[6], int captureSize, int sampleCount );
 static void LightGrid_BakeProbeVisibilityTile( byte *outTile, int probeSize, int borderSize, const idVec3 &probeOrigin, const idRenderWorld *world, float &meanDistance, float &meanDistanceSq, int &traceCount );

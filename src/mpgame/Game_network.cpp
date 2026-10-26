@@ -90,6 +90,8 @@ void idGameLocal::InitAsyncNetwork( void ) {
 	localClientNum = 0; // on a listen server SetLocalUser will set this right
 	realClientTime = 0;
 	isNewFrame = true;
+	clientReplayTics = 0;
+	lastChainReplayTics = 0;
 
 	nextLagoCheck = 0;
 }
@@ -1888,6 +1890,11 @@ bool idGameLocal::ClientReadSnapshot( int clientNum, int snapshotSequence, const
 
 	isNewFrame = true;
 
+	// This snapshot closes the replay chain the last one opened; the players read below
+	// still hold their re-simulated tics for it.
+	lastChainReplayTics = clientReplayTics;
+	clientReplayTics = 0;
+
 	// clear the snapshot entity list
 	snapshotEntities.Clear();
 
@@ -2323,7 +2330,7 @@ idGameLocal::SetDemoFollowClient
 bool idGameLocal::SetDemoFollowClient( int clientNum ) {
 	if ( !IsServerDemoPlaying() || isServer || !isClient || isRepeater ||
 		IsRepeaterDemoPlaying() || localClientNum != MAX_CLIENTS ||
-		clientNum < DEMO_FOLLOW_NEXT || clientNum >= MAX_CLIENTS ) {
+		clientNum < DEMO_FOLLOW_PREV || clientNum >= MAX_CLIENTS ) {
 		return false;
 	}
 
@@ -2333,11 +2340,18 @@ bool idGameLocal::SetDemoFollowClient( int clientNum ) {
 		return false;
 	}
 
-	if ( clientNum == DEMO_FOLLOW_NEXT ) {
+	if ( clientNum == DEMO_FOLLOW_NEXT || clientNum == DEMO_FOLLOW_PREV ) {
+		// Walk the slots from the current camera in either direction. From free
+		// flight the walk starts before slot 0 going forward and after the last
+		// slot going back.
+		const int step = ( clientNum == DEMO_FOLLOW_NEXT ) ? 1 : MAX_CLIENTS - 1;
 		int candidate = GetDemoFollowClient();
+		if ( candidate < 0 ) {
+			candidate = ( clientNum == DEMO_FOLLOW_NEXT ) ? MAX_CLIENTS - 1 : 0;
+		}
 		clientNum = DEMO_FOLLOW_FREE;
 		for ( int attempt = 0; attempt < MAX_CLIENTS; ++attempt ) {
-			candidate = ( candidate + 1 ) % MAX_CLIENTS;
+			candidate = ( candidate + step ) % MAX_CLIENTS;
 			if ( mpGame.CanSpectatorFollow( localPlayer->entityNumber, candidate ) ) {
 				clientNum = candidate;
 				break;
@@ -3055,6 +3069,7 @@ Called once each client render frame (before any ClientPrediction frames have be
 */
 void idGameLocal::ClientRun( void ) {
 	if( isMultiplayer ) {
+		UpdateAdvertisedRemoteExtrapolation();
 		mpGame.ClientRun();
 	}
 }
@@ -3142,6 +3157,7 @@ gameReturn_t idGameLocal::ClientPrediction( int clientNum, const usercmd_t *clie
 		isNewFrame = true;
 	} else {
 		isNewFrame = false;
+		clientReplayTics++;
 	}
 
 	if ( clientNum == MAX_CLIENTS ) {

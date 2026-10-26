@@ -585,6 +585,7 @@ rvNavMesh::rvNavMesh( void ) : nodeHash( NAV_HASH_BUCKETS, NAV_HASH_BUCKETS ) {
 	numLandmarks	= 0;
 	buildMsec		= 0;
 	gapJumpLinks	= 0;
+	trenchRimLinks	= 0;
 	heuristicScale = 1.0f;
 	searchSerial	= 0;
 	fieldSerial		= 0;
@@ -647,6 +648,7 @@ void rvNavMesh::Clear( void ) {
 	numLandmarks	= 0;
 	buildMsec		= 0;
 	gapJumpLinks	= 0;
+	trenchRimLinks	= 0;
 	heuristicScale = 1.0f;
 	searchSerial	= 0;
 	fieldSerial		= 0;
@@ -1867,6 +1869,7 @@ void rvNavMesh::AddGapJumpLinks( void ) {
 	const float maxReach = runSpeed * longestAir;
 	const int numBuilt = nodes.Num();
 	int added = 0;
+	int rimAdded = 0;
 
 	for ( int takeoff = 0; takeoff < numBuilt; takeoff++ ) {
 		const idVec3 origin = nodes[takeoff].origin;
@@ -1889,6 +1892,10 @@ void rvNavMesh::AddGapJumpLinks( void ) {
 
 			const float cellStep = cellSize * ( ( dx != 0 && dy != 0 ) ? idMath::SQRT_TWO : 1.0f );
 			const int maxCells = (int)( maxReach / cellStep );
+			// Set once the first floor has proved to be a trench's: more than a
+			// step below the takeoff.  The scan then looks past it for a rim at
+			// the takeoff's own level.
+			bool seekingRim = false;
 			for ( int k = 2; k <= maxCells; k++ ) {
 				// The highest floor in the landing band: no more than a jump's
 				// height above the takeoff, no more than NAV_GAP_MAX_FALL below.
@@ -1911,22 +1918,37 @@ void rvNavMesh::AddGapJumpLinks( void ) {
 				if ( landing < 0 ) {
 					continue;	// still over the gap
 				}
+				const bool belowTakeoff = nodes[landing].origin.z < origin.z - stepSize;
+				if ( seekingRim && belowTakeoff ) {
+					continue;	// still the trench's floor
+				}
 
 				// The first floor beyond the gap decides this direction.  Its
 				// near edge cell may only clip the platform; then the next cell
 				// on the same platform is the landing a running jump makes.
 				if ( !NavLandingSupported( nodes[landing].origin ) ) {
 					landing = LevelNodeInCell( cx + dx, cy + dy, nodes[landing].origin.z, stepSize );
-					if ( landing < 0 || !NavLandingSupported( nodes[landing].origin ) ) {
-						break;
+					if ( landing >= 0 && !NavLandingSupported( nodes[landing].origin ) ) {
+						landing = -1;
 					}
 				}
-				if ( FindLink( takeoff, landing ) < 0 &&
+				if ( landing >= 0 && FindLink( takeoff, landing ) < 0 &&
 					 GapJumpClear( origin, nodes[landing].origin, runSpeed, jumpSpeed, gravity ) ) {
 					const float cost = ( nodes[landing].origin - origin ).Length() + NAV_JUMP_PENALTY +
 						NAV_GAP_PENALTY + ( ( nodes[landing].flags & NAVNODE_HAZARD ) ? NAV_HAZARD_PENALTY : 0.0f );
 					LinkNodes( takeoff, landing, cost, NAVTRAVEL_JUMP );
 					added++;
+					if ( seekingRim ) {
+						rimAdded++;
+					}
+				}
+				// A trench no deeper than NAV_GAP_MAX_FALL is a floor in the
+				// landing band, so the scan used to stop at it and link only
+				// the drop in.  Keep looking for a far rim at the takeoff's
+				// level; GapJumpClear still proves the whole arc over it.
+				if ( belowTakeoff && !seekingRim ) {
+					seekingRim = true;
+					continue;
 				}
 				break;
 			}
@@ -1934,9 +1956,10 @@ void rvNavMesh::AddGapJumpLinks( void ) {
 	}
 
 	if ( bot_debug.GetBool() ) {
-		gameLocal.Printf( "rvNavMesh: %d gap jump links\n", added );
+		gameLocal.Printf( "rvNavMesh: %d gap jump links (%d over trenches)\n", added, rimAdded );
 	}
 	gapJumpLinks = added;
+	trenchRimLinks = rimAdded;
 }
 
 /*
@@ -3072,11 +3095,11 @@ bool rvNavMesh::Build( void ) {
 	}
 
 	gameLocal.Printf( "rvNavMesh: %d nodes, %d links, %d areas, %d components (largest %.1f%%, %d dead ends), "
-					  "%d landmarks, %d gap jumps, %d hazard volumes (%d priced nodes), %d transports (%d sealed nodes), "
+					  "%d landmarks, %d gap jumps (%d over trenches), %d hazard volumes (%d priced nodes), %d transports (%d sealed nodes), "
 					  "%d seeds in %d ms (cell %g)\n",
 					  nodes.Num(), links.Num(), numAreas, numComponents,
 					  100.0f * (float)largestComponent / (float)Max( nodes.Num(), 1 ), deadEnds, numLandmarks,
-					  gapJumpLinks, hazards.Num(), hazardNodes, transports.Num(), transportNodes, seeds.Num(),
+					  gapJumpLinks, trenchRimLinks, hazards.Num(), hazardNodes, transports.Num(), transportNodes, seeds.Num(),
 					  buildMsec, cellSize );
 
 	return true;

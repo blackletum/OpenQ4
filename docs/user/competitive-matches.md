@@ -1,5 +1,7 @@
 # Competitive Matches
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 > **Experimental.** Multiplayer and the single-player Arena Campaign are
 > under active development and are not yet considered stable. Expect rough
 > edges, changing behaviour between builds, and bugs. They are not
@@ -433,6 +435,12 @@ When a proposal fails, expires, is canceled or becomes invalid after a phase
 change, its slot is released for another proposal. The normal cooldown still
 applies, and an old ballot cannot affect the replacement proposal.
 
+A passed proposal is checked again when it runs, against the match as it is
+then: the phase, the caller's eligibility and the target must all still allow
+the action. Players readying up, joining or leaving while the vote was open do
+not void it. A passed proposal runs once, and it still fails if its caller has
+left.
+
 Legacy vote commands remain available on casual servers. A managed session
 rejects those old routes so they cannot bypass the proposal validator.
 
@@ -442,6 +450,8 @@ Match Control supports best-of-one, best-of-three and best-of-five series for
 Duel and team modes. The server validates the profile, two contestants, current
 mode, installed map pool and deterministic veto pattern as one transaction.
 Each ban, pick, decider or starting-side choice is turn- and revision-checked.
+The turn belongs to a team's series side, the same side Match Control shows,
+even when the gameplay sides have been swapped for a map.
 
 Completing the veto schedules the first selected map automatically. After each
 map's review, **Advance map** loads the next validated selection or completes

@@ -37,18 +37,21 @@ struct idFile {
 };
 struct VFS { idFile* OpenFileRead(const char*){return noFile?nullptr:new idFile;} void CloseFile(idFile* file){delete file;} } vfs;
 static VFS* fileSystem=&vfs;
+struct stb_vorbis_openq4_granule_page { unsigned page_start, page_end, granule; };
 struct SoundVorbisStream {
     static constexpr int ArenaBytes=2*1024*1024, ChunkFrames=4096;
     char cache[64*1024];
     SoundVorbisStream(){++decoders;} ~SoundVorbisStream(){--decoders;}
     bool Open(int(*)(void*,unsigned,void*,int),void*,int){return !badDecoder;}
     int Error(){return 1;} bool Seek(unsigned){return true;}
+    bool SetCountedLength(unsigned frames,const stb_vorbis_openq4_granule_page& page){return frames && page.page_end>page.page_start;}
     int Read(short*,int count){return count;} int Channels(){return 1;} int Rate(){return 22050;} unsigned Frames(){return 22050;}
 };
 class idSoundOggStream {
 public:
     idSoundOggStream(); ~idSoundOggStream(); bool Open(const char*); void Close();
-    bool Seek(unsigned); int Read(short*,int); int Channels()const; int Rate()const; unsigned Frames()const;
+    bool Seek(unsigned); bool SetCountedLength(unsigned,unsigned,unsigned,unsigned);
+    int Read(short*,int); int Channels()const; int Rate()const; unsigned Frames()const;
     static void PrintMemoryInfo();
     idFile* file; SoundVorbisStream* decoder;
 };
@@ -77,6 +80,9 @@ int main(){
     assert(a.Open("replace") && files==1 && decoders==1 && soundStreamBytes==SOUND_STREAM_BYTES);
     a.Close(); a.Close();
     assert(files==0 && decoders==0 && soundStreamBytes==0);
+    assert(!a.SetCountedLength(22050,0,100,11025));
+    assert(a.Open("counted") && a.SetCountedLength(22050,0,100,11025) && !a.SetCountedLength(0,0,100,11025));
+    a.Close(); assert(files==0 && decoders==0 && soundStreamBytes==0);
     std::puts("PASS: stream byte budget, saturation, stop/retry, VFS/decoder failures, replacement and budget reduction");
 }
 '''.replace('@PRODUCTION@', production)

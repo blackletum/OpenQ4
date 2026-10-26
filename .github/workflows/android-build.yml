@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Engine release version to package (for example 0.14.000)
+        description: Engine release version to package (for example 0.14.001)
         required: true
         type: string
   workflow_call:

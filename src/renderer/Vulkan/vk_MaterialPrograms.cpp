@@ -11,36 +11,65 @@
 #include "vk_MaterialSourceSignatures.h"
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace {
 constexpr int MaxPrograms = 256;
-constexpr int MaxDraws = 2048;
+// Authored draws per frame slot: descriptor pools of MaxDrawsPerPool sets are
+// chained on demand, up to MaxPoolsPerSlot.
+constexpr int MaxDrawsPerPool = 2048;
+constexpr int MaxPoolsPerSlot = 4;
 constexpr size_t MaxCompilerBytes = 32 * 1024 * 1024;
+// Distinct program/reason pairs reported since the last reload; later ones
+// are counted, not printed, so a broken mod cannot flood the console.
+constexpr size_t MaxDiagnostics = 512;
 struct Program {
     std::string name, key, vertexSource, fragmentSource;
     oq4material::CompileResult compiled;
     VkShaderModule vertex = VK_NULL_HANDLE, fragment = VK_NULL_HANDLE;
-    bool sourcePairFound = false, valid = false, warnedResource = false, loggedDraw = false, loggedLightingDraw = false;
+    bool sourcePairFound = false, valid = false, loggedDraw = false, loggedLightingDraw = false;
     // ARB assembly translated to compatibility GLSL; parameters[i] feeds
     // uniform slot i and textures bind by texture image unit.
     bool arb = false;
     std::vector<oq4material::ARBParameter> arbParameters;
     int identity = 0;
+    // Compiler storage this version holds, returned when it is evicted.
+    size_t bytes = 0;
+    // Frame serial of the last bind attempt; a version no frame in flight
+    // can reference may be evicted once no current key names it.
+    uint64_t lastUseFrame = 0;
+    // Since the last reload: draws recorded and draws skipped, with the most
+    // recent skip reason. reportShaderPrograms prints them.
+    int drawn = 0, skipped = 0;
+    std::string lastSkip;
 };
 std::vector<std::unique_ptr<Program>> programs;
+// key -> version index. A key the full table refused maps to the frame
+// serial it was refused at in rejectedKeys instead, so its sources are not
+// re-read on every draw.
 std::map<std::string, int> currentPrograms;
+std::map<std::string, uint64_t> rejectedKeys;
 std::map<std::string, vkGLSLProgramFamily_t> nativeFamilies;
 std::map<std::string, bool> arbTranslatable;
+std::set<std::string> diagnostics;
+int suppressedDiagnostics = 0;
+int capacityRejections = 0;
+int evictions = 0;
 size_t compilerBytes = 0;
-bool warnedCapacity = false;
+uint64_t frameSerial = 1;
 VkDescriptorSetLayout uniformLayout = VK_NULL_HANDLE;
 VkDescriptorSetLayout textureLayout = VK_NULL_HANDLE;
 VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-VkDescriptorPool pools[VK_FRAMES_IN_FLIGHT] = {};
-int drawCounts[VK_FRAMES_IN_FLIGHT] = {};
-bool poolReady[VK_FRAMES_IN_FLIGHT] = {};
+struct FramePools {
+    VkDescriptorPool pools[MaxPoolsPerSlot] = {};
+    int created = 0;
+    int draws = 0;
+    bool ready = false;
+};
+FramePools framePools[VK_FRAMES_IN_FLIGHT];
+int peakDraws = 0;
 
 std::string SourceDigest( const char *source, int bytes ) {
     if ( source == NULL || bytes <= 0 || static_cast<size_t>( bytes ) > oq4material::MaxSourceBytes ) { return ""; }
@@ -58,20 +87,114 @@ std::string SourceDigest( const char *source, int bytes ) {
     return result;
 }
 
-bool CacheFull() {
-    if ( programs.size() < MaxPrograms ) { return false; }
-    if ( !warnedCapacity ) { common->Warning( "Vulkan: authored material program cache exhausted" ); warnedCapacity = true; }
+const char *Kind( const Program &program ) { return program.arb ? "ARB" : "GLSL"; }
+
+// One line per distinct subject/reason pair until the next reload.
+bool Report( const std::string &subject, const std::string &reason ) {
+    const std::string key = subject + "\n" + reason;
+    if ( diagnostics.count( key ) != 0 ) { return false; }
+    if ( diagnostics.size() >= MaxDiagnostics ) {
+        if ( suppressedDiagnostics++ == 0 ) {
+            common->Warning( "Vulkan: further authored material program diagnostics are suppressed until reloadGLSLprograms (see reportShaderPrograms)" );
+        }
+        return false;
+    }
+    diagnostics.insert( key );
     return true;
 }
 
-const char *Kind( const Program &program ) { return program.arb ? "ARB" : "GLSL"; }
-
+// A bind-time rejection. The stage is skipped; the reason is reported once per
+// program and reason and kept for reportShaderPrograms.
 bool Fail( Program &program, const char *reason ) {
-    if ( !program.warnedResource ) {
-        common->Warning( "Vulkan authored %s '%s': %s", Kind( program ), program.name.c_str(), reason );
-        program.warnedResource = true;
+    ++program.skipped;
+    program.lastSkip = reason;
+    if ( Report( std::string( Kind( program ) ) + "|" + program.name, reason ) ) {
+        common->Warning( "Vulkan authored %s '%s': %s; the stage is skipped", Kind( program ), program.name.c_str(), reason );
     }
     return false;
+}
+
+bool IsCurrent( int index ) {
+    for ( const auto &entry : currentPrograms ) {
+        if ( entry.second == index ) { return true; }
+    }
+    return false;
+}
+
+void Release( Program &program ) {
+    if ( program.vertex != VK_NULL_HANDLE ) { vkDestroyShaderModule( vkCtx.device, program.vertex, NULL ); }
+    if ( program.fragment != VK_NULL_HANDLE ) { vkDestroyShaderModule( vkCtx.device, program.fragment, NULL ); }
+    program.vertex = program.fragment = VK_NULL_HANDLE;
+    VK_Exec_ReleaseAuthoredMaterialPipelines( program.identity );
+    compilerBytes -= Min( compilerBytes, program.bytes );
+    program.bytes = 0;
+}
+
+// The version index a new program takes: appended below capacity, otherwise
+// the least recently bound version that no current key names and that no
+// frame still in flight can reference (its slot's fence has been waited since
+// it was last bound). -1 when every version is current or in flight.
+int AcquireSlot() {
+    if ( programs.size() < MaxPrograms ) { return static_cast<int>( programs.size() ); }
+    int best = -1;
+    for ( size_t i = 0; i < programs.size(); ++i ) {
+        const Program &candidate = *programs[i];
+        if ( candidate.lastUseFrame + VK_FRAMES_IN_FLIGHT > frameSerial || IsCurrent( static_cast<int>( i ) ) ) { continue; }
+        if ( best < 0 || candidate.lastUseFrame < programs[best]->lastUseFrame ) { best = static_cast<int>( i ); }
+    }
+    if ( best >= 0 ) {
+        Release( *programs[best] );
+        ++evictions;
+    }
+    return best;
+}
+
+// A key the full table refused. Retried once the versions in flight have
+// retired, or at the next reload; until then its sources are not read again.
+bool RecentlyRejected( const std::string &key ) {
+    const auto found = rejectedKeys.find( key );
+    if ( found == rejectedKeys.end() ) { return false; }
+    if ( found->second + VK_FRAMES_IN_FLIGHT > frameSerial ) { return true; }
+    rejectedKeys.erase( found );
+    return false;
+}
+
+void Reject( const std::string &key, const char *kind, const std::string &name ) {
+    rejectedKeys[key] = frameSerial;
+    ++capacityRejections;
+    if ( Report( std::string( kind ) + "|" + name, "capacity" ) ) {
+        common->Warning( "Vulkan authored %s '%s': all %d program versions are current or in flight; the stage is skipped until one retires",
+            kind, name.c_str(), MaxPrograms );
+    }
+}
+
+// Places a new version at slot and accounts its storage.
+Program *Install( std::unique_ptr<Program> program, int slot ) {
+    program->identity = slot;
+    if ( program->bytes > MaxCompilerBytes - Min( compilerBytes, MaxCompilerBytes ) ) {
+        program->compiled = {};
+        // clear() retains string capacity and would defeat the storage bound.
+        std::string().swap( program->vertexSource );
+        std::string().swap( program->fragmentSource );
+        program->arbParameters.clear();
+        program->compiled.diagnostic = "material compiler storage exhausted";
+        program->valid = false;
+        program->bytes = 0;
+    }
+    compilerBytes += program->bytes;
+    currentPrograms[program->key] = slot;
+    if ( slot == static_cast<int>( programs.size() ) ) {
+        programs.push_back( std::move( program ) );
+    } else {
+        programs[slot] = std::move( program );
+    }
+    return programs[slot].get();
+}
+
+size_t StorageBytes( const Program &program ) {
+    return program.vertexSource.size() + program.fragmentSource.size() + program.compiled.diagnostic.size()
+        + program.compiled.vertexSource.size() + program.compiled.fragmentSource.size()
+        + (program.compiled.vertex.size() + program.compiled.fragment.size()) * sizeof( uint32_t );
 }
 
 int ParameterComponents( const newShaderStage_t *stage, int slot ) {
@@ -98,6 +221,7 @@ Program *Find( const newShaderStage_t *stage ) {
     for ( int i = 0; i < stage->numShaderTextures; ++i ) { key += "|t:" + std::string( stage->shaderTextureNames[i] ); }
     auto found = currentPrograms.find( key );
     if ( found != currentPrograms.end() ) { return programs[found->second].get(); }
+    if ( RecentlyRejected( key ) ) { return NULL; }
     oq4material::CompileRequest request;
     char *vertex = NULL, *fragment = NULL;
     int vertexBytes = 0, fragmentBytes = 0;
@@ -125,11 +249,11 @@ Program *Find( const newShaderStage_t *stage ) {
             return &old;
         }
     }
-    if ( CacheFull() ) { return NULL; }
+    const int slot = AcquireSlot();
+    if ( slot < 0 ) { Reject( key, "GLSL", stage->glslProgramName ); return NULL; }
     auto program = std::make_unique<Program>();
     program->name = stage->glslProgramName;
     program->key = key;
-    program->identity = static_cast<int>( programs.size() );
     program->sourcePairFound = sourcePairFound;
     program->vertexSource = request.vertexSource;
     program->fragmentSource = request.fragmentSource;
@@ -142,25 +266,14 @@ Program *Find( const newShaderStage_t *stage ) {
             program->valid = oq4material::CompileGLSL( request, program->compiled );
         } else { program->compiled.diagnostic = "material compiler storage exhausted"; }
     } else { program->compiled.diagnostic = "could not find a complete vertex/fragment source pair"; }
-    const size_t bytes = program->vertexSource.size() + program->fragmentSource.size() + program->compiled.diagnostic.size()
-        + program->compiled.vertexSource.size() + program->compiled.fragmentSource.size()
-        + (program->compiled.vertex.size() + program->compiled.fragment.size()) * sizeof( uint32_t );
-    if ( bytes > MaxCompilerBytes - Min( compilerBytes, MaxCompilerBytes ) ) {
-        program->compiled = {};
-        // clear() retains string capacity and would defeat the storage bound.
-        std::string().swap( program->vertexSource );
-        std::string().swap( program->fragmentSource );
-        program->compiled.diagnostic = "material compiler storage exhausted";
-        program->valid = false;
-    } else { compilerBytes += bytes; }
-    if ( !program->valid ) {
-        common->Warning( "Vulkan authored GLSL '%s': %s", program->name.c_str(), program->compiled.diagnostic.c_str() );
+    program->bytes = StorageBytes( *program );
+    Program *installed = Install( std::move( program ), slot );
+    if ( !installed->valid ) {
+        common->Warning( "Vulkan authored GLSL '%s': %s", installed->name.c_str(), installed->compiled.diagnostic.c_str() );
     } else {
-        common->Printf( "Vulkan: compiled authored GLSL '%s' (%s, %s)\n", program->name.c_str(), vertexPath.c_str(), fragmentPath.c_str() );
+        common->Printf( "Vulkan: compiled authored GLSL '%s' (%s, %s)\n", installed->name.c_str(), vertexPath.c_str(), fragmentPath.c_str() );
     }
-    currentPrograms[key] = program->identity;
-    programs.push_back( std::move( program ) );
-    return programs.back().get();
+    return installed;
 }
 
 // Reads glprogs/<file>. An empty name selects the fixed-function stage.
@@ -188,6 +301,7 @@ Program *FindARB( const char *vertexFile, const char *fragmentFile ) {
     const std::string key = "arb|" + vertexName + "|" + fragmentName;
     auto found = currentPrograms.find( key );
     if ( found != currentPrograms.end() ) { return programs[found->second].get(); }
+    if ( RecentlyRejected( key ) ) { return NULL; }
     oq4material::ARBTranslateRequest request;
     request.vertexName = vertexName.empty() ? "" : "glprogs/" + vertexName;
     request.fragmentName = fragmentName.empty() ? "" : "glprogs/" + fragmentName;
@@ -204,13 +318,14 @@ Program *FindARB( const char *vertexFile, const char *fragmentFile ) {
             return &old;
         }
     }
-    if ( CacheFull() ) { return NULL; }
+    const std::string name = vertexName.empty() ? fragmentName
+        : fragmentName.empty() || vertexName == fragmentName ? vertexName : vertexName + " + " + fragmentName;
+    const int slot = AcquireSlot();
+    if ( slot < 0 ) { Reject( key, "ARB", name ); return NULL; }
     auto program = std::make_unique<Program>();
     program->arb = true;
-    program->name = vertexName.empty() ? fragmentName
-        : fragmentName.empty() || vertexName == fragmentName ? vertexName : vertexName + " + " + fragmentName;
+    program->name = name;
     program->key = key;
-    program->identity = static_cast<int>( programs.size() );
     program->sourcePairFound = sourcesFound;
     program->vertexSource = request.vertexSource;
     program->fragmentSource = request.fragmentSource;
@@ -228,25 +343,14 @@ Program *FindARB( const char *vertexFile, const char *fragmentFile ) {
             program->arbParameters = translation.parameters;
         }
     }
-    const size_t bytes = program->vertexSource.size() + program->fragmentSource.size() + program->compiled.diagnostic.size()
-        + program->compiled.vertexSource.size() + program->compiled.fragmentSource.size()
-        + (program->compiled.vertex.size() + program->compiled.fragment.size()) * sizeof( uint32_t );
-    if ( bytes > MaxCompilerBytes - Min( compilerBytes, MaxCompilerBytes ) ) {
-        program->compiled = {};
-        std::string().swap( program->vertexSource );
-        std::string().swap( program->fragmentSource );
-        program->arbParameters.clear();
-        program->compiled.diagnostic = "material compiler storage exhausted";
-        program->valid = false;
-    } else { compilerBytes += bytes; }
-    if ( !program->valid ) {
-        common->Warning( "Vulkan authored ARB '%s': %s", program->name.c_str(), program->compiled.diagnostic.c_str() );
+    program->bytes = StorageBytes( *program );
+    Program *installed = Install( std::move( program ), slot );
+    if ( !installed->valid ) {
+        common->Warning( "Vulkan authored ARB '%s': %s", installed->name.c_str(), installed->compiled.diagnostic.c_str() );
     } else {
-        common->Printf( "Vulkan: translated authored ARB '%s'\n", program->name.c_str() );
+        common->Printf( "Vulkan: translated authored ARB '%s'\n", installed->name.c_str() );
     }
-    currentPrograms[key] = program->identity;
-    programs.push_back( std::move( program ) );
-    return programs.back().get();
+    return installed;
 }
 
 bool CreateLayouts() {
@@ -281,6 +385,24 @@ bool CreateModule( const std::vector<uint32_t> &code, VkShaderModule &module ) {
     info.codeSize = code.size() * sizeof( uint32_t ); info.pCode = code.data();
     return vkCreateShaderModule( vkCtx.device, &info, NULL, &module ) == VK_SUCCESS;
 }
+
+// The pool this slot's next draw allocates from, chaining a new one when the
+// current pool is full; NULL past MaxPoolsPerSlot.
+VkDescriptorPool DrawPool( int slot ) {
+    FramePools &frame = framePools[slot];
+    const int index = frame.draws / MaxDrawsPerPool;
+    if ( index >= MaxPoolsPerSlot ) { return VK_NULL_HANDLE; }
+    if ( index >= frame.created ) {
+        VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MaxDrawsPerPool},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MaxDrawsPerPool * oq4material::MaxTextures}};
+        VkDescriptorPoolCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        info.maxSets = MaxDrawsPerPool * 2; info.poolSizeCount = 2; info.pPoolSizes = sizes;
+        if ( vkCreateDescriptorPool( vkCtx.device, &info, NULL, &frame.pools[index] ) != VK_SUCCESS ) { return VK_NULL_HANDLE; }
+        frame.created = index + 1;
+    }
+    return frame.pools[index];
+}
 } // namespace
 
 vkGLSLProgramFamily_t VK_MaterialPrograms_NativeFamily( const char *program ) {
@@ -296,7 +418,9 @@ vkGLSLProgramFamily_t VK_MaterialPrograms_NativeFamily( const char *program ) {
     }
     if ( candidate == VK_GLSL_PROGRAM_FAMILY_UNKNOWN ) { return candidate; }
     if ( nativeFamilies.size() >= MaxPrograms ) {
-        if ( !warnedCapacity ) { common->Warning( "Vulkan: native material source cache exhausted" ); warnedCapacity = true; }
+        if ( Report( "native", "capacity" ) ) {
+            common->Warning( "Vulkan: native material source cache exhausted; '%s' is treated as authored", program );
+        }
         return VK_GLSL_PROGRAM_FAMILY_UNKNOWN;
     }
     char *vertex = NULL, *fragment = NULL;
@@ -346,25 +470,57 @@ bool VK_MaterialPrograms_NeedsStencil( const idMaterial *material, const float *
     return false;
 }
 
+bool VK_MaterialPrograms_ReportOnce( const char *subject, const char *reason ) {
+    return Report( subject != NULL ? subject : "", reason != NULL ? reason : "" );
+}
+
 void VK_MaterialPrograms_Reload() {
     currentPrograms.clear();
+    rejectedKeys.clear();
     nativeFamilies.clear();
     arbTranslatable.clear();
-    for ( auto &program : programs ) { program->warnedResource = false; }
+    diagnostics.clear();
+    suppressedDiagnostics = 0;
+    capacityRejections = 0;
+    for ( auto &program : programs ) {
+        program->drawn = program->skipped = 0;
+        program->lastSkip.clear();
+    }
     common->Printf( "Vulkan: authored GLSL sources will be reloaded on use\n" );
 }
 
 void VK_MaterialPrograms_Report() {
-    common->Printf( "Vulkan authored GLSL/ARB programs: %d versions, %zu compiler bytes\n", static_cast<int>( programs.size() ), compilerBytes );
-    for ( const auto &program : programs ) {
-        common->Printf( "  %s %s %s%s\n", program->valid ? "compiled" : "invalid", Kind( *program ), program->name.c_str(),
-            program->loggedDraw ? " (drawn)" : "" );
+    int current = 0, invalid = 0;
+    for ( size_t i = 0; i < programs.size(); ++i ) {
+        current += IsCurrent( static_cast<int>( i ) ) ? 1 : 0;
+        invalid += programs[i]->valid ? 0 : 1;
+    }
+    common->Printf( "Vulkan authored GLSL/ARB programs: %d of %d versions (%d current, %d invalid, %d evicted), %zu of %zu compiler bytes\n",
+        static_cast<int>( programs.size() ), MaxPrograms, current, invalid, evictions, compilerBytes, MaxCompilerBytes );
+    common->Printf( "  since reload: %d capacity rejections, %d suppressed diagnostics; peak %d of %d authored draws per frame\n",
+        capacityRejections, suppressedDiagnostics, peakDraws, MaxDrawsPerPool * MaxPoolsPerSlot );
+    for ( size_t i = 0; i < programs.size(); ++i ) {
+        const Program &program = *programs[i];
+        common->Printf( "  %s %s %s%s drawn=%d skipped=%d%s%s\n", program.valid ? "compiled" : "invalid", Kind( program ),
+            program.name.c_str(), IsCurrent( static_cast<int>( i ) ) ? "" : " (stale)", program.drawn, program.skipped,
+            program.lastSkip.empty() ? "" : " last skip: ", program.lastSkip.c_str() );
+        if ( !program.valid && !program.compiled.diagnostic.empty() ) {
+            common->Printf( "    reason: %s\n", program.compiled.diagnostic.c_str() );
+        }
     }
 }
 
 void VK_MaterialPrograms_BeginFrame( int slot ) {
-    drawCounts[slot] = 0;
-    poolReady[slot] = pools[slot] == VK_NULL_HANDLE || vkResetDescriptorPool( vkCtx.device, pools[slot], 0 ) == VK_SUCCESS;
+    // The slot's fence has just been waited: everything it last recorded,
+    // and every frame before it, has retired.
+    ++frameSerial;
+    FramePools &frame = framePools[slot];
+    peakDraws = Max( peakDraws, frame.draws );
+    frame.draws = 0;
+    frame.ready = true;
+    for ( int i = 0; i < frame.created; ++i ) {
+        if ( vkResetDescriptorPool( vkCtx.device, frame.pools[i], 0 ) != VK_SUCCESS ) { frame.ready = false; }
+    }
 }
 
 namespace {
@@ -373,19 +529,15 @@ namespace {
 bool BindProgram( Program *program, idImage *const images[oq4material::MaxTextures],
         const oq4material::UniformBlock &uniforms, int stateBits, bool separateColor,
         const drawInteraction_t *interaction ) {
-    if ( program == NULL || !program->valid || !VK_Exec_MainRenderingScopeOpen() ) { return false; }
+    if ( program == NULL || !program->valid ) { return false; }
+    program->lastUseFrame = frameSerial;
+    if ( !VK_Exec_MainRenderingScopeOpen() ) { return Fail( *program, "no open rendering scope" ); }
     if ( !CreateLayouts() || !CreateModule( program->compiled.vertex, program->vertex )
         || !CreateModule( program->compiled.fragment, program->fragment ) ) { return Fail( *program, "shader resource allocation failed" ); }
     const int slot = VK_Exec_ActiveFrameSlot();
-    if ( !poolReady[slot] || drawCounts[slot] >= MaxDraws ) { return Fail( *program, "frame descriptor capacity exhausted" ); }
-    if ( pools[slot] == VK_NULL_HANDLE ) {
-        VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MaxDraws},
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MaxDraws * oq4material::MaxTextures}};
-        VkDescriptorPoolCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        info.maxSets = MaxDraws * 2; info.poolSizeCount = 2; info.pPoolSizes = sizes;
-        if ( vkCreateDescriptorPool( vkCtx.device, &info, NULL, &pools[slot] ) != VK_SUCCESS ) { return Fail( *program, "frame descriptor pool allocation failed" ); }
-    }
+    if ( !framePools[slot].ready ) { return Fail( *program, "frame descriptor pool reset failed" ); }
+    const VkDescriptorPool pool = DrawPool( slot );
+    if ( pool == VK_NULL_HANDLE ) { return Fail( *program, "frame descriptor capacity exhausted" ); }
     VkDescriptorImageInfo descriptors[oq4material::MaxTextures] = {};
     // Images Vulkan rendered keep top-down rows; the compiled program flips
     // its 2D coordinates for those slots (GLSLCompiler.cpp FlipHelpers).
@@ -412,9 +564,9 @@ bool BindProgram( Program *program, idImage *const images[oq4material::MaxTextur
     VkDescriptorSet sets[2] = {};
     VkDescriptorSetAllocateInfo allocate = {};
     allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocate.descriptorPool = pools[slot]; allocate.descriptorSetCount = 2; allocate.pSetLayouts = layouts;
+    allocate.descriptorPool = pool; allocate.descriptorSetCount = 2; allocate.pSetLayouts = layouts;
     if ( vkAllocateDescriptorSets( vkCtx.device, &allocate, sets ) != VK_SUCCESS ) { return Fail( *program, "material descriptor allocation failed" ); }
-    ++drawCounts[slot];
+    ++framePools[slot].draws;
     VkWriteDescriptorSet writes[1 + oq4material::MaxTextures] = {};
     for ( int i = 0; i <= oq4material::MaxTextures; ++i ) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -427,6 +579,7 @@ bool BindProgram( Program *program, idImage *const images[oq4material::MaxTextur
     const VkCommandBuffer cmd = VK_Exec_ActiveCmd();
     vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
     vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, NULL );
+    ++program->drawn;
     if ( !program->loggedDraw ) {
         common->Printf( "Vulkan: drawing authored %s '%s'\n", Kind( *program ), program->name.c_str() );
         program->loggedDraw = true;
@@ -475,6 +628,7 @@ bool VK_MaterialPrograms_BindARB( const char *vertexFile, const char *fragmentFi
             || stage->fragmentProgramBindings[unit] == LEGACY_FRAGMENT_BINDING_LIGHT_IMAGE ) ) {
             images[unit] = globalImages->whiteImage;
         } else {
+            program->lastUseFrame = frameSerial;
             return Fail( *program, "fragment program samples a texture unit the material has no fragmentMap for" );
         }
     }
@@ -505,13 +659,16 @@ void VK_MaterialPrograms_Shutdown() {
         if ( program->fragment != VK_NULL_HANDLE ) { vkDestroyShaderModule( vkCtx.device, program->fragment, NULL ); }
     }
     for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; ++i ) {
-        if ( pools[i] != VK_NULL_HANDLE ) { vkDestroyDescriptorPool( vkCtx.device, pools[i], NULL ); }
-        pools[i] = VK_NULL_HANDLE; drawCounts[i] = 0; poolReady[i] = false;
+        FramePools &frame = framePools[i];
+        for ( int pool = 0; pool < frame.created; ++pool ) { vkDestroyDescriptorPool( vkCtx.device, frame.pools[pool], NULL ); }
+        frame = FramePools();
     }
     if ( pipelineLayout != VK_NULL_HANDLE ) { vkDestroyPipelineLayout( vkCtx.device, pipelineLayout, NULL ); }
     if ( uniformLayout != VK_NULL_HANDLE ) { vkDestroyDescriptorSetLayout( vkCtx.device, uniformLayout, NULL ); }
     if ( textureLayout != VK_NULL_HANDLE ) { vkDestroyDescriptorSetLayout( vkCtx.device, textureLayout, NULL ); }
     pipelineLayout = VK_NULL_HANDLE; uniformLayout = textureLayout = VK_NULL_HANDLE;
-    programs.clear(); currentPrograms.clear(); nativeFamilies.clear(); arbTranslatable.clear(); compilerBytes = 0; warnedCapacity = false;
+    programs.clear(); currentPrograms.clear(); rejectedKeys.clear(); nativeFamilies.clear(); arbTranslatable.clear();
+    diagnostics.clear(); suppressedDiagnostics = capacityRejections = evictions = peakDraws = 0;
+    compilerBytes = 0; frameSerial = 1;
 }
 #endif

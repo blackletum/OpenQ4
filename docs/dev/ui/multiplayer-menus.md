@@ -54,7 +54,7 @@ over it while all of these hold (`idSessionLocal::UpdateRetainedMultiplayer`):
   `ui_autoJoin` never sees the offer), Escape otherwise; and that card's gate
   is on;
 - the game answers `retainedMultiplayerCover` with the protocol the session
-  expects (`mp.protocol` 1) and allows the cover now (`mp.cover_allowed`). It
+  expects (`mp.protocol` 2) and allows the cover now (`mp.cover_allowed`). It
   refuses in an Arena Campaign match, which keeps its own menu. Over the join
   offer the card's softening replaces the join panel's blur, which comes back
   if the stock menu takes the offer over.
@@ -150,9 +150,13 @@ crossed in red when the player is muted; the friend silhouette, 0.125 when the
 player is not a friend; the name, the score and the ping. The name, score and
 ping headings run once above the lists. The player's own team comes first
 (Marines while spectating), then the other team, then the spectators, whose
-band shows only while there are any. Each row is 24 dp and shrinks with the
-others, down to 14 dp, to share what the bands leave, so sixteen players and
-three bands fit the page; the generator fails if they would not.
+band shows only while there are any. Each row keeps its readable 24 dp pitch.
+The rows and team bands scroll below fixed column headings, with the existing
+editable list scrollbar in a separate 36 dp gutter. Every list declares all 32
+engine connection slots, so a crowded team or spectator list is not truncated.
+The same construction serves Welcome and the summary's Statistics and Scoreboard
+pages. Short read-only lists keep focus on their tab; overflowing ones focus the
+scrollbar. Interactive lists reveal the selected row when the page opens.
 
 A list keeps its order while the menu stays open and sorts again by score only
 when the menu opens or the list's players change, so a row never moves under
@@ -167,7 +171,7 @@ load with it inside the level load. A remote client asks the server for
 statistics older than five seconds, one request at a time, as the stock page
 does, and shows "-" until the answer arrives.
 
-Mute and Friend close the page, in-game plates labelled as the stock page
+Mute and Friend follow the statistics as in-game plates labelled as the stock page
 labels them (MUTE PLAYER or UNMUTE PLAYER, ADD FRIEND or REMOVE FRIEND). On the
 player's own row both are unavailable, dimmed with their lock and reason, and
 shake when chosen. Muting is the stock mute, which also tells the server.
@@ -356,8 +360,9 @@ them back from the settings themselves. The page opens on the name.
 Send Voice, Receive Voice and Voice Echo as check boxes, the receive volume
 (0 to 1) and the microphone's input volume (0 to 10) as sliders; then the key
 bound to push to talk ("Not bound" when there is none) with Controls to
-rebind it, and the microphone's level and Test Microphone, unavailable with
-the reason "Voice chat is not available." while voice chat does not work.
+rebind it, and the microphone's level and Test Microphone. These now use the
+[voice backend](../audio-voice-evidence.md#multiplayer-voice); unavailable
+devices or disabled microphone access retain an explanatory disabled state.
 
 ### The Welcome card
 
@@ -447,7 +452,8 @@ time to the next map in the value color (the review's end,
   speaker, friend, name, the clan or a BOT tag, SCORE, KILLS in the flag modes
   (as the scoreboard decides), DEATHS, minutes and ping beside the
   network-quality bars; each list opens with its band, the spectators' only
-  while there are any. Nothing on the page takes focus.
+  while there are any. Fixed headings stay above the scrolling rows. The scrollbar
+  takes navigation when the list overflows; otherwise the tab keeps focus.
 
 The game publishes the summary with the lists: `mp.summary.result`,
 `_color`, `_detail` and `_score`, `mp.summary.teams`, the panels
@@ -502,7 +508,10 @@ then offered Players, Server and Console. The card's page
   them, each value checked by the game against its setting's range. Apply
   changes, unavailable until something would change, sends the draft as the
   stock page's Apply did (`HandleServerAdminCommands`) and closes the menu;
-  the server restarts the map for a new map, game type or buying.
+  the server restarts the map for a new map, game type or buying. The
+  controller's Menu button presses Apply changes while there is something
+  to apply, and otherwise closes the card ([Menu button](input-routing.md#menu-button-24-october-2026));
+  for a controller the plate ends with the Menu button's glyph.
 - **Console.** The remote console's twelve newest lines in the stock
   console's frame, and a field whose Enter runs the command through the
   stock console's own input (`admin command`): on a listen server, the
@@ -552,7 +561,7 @@ only when it changes and moving `mp.revision` when anything did:
   `mp.rotation<0-15>`, `mp.rotation_count` and `mp.rotation_current`;
 - the Players page: per list (`a` the player's own team or everyone, `b` the
   other team, `s` the spectators) `mp.players.<list>.{shown,title,color,score,count}`
-  and sixteen rows `mp.players.<list><0-15>.{client,name,score,ping,local,friend,muted}`;
+  and 32 rows `mp.players.<list><0-31>.{client,name,score,ping,local,friend,muted}`;
   the statistics `mp.stat.{client,name,color,kills,deaths,score,flag_mode}`,
   `mp.stat.acc<0-9>` and `mp.stat.award<0-7>`; and Mute and Friend as
   `mp.mute.*` and `mp.friend.*`, shaped like the Team page's actions;
@@ -660,9 +669,9 @@ The card's verbs are the stock menu's own commands with its selection sound:
 | `mpDisconnect` (after the confirmation) | `play main_menu_selection ; disconnect` |
 | `mpStockPage` | the stock page's own button, by `card.stock_page` |
 | `mpTeamAction` | `play main_menu_selection ; retained team <slot>`, by `card.team_action` |
-| `mpSelectPlayer` | `play main_menu_selection ; retained select <client>`, by `card.client` |
-| `mpMute` | `play main_menu_selection ; retained mute <client>`, by `card.client` |
-| `mpFriend` | `play main_menu_selection ; retained friend <client>`, by `card.client` |
+| `mpSelectPlayer` | `play main_menu_selection ; retained select <client> <identity>`, frozen event operands |
+| `mpMute` | `play main_menu_selection ; retained mute <client> <identity>`, frozen event operands |
+| `mpFriend` | `play main_menu_selection ; retained friend <client> <identity>`, frozen event operands |
 | `mpWelcomeAction` | `play main_menu_selection ; retained welcome <slot>`, by `card.welcome_action` |
 | `mpVoteYes`, `mpVoteNo` | `play main_menu_selection ; retained vote yes\|no` |
 | `mpCallVote` | `play main_menu_selection ; retained callVote` |
@@ -738,7 +747,9 @@ owner's review:
 - **Width (D8).** As above: the card grows past 648 dp to fit the strip.
 - **Match sections (D3).** The triggers page Match Control's sections, as
   Left and Right do along the inner strip; section 14.18's bumpers keep the
-  main strip.
+  main strip. The inner strip ends with the triggers' glyphs for a
+  controller ([trigger glyphs](input-routing.md#trigger-glyphs-24-october-2026)),
+  as the Admin page's does.
 - **Match actions.** Rows with their reasons beside them rather than the
   stock page's buttons and shared Action line: the labels run too long for
   plates in French and German, and a reason beside its action needs no
@@ -784,11 +795,58 @@ owner's review:
   Rows show only for the fields the drafted game type uses. The ballots and
   Call Vote close the menu, as the stock buttons do; the rows keep it open.
   The heading of the call reads NEW VOTE, so it never repeats the button.
-- **Players page.** Rows run 14 to 24 dp, tighter than the held scoreboard,
-  so sixteen players fit beside the statistics without scrolling; the lists
+- **Players page.** Rows keep a 24 dp pitch and scroll below fixed headings;
+  the earlier 14-to-24 dp compression was replaced on 23 October. The lists
   hold their order while the menu stays open; Mute and Friend refuse the
   player's own row; and Friend is the player's own mark, since PC has no
   friends service.
+
+## Full roster scrolling, 23 October 2026
+
+This UI-03 increment begins at engine
+`f5bd60838ae25961fb9392ba71a9ab6c6a9c1437`. The game publishes up to all 32
+connection slots per player list and kick-choice catalog. Welcome, Escape's
+Players page and the summary's Statistics and Scoreboard share fixed headings,
+24 dp rows and the existing vector scrollbar. Their body clips separately from
+the headings and statistics. Home/End, paging and focus reveal reach the late
+rows; score refreshes keep scroll position, adapter snapshots restore it, and
+roster shrinkage clamps obsolete offsets. No new display strings or bitmap art
+are introduced.
+
+`UiRetainedRosterChecks.inl` executes the production documents through the real
+Runtime/Rml layout. It covers 32 entries in one list, ten players on each team
+plus twelve spectators, the selected last row, fixed headings, score refresh,
+short-list clamping, and the last of 31 other clients in the kick chooser. The
+existing card, vote/match, settings/Welcome, summary and pointer-reach suites
+remain part of the regression set. The session gate checks the game/document
+catalog agreement and existing routing.
+
+`tools/ui/capture_multiplayer_rosters.py` uses the staged engine on `mp/q4dm1`
+with a live three-player menu, then supplies explicit 32-slot fixtures to the
+same production documents through `testGUI`. Every capture comes from the
+engine's `screenshot` command. Its readback oracle checks all four views at the
+top, end, restored end, mixed-team end and after the list shrinks. The companion
+oracle tests reject missing stages, stale offsets, clipped rows, moving headings
+and failed semantic operations.
+
+The full Windows build and staging pass, followed by all six native suites,
+the session gate, four capture-oracle tests and a clean generated-document
+check. OpenGL at 1280×720 and Vulkan at 1920×1080 each pass all 20 stage
+readbacks. All 30 engine screenshots were visually reviewed: the final row and
+spectator remain fully visible, the headings stay fixed and the scrollbar
+does not cover the rows. Runtime binaries and source documents remained
+unchanged during each capture run. The source-bound summary, logs, captures
+and review sheets are retained under `.tmp/ui-roster-capacity/`, with
+`validation-evidence.json` binding the completed checks. Both runs report zero
+errors and zero retained-UI warnings; each retains 190 existing stock/bot
+precache warnings, including missing AAS data. The debug build does not provide
+optimized performance evidence.
+
+This is bounded menu coverage. The server's current `si_maxPlayers` CVar still
+caps configured matches at 16; the 32-slot fixtures do not qualify a 32-client
+network session. Full slot-identity safety, map catalogs beyond 48, physical
+devices, portrait/long-language layouts and optimized performance remain with
+UI-03/UI-02/UI-07. No requirement, resource or final gate is accepted here.
 
 ## Validation
 
@@ -843,7 +901,7 @@ Evidence: `.tmp/ui/retained-mp-team-server/validation-evidence.json`, SHA-256
 The Players page adds:
 
 - gate cases for `mpSelectPlayer`, `mpMute` and `mpFriend`: the client the
-  card records reaches the game as `retained select|mute|friend <client>`
+  card records reaches the game as `retained select|mute|friend <client> <identity>`
   without closing the menu, and a client outside the server's slots is
   refused; pins that the game acts only on a listed client, never mutes or
   befriends the player's own row and keeps the menu open, that the game and
@@ -1115,14 +1173,13 @@ The card's acceptance continues under `FLOW-046`.
   deathmatch does.
 - The stock team-refusal messages are English in French and Italian, whose
   tables lack them.
-- Voice chat does not work yet (capture and playback are off), so Mute records
-  the choice and tells the server without anything to silence.
-- Mute and friend marks belong to a client slot, as the stock page's do: a
-  player who takes a departed player's slot inherits them until the map
-  changes.
-- The lists have no BOT tag, dead-player mark or network-quality bars (the
-  remastered scoreboard's additions), and the rows' pitch never scrolls: a
-  server past sixteen clients clips the last rows.
+- [Player identity guards](player-identity.md) now protect local friend/mute
+  marks, selections and retained player requests across slot reuse. Delayed
+  remote voice-mute packets still name only a slot; their server-side race and
+  identity protection for kick/admin targets remain under UI-03.
+- The Players lists still lack the BOT tag, dead-player mark and network-quality
+  bars used by the remastered scoreboard; their capacity and scrolling are
+  covered by the bounded increment above.
 - Left and right move focus between the lists and the statistics; they do not
   switch tabs as section 14.18 asks (decision D2 is open).
 - The Welcome card's Join page has no Watch for Tourney's arenas and no
@@ -1130,8 +1187,9 @@ The card's acceptance continues under `FLOW-046`.
   faction mark.
 - The Settings pages have no model preview (retained documents have no 3D
   view).
-- The Voice page's settings take effect, but voice chat itself does not work
-  yet, so its meter and test are unavailable.
+- Voice capture/playback, the meter and local test have since been implemented;
+  see [current voice evidence](../audio-voice-evidence.md#multiplayer-voice).
+  Physical microphones, permissions and device qualification remain separate.
 - The crosshair slider runs to twenty, the stock list; a mod's longer list
   is reached only by the classic picker.
 - On a remote client a running vote's time left counts from when the vote

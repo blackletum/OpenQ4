@@ -14,6 +14,7 @@ their layout, and corrupt/truncated streams fail at a bounded record.
 #include "AsyncNetwork.h"
 
 #include "../Session_local.h"
+#include "../../idlib/NumericString.h"
 
 #include <time.h>
 
@@ -43,6 +44,11 @@ static const int MVD_MAX_STREAM_RECORDS = 5000000;
 static const int MVD_MAX_INITIALIZATION_RECORDS = 256;
 static const int MVD_MAX_RECORDS_PER_FRAME = 4096;
 static const int MVD_MAX_INSTANCES = 8;
+// The game's start-state powerup mask is POWERUP_MAX bits wide: 16 before The
+// Awakening's two powerups were added, 18 since. The engine accepts any width a
+// 32-bit mask allows and lets the record layout choose one.
+static const int MVD_START_STATE_MIN_POWERUP_BITS = 16;
+static const int MVD_START_STATE_MAX_POWERUP_BITS = 32;
 // Formats 1.0/1.1 stored the whole game-DLL ABI version even though their
 // record grammar did not change. API 40 only appended the versioned MVD
 // callbacks and retained the API-39 snapshot/reliable readers. The prior
@@ -353,6 +359,68 @@ static bool MVD_ValidateReliablePayload( const idList<byte> &payload, unsigned s
 	return true;
 }
 
+/*
+==================
+MVD_StartStateMatchesPlayers
+
+Whether a multiplayer start state, read with this powerup width, is exactly the
+network-state player list: the match time, one record per listed client in
+ascending order with a valid instance, then the MAX_CLIENTS sentinel and nothing
+but byte padding. The first failure is described in error.
+==================
+*/
+static bool MVD_StartStateMatchesPlayers( const byte *data, int length, int powerupBits,
+		const bool seenClient[MAX_ASYNC_CLIENTS], int playerCount, idStr &error ) {
+	idBitMsg startState;
+	startState.Init( data, length );
+	startState.SetSize( length );
+	startState.BeginReading();
+	if ( startState.GetRemainingReadBits() < 48 ) {
+		if ( error.IsEmpty() ) {
+			error = "short MVD multiplayer start state";
+		}
+		return false;
+	}
+	startState.ReadLong();
+	int previousStartClient = -1;
+	int startClientCount = 0;
+	for ( int i = 0; i <= MAX_ASYNC_CLIENTS; i++ ) {
+		if ( startState.GetRemainingReadBits() < 16 ) {
+			break;
+		}
+		const int clientNum = startState.ReadShort();
+		if ( clientNum == MAX_ASYNC_CLIENTS ) {
+			if ( startClientCount == playerCount && startState.GetRemainingReadBits() < 8 ) {
+				return true;
+			}
+			break;
+		}
+		if ( clientNum < 0 || clientNum >= MAX_ASYNC_CLIENTS ||
+			 !seenClient[clientNum] || clientNum <= previousStartClient ||
+			 startState.GetRemainingReadBits() < powerupBits + 5 ) {
+			if ( error.IsEmpty() ) {
+				error = va( "invalid MVD multiplayer start-state client %d", clientNum );
+			}
+			return false;
+		}
+		startState.ReadBits( powerupBits );
+		const int instance = startState.ReadBits( 4 );
+		if ( instance < 0 || instance >= MVD_MAX_INSTANCES ) {
+			if ( error.IsEmpty() ) {
+				error = va( "invalid MVD multiplayer instance %d", instance );
+			}
+			return false;
+		}
+		startState.ReadBits( 1 );
+		previousStartClient = clientNum;
+		startClientCount++;
+	}
+	if ( error.IsEmpty() ) {
+		error = "unterminated or oversized MVD multiplayer start state";
+	}
+	return false;
+}
+
 static bool MVD_ValidateSnapshotPayload( const idList<byte> &payload, unsigned short version, idStr &error ) {
 	if ( version != 1 && version != 2 ) {
 		error = va( "unsupported MVD snapshot version %u", version );
@@ -516,6 +584,7 @@ void idMultiViewDemo::Init() {
 	cmdSystem->AddCommand( "stopMVD", Stop_f, CMD_FL_SYSTEM, "stops MVD recording or playback" );
 	cmdSystem->AddCommand( "playMVD", Play_f, CMD_FL_SYSTEM, "plays a multi-view demo" );
 	cmdSystem->AddCommand( "mvdInfo", Info_f, CMD_FL_SYSTEM, "validates and describes a multi-view demo" );
+	cmdSystem->AddCommand( "mvdRecover", Recover_f, CMD_FL_SYSTEM, "salvages the complete part of an interrupted .mvd.part recording into a new demo" );
 	cmdSystem->AddCommand( "mvdStatus", Status_f, CMD_FL_SYSTEM, "reports multi-view playback time and camera state" );
 	cmdSystem->AddCommand( "mvdPause", Pause_f, CMD_FL_SYSTEM, "toggles MVD playback pause" );
 	cmdSystem->AddCommand( "mvdSeek", Seek_f, CMD_FL_SYSTEM, "seeks to an MVD time in seconds" );
@@ -523,6 +592,8 @@ void idMultiViewDemo::Init() {
 	cmdSystem->AddCommand( "mvdSpeed", Speed_f, CMD_FL_SYSTEM, "sets MVD playback speed" );
 	cmdSystem->AddCommand( "mvdStep", Step_f, CMD_FL_SYSTEM, "advances a paused MVD by simulation frames" );
 	cmdSystem->AddCommand( "mvdFollowNext", FollowNext_f, CMD_FL_SYSTEM, "follows the next player in an MVD" );
+	cmdSystem->AddCommand( "mvdFollowPrev", FollowPrev_f, CMD_FL_SYSTEM, "follows the previous player in an MVD" );
+	cmdSystem->AddCommand( "mvdFollow", Follow_f, CMD_FL_SYSTEM, "follows an MVD player: mvdFollow [next|prev|free|<slot>|<name>]" );
 	cmdSystem->AddCommand( "mvdFreeRoam", FreeRoam_f, CMD_FL_SYSTEM, "leaves player follow mode for free flight" );
 
 	// Quake 4-compatible command names.  The file format remains .mvd rather
@@ -714,6 +785,104 @@ void idMultiViewDemo::FollowNext() {
 		preferredFollowClient = game->GetDemoFollowClient();
 		forcePresentationFrame = true;
 	}
+}
+
+void idMultiViewDemo::FollowPrev() {
+	if ( state == MVD_PLAYING && game != NULL && game->SetDemoFollowClient( DEMO_FOLLOW_PREV ) ) {
+		preferredFollowClient = game->GetDemoFollowClient();
+		forcePresentationFrame = true;
+	}
+}
+
+/*
+==================
+idMultiViewDemo::FollowClient
+
+A recorded player chosen by slot. The game restores a saved camera without an
+eligibility check, because a round reset can precede the target's next active
+snapshot, so a direct choice first requires the slot to hold a recorded player.
+UpdateSpectating still releases a camera the recording does not allow before
+it is presented.
+==================
+*/
+bool idMultiViewDemo::FollowClient( int clientNum ) {
+	if ( state != MVD_PLAYING || game == NULL || clientNum < 0 || clientNum >= MAX_ASYNC_CLIENTS ||
+		game->GetUserInfo( clientNum ) == NULL || !game->SetDemoFollowClient( clientNum ) ) {
+		return false;
+	}
+	preferredFollowClient = clientNum;
+	forcePresentationFrame = true;
+	return true;
+}
+
+/*
+==================
+idMultiViewDemo::FindFollowClient
+
+A slot number, or a player name: an exact match ignoring colours and case,
+otherwise the only name that contains the text. Returns -1 when no recorded
+player matches and -2 when several names do.
+==================
+*/
+int idMultiViewDemo::FindFollowClient( const char *text ) const {
+	if ( state != MVD_PLAYING || game == NULL || text == NULL || text[ 0 ] == '\0' ) {
+		return -1;
+	}
+	int slot = 0;
+	if ( idNumericString::ParseUnsignedBounded( text, MAX_ASYNC_CLIENTS - 1, slot ) ) {
+		return game->GetUserInfo( slot ) != NULL ? slot : -1;
+	}
+	idStr wanted = text;
+	wanted.RemoveColors();
+	wanted.ToLower();
+	if ( wanted.IsEmpty() ) {
+		return -1;
+	}
+	int partial = -1;
+	int partialCount = 0;
+	for ( int i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
+		const idDict *info = game->GetUserInfo( i );
+		if ( info == NULL ) {
+			continue;
+		}
+		idStr name = info->GetString( "ui_name" );
+		name.RemoveColors();
+		name.ToLower();
+		if ( name == wanted ) {
+			return i;
+		}
+		if ( name.Find( wanted.c_str() ) >= 0 ) {
+			partial = i;
+			partialCount++;
+		}
+	}
+	if ( partialCount > 1 ) {
+		return -2;
+	}
+	return partial;
+}
+
+/*
+==================
+idMultiViewDemo::CopyFollowName
+
+The recorded player's name without colour codes, for the playback overlay.
+==================
+*/
+bool idMultiViewDemo::CopyFollowName( int clientNum, idStr &name ) const {
+	name.Clear();
+	if ( state != MVD_PLAYING || game == NULL || clientNum < 0 || clientNum >= MAX_ASYNC_CLIENTS ) {
+		return false;
+	}
+	const idDict *info = game->GetUserInfo( clientNum );
+	if ( info == NULL ) {
+		return false;
+	}
+	name = info->GetString( "ui_name" );
+	name.RemoveColors();
+	name.StripLeading( ' ' );
+	name.StripTrailing( ' ' );
+	return !name.IsEmpty();
 }
 
 void idMultiViewDemo::FreeRoam() {
@@ -1296,46 +1465,20 @@ bool idMultiViewDemo::ValidateNetworkStateRecord( const record_t &record, idStr 
 			// Current protocol start-state body: match time followed by sorted
 			// client records and a MAX_CLIENTS sentinel. Validate the client
 			// indexes before ClientReadStartState dereferences entities[client].
-			idBitMsg startState;
-			startState.Init( bytes + cursor, messageBytes );
-			startState.SetSize( messageBytes );
-			startState.BeginReading();
-			if ( startState.GetRemainingReadBits() < 48 ) {
-				error = "short MVD multiplayer start state";
-				return false;
+			// A record is a client short, the game's powerup mask, a 4-bit
+			// instance and a spectate bit. The mask is POWERUP_MAX bits wide,
+			// which the engine cannot know and which grew from 16 to 18 with The
+			// Awakening's powerups, so accept the width that reads as exactly
+			// the player list above.
+			idStr startError;
+			bool parsed = false;
+			for ( int powerupBits = MVD_START_STATE_MIN_POWERUP_BITS;
+				  !parsed && powerupBits <= MVD_START_STATE_MAX_POWERUP_BITS; powerupBits++ ) {
+				parsed = MVD_StartStateMatchesPlayers( bytes + cursor, messageBytes, powerupBits,
+					seenClient, playerCount, startError );
 			}
-			startState.ReadLong();
-			int previousStartClient = -1;
-			int startClientCount = 0;
-			bool terminated = false;
-			for ( int i = 0; i <= MAX_ASYNC_CLIENTS; i++ ) {
-				if ( startState.GetRemainingReadBits() < 16 ) {
-					break;
-				}
-				const int clientNum = startState.ReadShort();
-				if ( clientNum == MAX_ASYNC_CLIENTS ) {
-					terminated = true;
-					break;
-				}
-				if ( clientNum < 0 || clientNum >= MAX_ASYNC_CLIENTS ||
-					 !seenClient[clientNum] || clientNum <= previousStartClient ||
-					 startState.GetRemainingReadBits() < 21 ) {
-					error = va( "invalid MVD multiplayer start-state client %d", clientNum );
-					return false;
-				}
-				startState.ReadShort();
-				const int instance = startState.ReadBits( 4 );
-				if ( instance < 0 || instance >= 8 ) {
-					error = va( "invalid MVD multiplayer instance %d", instance );
-					return false;
-				}
-				startState.ReadBits( 1 );
-				previousStartClient = clientNum;
-				startClientCount++;
-			}
-			if ( !terminated || startClientCount != playerCount ||
-				 startState.GetRemainingReadBits() >= 8 ) {
-				error = "unterminated or oversized MVD multiplayer start state";
+			if ( !parsed ) {
+				error = startError;
 				return false;
 			}
 		} else if ( messageBytes < 16 ) {
@@ -3052,6 +3195,188 @@ bool idMultiViewDemo::Inspect( const idCmdArgs &args ) {
 
 /*
 ==================
+idMultiViewDemo::Recover
+
+Salvages an interrupted recording. A .mvd.part is the staged stream a recording
+leaves behind when it never reached its clean end. Every record is length-
+delimited and checksummed, so its complete prefix is still valid. This copies
+the header and every complete record, up to the first truncated or corrupt one,
+into a new staged stream, rebuilds the timeline index, appends the end record
+the recorder would have written at that point and publishes the result under a
+new name. The source is never modified and no existing demo is overwritten.
+==================
+*/
+bool idMultiViewDemo::Recover( const idCmdArgs &args ) {
+	if ( state != MVD_IDLE ) {
+		common->Printf( "Stop the active MVD before recovering a recording\n" );
+		return false;
+	}
+	if ( args.Argc() != 2 ) {
+		common->Printf( "usage: %s <demo.mvd.part>\n", args.Argv( 0 ) );
+		return false;
+	}
+	// The writer state below is borrowed from an idle recorder; start it clean.
+	Clear();
+
+	idStr sourcePath = args.Argv( 1 );
+	sourcePath.BackSlashesToSlashes();
+	if ( sourcePath.IsEmpty() || sourcePath.Find( ".." ) >= 0 || sourcePath.Find( ":" ) >= 0 ||
+		 sourcePath[0] == '/' ) {
+		common->Warning( "Unsafe or empty MVD path" );
+		return false;
+	}
+	if ( idStr::Icmpn( sourcePath.c_str(), "demos/", 6 ) != 0 ) {
+		sourcePath = "demos/" + sourcePath;
+	}
+	const char *partSuffix = ".part";
+	const int partLength = static_cast<int>( strlen( partSuffix ) );
+	if ( sourcePath.Length() <= partLength ||
+		 idStr::Icmp( sourcePath.c_str() + sourcePath.Length() - partLength, partSuffix ) != 0 ) {
+		sourcePath.DefaultFileExtension( ".mvd" );
+		sourcePath += partSuffix;
+	}
+
+	idFile *source = fileSystem->OpenFileRead( sourcePath.c_str(), true );
+	if ( source == NULL ) {
+		common->Printf( "MVD_RECOVER missing source=\"%s\"\n", sourcePath.c_str() );
+		return false;
+	}
+	header_t sourceHeader;
+	if ( !ReadHeader( source, sourceHeader ) ) {
+		common->Printf( "MVD_RECOVER failed source=\"%s\" reason=\"header: %s\"\n", sourcePath.c_str(), lastError.c_str() );
+		fileSystem->CloseFile( source );
+		return false;
+	}
+
+	// demos/<stem>_recovered.mvd, or the next free numbered name.
+	idStr stem = sourcePath;
+	stem.StripPath();
+	stem.StripFileExtension();
+	stem.StripFileExtension();
+	stem += "_recovered";
+	idCmdArgs nameArgs;
+	nameArgs.AppendArg( args.Argv( 0 ) );
+	nameArgs.AppendArg( stem.c_str() );
+	fileName = BuildRecordingName( nameArgs );
+	if ( fileName.IsEmpty() ) {
+		common->Printf( "MVD_RECOVER failed source=\"%s\" reason=\"no unused name\"\n", sourcePath.c_str() );
+		fileSystem->CloseFile( source );
+		Clear();
+		return false;
+	}
+	tempFileName = fileName;
+	tempFileName += partSuffix;
+	file = fileSystem->OpenFileWrite( tempFileName.c_str(), "fs_savepath" );
+	if ( file == NULL ) {
+		common->Printf( "MVD_RECOVER failed source=\"%s\" reason=\"cannot open %s\"\n", sourcePath.c_str(), tempFileName.c_str() );
+		fileSystem->CloseFile( source );
+		Clear();
+		return false;
+	}
+
+	header = sourceHeader;
+	header.indexOffset = 0;
+	lastSnapshotGameFrame = header.startGameFrame;
+	lastSnapshotGameTime = header.startGameTime;
+	int lastLiveFrame = header.startGameFrame;
+	int lastLiveTime = header.startGameTime;
+	int discarded = 0;
+	idStr tail = "end of file";
+	bool ok = WriteHeader();
+	while ( ok ) {
+		record_t record;
+		const readResult_t result = ReadRecord( source, record );
+		if ( result == MVD_READ_EOF ) {
+			break;
+		}
+		if ( result == MVD_READ_ERROR ) {
+			// The interrupted tail: everything before it is intact.
+			tail = lastError;
+			break;
+		}
+		if ( record.type == MVD_RECORD_INDEX || record.type == MVD_RECORD_END ) {
+			// A finalize that failed part-way leaves these; both are rebuilt below.
+			discarded++;
+			continue;
+		}
+		if ( recordCount >= MVD_MAX_STREAM_RECORDS ) {
+			tail = "stream record limit";
+			break;
+		}
+		const int outputOffset = file->Tell();
+		if ( !WriteRecord( record.type, record.version, record.flags, record.payload.Ptr(), record.payload.Num(), false ) ) {
+			ok = false;
+			break;
+		}
+		if ( MVD_IsLiveRecord( record.type ) && record.payload.Num() >= 8 ) {
+			lastLiveFrame = Max( lastLiveFrame, static_cast<int>( MVD_ReadLittleUInt( record.payload.Ptr() ) ) );
+			lastLiveTime = Max( lastLiveTime, static_cast<int>( MVD_ReadLittleUInt( record.payload.Ptr() + 4 ) ) );
+		}
+		if ( record.type == MVD_RECORD_RELIABLE ) {
+			reliableCount++;
+		} else if ( record.type == MVD_RECORD_SNAPSHOT && record.payload.Num() >= 12 ) {
+			// The same index the recorder builds in CaptureServerFrame.
+			const int gameTime = static_cast<int>( MVD_ReadLittleUInt( record.payload.Ptr() + 4 ) );
+			snapshotSequence = static_cast<int>( MVD_ReadLittleUInt( record.payload.Ptr() + 8 ) );
+			snapshotCount++;
+			lastSnapshotGameFrame = static_cast<int>( MVD_ReadLittleUInt( record.payload.Ptr() ) );
+			lastSnapshotGameTime = gameTime;
+			lastSnapshotFileOffset = outputOffset;
+			if ( recordingIndex.Num() == 0 ||
+				 ( gameTime - recordingIndex[recordingIndex.Num() - 1].gameTime >= MVD_INDEX_INTERVAL_MS &&
+				   recordingIndex.Num() < MVD_MAX_INDEX_ENTRIES ) ) {
+				indexEntry_t index;
+				index.gameTime = gameTime;
+				index.fileOffset = outputOffset;
+				index.sequence = snapshotSequence;
+				recordingIndex.Append( index );
+			}
+		}
+	}
+	const int sourceBytes = source->Length();
+	fileSystem->CloseFile( source );
+
+	if ( ok && snapshotCount == 0 ) {
+		lastError = "no complete snapshot to recover";
+		ok = false;
+	}
+	if ( ok ) {
+		ok = WriteIndexRecord();
+	}
+	if ( ok ) {
+		idFile_Memory payload( "MVD end" );
+		payload.WriteInt( lastLiveFrame );
+		payload.WriteInt( lastLiveTime );
+		payload.WriteInt( snapshotCount );
+		payload.WriteInt( reliableCount );
+		payload.WriteInt( recordCount );
+		ok = WriteRecord( MVD_RECORD_END, 1, 0, payload.GetDataPtr(), payload.Length(), false );
+	}
+	if ( ok && !file->Sync() ) {
+		lastError = "sync failed";
+		ok = false;
+	}
+	fileSystem->CloseFile( file );
+	file = NULL;
+	if ( ok && !fileSystem->PromoteFile( tempFileName.c_str(), fileName.c_str(), "fs_savepath" ) ) {
+		lastError = "could not publish the recovered stream";
+		ok = false;
+	}
+
+	if ( ok ) {
+		common->Printf( "MVD_RECOVER recovered source=\"%s\" output=\"%s\" snapshots=%d reliables=%d records=%d duration=%.1f discarded=%d tail=\"%s\" sourceBytes=%d\n",
+			sourcePath.c_str(), fileName.c_str(), snapshotCount, reliableCount, recordCount,
+			Max( 0, lastLiveTime - header.startGameTime ) * 0.001f, discarded, tail.c_str(), sourceBytes );
+	} else {
+		common->Printf( "MVD_RECOVER failed source=\"%s\" reason=\"%s\"\n", sourcePath.c_str(), lastError.c_str() );
+		fileSystem->RemoveFile( tempFileName.c_str(), "fs_savepath" );
+	}
+	Clear();
+	return ok;
+}
+
+/*
+==================
 Command callbacks
 ==================
 */
@@ -3096,11 +3421,31 @@ void idMultiViewDemo::Info_f( const idCmdArgs &args ) {
 	idAsyncNetwork::multiViewDemo.Inspect( args );
 }
 
+void idMultiViewDemo::Recover_f( const idCmdArgs &args ) {
+	idAsyncNetwork::multiViewDemo.Recover( args );
+}
+
 void idMultiViewDemo::Status_f( const idCmdArgs &args ) {
 	const idMultiViewDemo &demo = idAsyncNetwork::multiViewDemo;
 	common->Printf( "MVD_STATUS playing=%d paused=%d seeking=%d time=%d duration=%d follow=%d\n",
 		demo.IsPlaying(), demo.IsPaused(), demo.IsSeeking(), demo.GetPlaybackTimeMS(),
 		demo.GetPlaybackDurationMS(), demo.GetFollowClient() );
+	// A server operator can see a recording is healthy without stopping it,
+	// and what became of the last one.
+	if ( demo.state == MVD_RECORDING ) {
+		common->Printf( "MVD_RECORDING path=\"%s\" staged=\"%s\" bytes=%d elapsed=%d snapshots=%d reliable=%d records=%d\n",
+			demo.fileName.c_str(), demo.tempFileName.c_str(), demo.file != NULL ? demo.file->Tell() : 0,
+			Sys_Milliseconds() - demo.recordingStartRealTime, demo.snapshotCount, demo.reliableCount,
+			demo.recordCount );
+	}
+	if ( demo.recordingResultValid ) {
+		static const char * const states[] = { "pending", "committed", "failed" };
+		const int resultState = demo.recordingResult.state;
+		common->Printf( "MVD_LAST_RESULT state=%s reason=%d final=\"%s\" partial=\"%s\"\n",
+			resultState >= 0 && resultState < SERVER_MVD_RESULT_STATE_COUNT ? states[ resultState ] : "unknown",
+			static_cast<int>( demo.recordingResult.reason ), demo.recordingResult.finalQPath,
+			demo.recordingResult.partialQPath );
+	}
 }
 
 void idMultiViewDemo::Pause_f( const idCmdArgs &args ) {
@@ -3187,6 +3532,48 @@ void idMultiViewDemo::FollowNext_f( const idCmdArgs &args ) {
 		return;
 	}
 	idAsyncNetwork::multiViewDemo.FollowNext();
+}
+
+void idMultiViewDemo::FollowPrev_f( const idCmdArgs &args ) {
+	if ( !idAsyncNetwork::multiViewDemo.IsPlaying() ) {
+		common->Printf( "No MVD is playing\n" );
+		return;
+	}
+	idAsyncNetwork::multiViewDemo.FollowPrev();
+}
+
+void idMultiViewDemo::Follow_f( const idCmdArgs &args ) {
+	idMultiViewDemo &demo = idAsyncNetwork::multiViewDemo;
+	if ( !demo.IsPlaying() ) {
+		common->Printf( "No MVD is playing\n" );
+		return;
+	}
+	if ( args.Argc() == 1 || !idStr::Icmp( args.Argv( 1 ), "next" ) ) {
+		demo.FollowNext();
+		return;
+	}
+	if ( !idStr::Icmp( args.Argv( 1 ), "prev" ) ) {
+		demo.FollowPrev();
+		return;
+	}
+	if ( !idStr::Icmp( args.Argv( 1 ), "free" ) ) {
+		demo.FreeRoam();
+		return;
+	}
+	// A name may contain spaces, so everything after the command is the target.
+	const char *target = args.Args( 1, -1 );
+	const int clientNum = demo.FindFollowClient( target );
+	if ( clientNum == -2 ) {
+		common->Printf( "MVD_FOLLOW ambiguous target=\"%s\": more than one player name contains it\n", target );
+		return;
+	}
+	if ( clientNum < 0 || !demo.FollowClient( clientNum ) ) {
+		common->Printf( "MVD_FOLLOW unavailable target=\"%s\"\n", target );
+		return;
+	}
+	idStr name;
+	demo.CopyFollowName( clientNum, name );
+	common->Printf( "MVD_FOLLOW client=%d name=\"%s\"\n", clientNum, name.c_str() );
 }
 
 void idMultiViewDemo::FreeRoam_f( const idCmdArgs &args ) {

@@ -1332,13 +1332,22 @@ result-flow pass for that mode.
 
 ## Known limits
 
-- Ladders and lifts are not modelled. No stock multiplayer map routes through
-  either, but a custom map that needs one to connect its levels leaves those
-  levels unreachable to bots.
-- The gap-jump scan links the first floor it finds within reach in each
-  direction, so a trench no deeper than 128 units with a level far rim gets the
-  drop into the trench and no jump across it. Stock maps' real gaps are deeper
-  or lethal, which is why the drop-first rule has not shown up in a sweep.
+- Multiplayer has no ladders to model. `idPhysics_Player` checks for ladder
+  surfaces only outside multiplayer, as retail Quake 4 did ("no ladders in
+  MP"), so a ladder brush in a custom map is not climbable by players either
+  and a bot route needs no ladder link. This is a deliberate retail behaviour,
+  not a navigation gap.
+- Lifts are not modelled. Movers are floor where they stand when the navmesh is
+  built; route validation re-sweeps a chosen route against moving solids, which
+  catches a mover in the way but not one that has moved out from under a node.
+  No stock multiplayer map routes through a lift, so a custom map that needs one
+  to connect its levels leaves those levels unreachable to bots.
+- The gap-jump scan used to stop at the first floor within reach in each
+  direction, so a trench no deeper than 128 units got only the drop into it.
+  It now links that drop and keeps scanning for a far rim at the takeoff's
+  level (`GapJumpClear` still proves the whole arc); the build summary counts
+  these as "gap jumps (N over trenches)". Twenty-four of the 33 catalog
+  variants gain such jumps ([testing](#team-knock-guard-and-trench-rims-23-october-2026)).
 - A bot below a fall-damage tier qualifies each pad landing on a selected route
   by flying the pad again, which is up to several hundred box sweeps per pad
   link per search. It is paid only while the bot is that hurt, which is also
@@ -1381,8 +1390,21 @@ result-flow pass for that mode.
   Generation runs once per map and is lazy, so a server without bots never pays
   it.
 - `bot_debugNav` uses the renderer's fixed 16384-entry debug-line pool. Its draw
-  is budgeted to stay inside that pool, but nothing on the server path calls
-  `DebugClear`, so lines accumulate rather than expire.
+  is budgeted to stay inside that pool, and the multiplayer server frame now
+  clears the lines as single player does (a remote client already cleared them
+  on every snapshot), so a listen server's picture no longer goes stale once
+  the pool fills.
+- Enemy knockback can still throw a bot off a walkway, but a bot no longer
+  fires a splash weapon whose predicted push would throw a team-mate onto
+  ground that does not hold them, team damage on or off
+  (`BotCombatSplashThrowsTeamMate`). The prediction follows `RadiusDamage` and
+  `idPlayer::Damage`; a team-mate's own air control is not assumed. A
+  penetrating hitscan (the multiplayer railgun) is held whenever a team-mate is
+  anywhere on its line, behind the target included
+  (`BotCombatPenetratingShotHitsTeamMate`).
+- Swimming bots dive for a route corner under the water while they have more
+  than half their air and surface otherwise. Routes are not planned around
+  air, so a submerged passage longer than a breath is not modelled.
 - A character's preferred team is only ever a hint. With `si_autoBalance` on,
   the server overrides the requested side whenever the teams are uneven, and a
   team switch kills and respawns the player.
@@ -2323,6 +2345,89 @@ This completes the outstanding single-build catalog rerun. It does not replace
 the earlier long-match evidence or close MP-02's independent DM8 jump-down,
 team-knockback and controlled timing requirements, nor broader route recovery
 under MP-03. No full-duration four-map or two-hour voice rerun is claimed here.
+
+### Team-knock guard and trench rims, 23 October 2026
+
+Runs use `.tmp/runtime/candidate/`, built from this round's source, which
+also carries the networking, demo and prediction changes recorded under MP-01
+to MP-08 in the [roadmap](roadmap.md).
+
+**Navmesh reach.** `.tmp/mp-round/nav_trench_audit.py` loads each catalog
+variant without bots, runs `navmesh build` and `navmesh info`, and reads the
+build summary. All 33 complete with no fatal error. Twenty-four maps gain
+trench-rim jumps, 271 in all (3.3% of 8,284 gap jumps):
+
+| Map | Trench-rim jumps | Gap jumps | Build ms |
+| --- | ---: | ---: | ---: |
+| q4ctf7 | 75 | 689 | 3,853 |
+| q4ctf8 | 25 | 484 | 2,599 |
+| q4ctf6 | 24 | 638 | 2,633 |
+| q4xtourney1 | 18 | 141 | 176 |
+| q4dz3 | 17 | 343 | 1,652 |
+
+The other nineteen maps gain one to thirteen each. q4ctf2, q4ctf5, q4dm5,
+q4dm9, q4dz1, q4dz4, q4tourney1, q4xctf6 and q4xdm15 gain none. Builds take
+176–3,853 ms. Per-map results are in
+`.tmp/mp-round/runtime/nav-trench/report.json`.
+
+**Bot audits.** `.tmp/mp-round/run_bot_audits.py` runs
+`tools/tests/mp_bot_audit.py` one client at a time: six skill-4 bots,
+`bot_debug 2`, 90 seconds, impulse classification and the zero-world-death
+gate. It covers the three maps with the most trench-rim jumps, q4dz3, q4ctf5
+(where a bot had died to a team-mate's rocket), q4xtourney1 and the liquid lab:
+
+| Map | Mode | Simulation s | Kills | World deaths | Stuck / give-ups | Strong team-mate knocks |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| q4ctf7 | CTF | 81.9 | 5 | 0 | 0 / 0 | 0 |
+| q4ctf8 | CTF | 81.9 | 9 | 0 | 4 / 0 | 0 |
+| q4ctf6 | CTF | 81.9 | 2 | 0 | 0 / 1 | 0 |
+| q4dz3 | Dead Zone | 80.4 | 14 | 0 | 0 / 0 | 1 |
+| q4ctf5 | CTF | 71.1 | 10 | 1 (excluded) | 0 / 0 | 1 |
+| q4xtourney1 | DM | 81.9 | 11 | 0 | 1 / 0 | — |
+| liquid_lab | DM | 81.9 | 35 | 0 | 20 / 0 | — |
+| liquid_lab, after the dive change | DM | 81.9 | 22 | 0 | 0 / 0 | — |
+
+Every audit passes the gate. q4ctf5's death was an enemy rocket push: replay
+showed every fixed air input and no input falling to the world, and the same
+moment without the push landing, so the audit excludes it. A strong knock is
+one of at least 150 units/s. q4dz3's was a team-mate's rocket splash at 237
+units/s that landed safely and did no damage, which the guard allows by
+design. q4ctf5's was a railgun hit at 500 units/s on a team-mate standing
+behind an enemy: the multiplayer railgun penetrates players (`penetrate` 1.0)
+and the bot's line-of-fire trace stopped at the first one. Bots now trace a
+penetrating hitscan's whole range through players, as `idGameLocal::HitScan`
+does, and hold fire when a team-mate is on the line
+(`BotCombatPenetratingShotHitsTeamMate`).
+
+The liquid lab's 20 stuck reports share one shape: a route dropped from a
+walkway onto a node on a pool floor 128 units down, and the bot floated about
+45 units above it. `rvBot::UpdateLiquidMovement` held swim-up whenever the
+bot's eyes were under water. A swimming bot now dives for a route corner more
+than 16 units below it in water while it has more than half its air, and
+surfaces otherwise. The rerun on the same build plus that change records no
+stuck reports, goal give-ups or no-route events, 28 completed traversals
+(8 before), 22 kills and no deaths in 81.9 simulated seconds. The pre-change
+run is kept in `.tmp/mp-round/runtime/audits/mp_liquid_lab-DM-before-dive/`.
+The railgun change has no runtime capture: it needs a rail through an enemy
+into a team-mate, which no audit reproduces on demand.
+
+### q4dm8 recurrence audits, 24 October 2026
+
+Three 140-second q4dm8 audits on the network-qualification build
+(`.tmp/mp-round2/run_dm8_audits.py`, six skill-4 bots, `bot_debug 3` so jump
+takeoffs and frames are logged) looked for the unexplained jump-down death:
+
+| Run | Simulation s | Kills | World deaths | Excluded (enemy push) | Navigation deaths |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 139.8 | 30 | 6 | 6 | 0 |
+| 2 | 139.7 | 21 | 1 | 1 | 0 |
+| 3 | 139.8 | 32 | 1 | 1 | 0 |
+
+Every death followed an enemy push whose replay fell under every fixed air input
+while the same moment without the push landed. The jump-down did not recur in
+419 simulated seconds, so its suspected cause, a collision with another player
+in the drop, is still unestablished; no speculative guard was added. Reports
+are under `.tmp/mp-round2/runtime/dm8/`.
 
 For a live look, run a listen server with `bot_debug 2` and read the status
 lines: each carries the bot's position, health, armour, goal, path progress,

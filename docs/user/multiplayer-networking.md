@@ -1,5 +1,7 @@
 # Multiplayer Networking Guide
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 > **Experimental.** Multiplayer and the single-player Arena Campaign are
 > under active development and are not yet considered stable. Expect rough
 > edges, changing behaviour between builds, and bugs. They are not
@@ -16,7 +18,7 @@ This guide covers openQ4 multiplayer networking behavior and the cvars used to t
 - LAN scanning finds IPv6 servers through link-local multicast, which replaces the IPv4 broadcast that IPv6 does not have.
 - Server-side hitscan lag compensation is off by default (`net_mpLagCompensation 0`).
 - Remote-client prediction uses legacy mode by default (`net_mpPredictMode 0`).
-- Enhanced prediction and lag compensation are opt-in experiments; enabling one does not qualify their combined behavior.
+- Enhanced prediction and lag compensation are opt-in experiments. Each client tells the server how far ahead it draws other players, and the server rewinds only the rest, so the two settings no longer correct the same delay twice. Their combined behavior is still being measured on real connections.
 - Use matching openQ4 releases and content on the server and clients. The voice-enabled candidate and release 0.13.0 refuse to join each other: pure servers report missing packages, while non-pure servers report data out of sync. Other release pairs need their own compatibility check. Voice packets are sent only to peers advertising the supported voice protocol.
 
 ## Find and join a server
@@ -90,13 +92,15 @@ connect 2001:db8::1
 connect play.example.net:28004
 ```
 
-The first form is an ordinary global IPv6 address. The second adds a *zone index*, which a link-local `fe80::/10` address needs so the system knows which network interface to use; openQ4 prints and accepts the numeric index. The third omits the port, which selects the default server port `28004` — brackets are optional when there is no port. The fourth resolves a hostname: if it has both an A and a AAAA record, openQ4 prefers the IPv4 address, so use the bracketed literal to force IPv6.
+The first form is an ordinary global IPv6 address. The second adds a *zone index*, which a link-local `fe80::/10` address needs so the system knows which network interface to use; openQ4 prints and accepts the numeric index. The third omits the port, which selects the default server port `28004` — brackets are optional when there is no port. The fourth resolves a hostname: if it has both an A and a AAAA record, openQ4 tries the IPv4 address first, so use the bracketed literal to go straight to IPv6.
 
-A hostname lookup selects one usable address. If that address cannot be reached,
-openQ4 does not automatically try the hostname's other IPv4 or IPv6 addresses.
-Ask the server operator for a reachable numeric address and connect to it
-directly; use brackets for an IPv6 address followed by a port. This also applies
-when several DNS records exist within the same address family.
+A hostname can have several addresses. openQ4 connects to the first one, and if
+three connection attempts a second apart go unanswered it tries the host's other
+addresses in turn: up to eight of them, alternating between IPv4 and IPv6, and
+starting over after the last. The console names each address as it is tried, and
+the first server to answer is the one you join. A numeric address and a server
+list entry are a single address, so they keep retrying that address until you
+cancel.
 
 Addresses are displayed in the canonical [RFC 5952](https://www.rfc-editor.org/rfc/rfc5952) form — lowercase, with the longest run of zero groups collapsed to `::` — so `[2001:0db8:0000:0000:0000:0000:0000:0001]:27650` is shown as `[2001:db8::1]:27650`. The same text is used by the server browser and by server-side ban lists, so one address always has exactly one spelling.
 
@@ -122,7 +126,41 @@ IPv6 guarantees only a 1280-byte path MTU and forbids routers from splitting a d
 | `net_mpLagCompMaxMS` | `200` | `0..1000` | Server gameplay | Caps rewind window in milliseconds used by lag compensation. |
 | `net_mpLagCompBiasMS` | `0` | `-200..200` | Server gameplay | Adds/subtracts additional rewind bias in milliseconds. |
 | `net_mpLagCompDebug` | `0` | `0..2` | Server gameplay | Debug logging for lag compensation (`0` off, `1` summary, `2` verbose). |
+| `net_mpLagCompSlackMS` | `48` | `0..200` | Server gameplay | How far past the round trip the server measured a rewind may reach. |
 | `net_mpPredictMode` | `0` | `0..1` | MP client prediction | Selects remote-player prediction mode (`0` legacy limited, `1` enhanced per-frame). |
+| `net_mpPredictMaxFrames` | `16` | `1..64` | MP client prediction | The most game frames (16 ms each) enhanced prediction draws another player ahead. |
+| `net_mpRemoteExtrapolation` | derived | read-only | MP client prediction | What this client tells servers it draws other players ahead by, in frames: `0` in legacy mode, otherwise `net_mpPredictMaxFrames`. |
+
+## How prediction and lag compensation fit together
+
+Your own movement is predicted, so you see it at once. Other players are
+shown from the last update the server sent, which is a little old by the time
+it arrives.
+
+- **Legacy prediction** (`net_mpPredictMode 0`) shows other players about one
+  round trip behind where the server has them.
+- **Enhanced prediction** (`net_mpPredictMode 1`) re-simulates them from their
+  relayed inputs, drawing them up to `net_mpPredictMaxFrames` frames closer to
+  the present.
+- **Lag compensation** (`net_mpLagCompensation 1`, server only) briefly moves
+  other players back to where your screen showed them when your hitscan,
+  lightning gun or gauntlet attack lands.
+
+Each client advertises how far ahead it draws other players
+(`net_mpRemoteExtrapolation`). The server takes that off the rewind, so a shot
+is rewound only by the delay the client really showed. Every figure the client
+reports is capped by the round trip the server measured itself, so a client
+cannot claim a longer rewind. Damage, blood, impact effects and knockback are
+always applied where the target is now.
+
+Server operators can run `lagCompStatus` to see, for each player, the reported
+lead, the measured round trip, the advertised extrapolation and the rewind a
+shot from that player would get. It works whether or not lag compensation is
+on. `net_mpLagCompDebug 1` logs the same figures for each compensated shot,
+and `net_mpPredictDebug 1` makes a client log how old each remote player was
+on its screen when a server update arrived. `net_verbose 2` also logs, for
+each server update, how far ahead the client is predicting, the target it is
+steering towards and how early the server says its commands arrive.
 
 ## Legacy Compatibility Switch
 
@@ -133,28 +171,60 @@ seta net_mpLagCompensation 0
 seta net_mpPredictMode 0
 ```
 
-## Recommended Starting Presets
+## Experimental Settings
 
-### Default Internet Play
+Both features are still being measured on real connections with delay,
+jitter and packet loss, so neither is on by default. To try them:
+
+### Clients: enhanced prediction
+
+```cfg
+seta net_mpPredictMode 1
+```
+
+### Servers: lag compensation
 
 ```cfg
 seta net_mpLagCompensation 1
 seta net_mpLagCompMaxMS 200
 seta net_mpLagCompBiasMS 0
-seta net_mpPredictMode 1
 ```
 
-### Low-Latency/LAN
+On a LAN, a smaller `net_mpLagCompMaxMS` such as `80` keeps the rewind short.
+Clients may use either prediction mode on a lag-compensated server; the rewind
+follows each client's own setting.
+
+## Testing under simulated network conditions
+
+openQ4 can add the delay, jitter, loss and duplication of a real connection to
+its own packets, so a server and client on one computer behave like players on
+the internet. Every setting applies to the computer that sets it, in both
+directions of each connection:
+
+| CVar | Effect |
+| --- | --- |
+| `net_forceLatency` | Milliseconds added to every packet, each way. |
+| `net_forceJitter` | Up to this many further milliseconds, chosen at random per packet. Packets sent closer together than this can arrive out of order, as they do on real links. |
+| `net_forceDrop` | Percentage of packets lost. |
+| `net_forceDuplicate` | Percentage of packets delivered twice. |
+| `net_forceSeed` | Makes the random choices repeat exactly when a connection opens; `0` picks new ones each time. |
+
+For example, on the client:
 
 ```cfg
-seta net_mpLagCompensation 1
-seta net_mpLagCompMaxMS 80
-seta net_mpLagCompBiasMS 0
-seta net_mpPredictMode 1
+set net_forceLatency 50
+set net_forceJitter 30
+set net_forceDrop 5
 ```
+
+`netImpairment` prints the settings and, for each open connection, how many
+packets were delayed, lost, duplicated and delivered out of order. These
+settings count as cheats: hosting or joining a server that does not allow
+cheats (`net_allowCheats 1` or `sv_cheats 1`) resets them to `0`, and they
+cannot be changed during such a match. They are for testing only.
 
 ## Notes
 
-- Lag compensation applies to authoritative multiplayer hitscan traces on the server.
+- Lag compensation applies to authoritative multiplayer hitscan, lightning gun and gauntlet traces on the server.
 - `net_mpLagCompDebug` output is intended for server diagnostics and tuning.
 - Tune `net_mpLagCompMaxMS` before using large `net_mpLagCompBiasMS` offsets.

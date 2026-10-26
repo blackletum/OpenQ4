@@ -7,6 +7,7 @@
 #include "src/framework/async/Rcon2Protocol.h"
 #include "src/sys/NetworkEndpoint.h"
 #include "src/sys/URLPolicy.h"
+#include "tools/tests/native/NetworkImpairmentCases.h"
 
 #include <climits>
 #include <cstdint>
@@ -360,8 +361,91 @@ static void ExpectBindPlan( const char *ipv4Text, const char *ipv6Text, const bo
 	}
 }
 
+// Families are given as a string of '4'/'6' in resolver order; the expected
+// order is the resolver indices, one decimal digit each.
+static void ExpectCandidateOrder( const char *families, const bool preferIPv4, const int maxOrder,
+		const char *expectedOrder, const char *label ) {
+	int familyList[idNetworkEndpoint::MAX_RESOLVER_RESULTS];
+	int count = 0;
+	for ( const char *cursor = families; *cursor != '\0' && count < idNetworkEndpoint::MAX_RESOLVER_RESULTS; ++cursor ) {
+		familyList[count++] = ( *cursor == '4' ) ? idNetworkEndpoint::ADDRESS_FAMILY_IPV4 : idNetworkEndpoint::ADDRESS_FAMILY_IPV6;
+	}
+	int order[idNetworkEndpoint::MAX_RESOLVER_RESULTS];
+	const int written = idNetworkEndpoint::OrderCandidates( familyList, count, preferIPv4, order, maxOrder );
+	char actual[idNetworkEndpoint::MAX_RESOLVER_RESULTS + 1];
+	for ( int i = 0; i < written; i++ ) {
+		actual[i] = static_cast<char>( '0' + order[i] );
+	}
+	actual[written] = '\0';
+	if ( std::strcmp( actual, expectedOrder ) != 0 ) {
+		std::fprintf( stderr, "Candidate order failed for %s: expected '%s', got '%s'\n", label, expectedOrder, actual );
+		failures++;
+	}
+}
+
+static void ExerciseConnectFailover() {
+	// The first entry is always what the single-address resolvers chose.
+	ExpectCandidateOrder( "4", true, 8, "0", "single A record" );
+	ExpectCandidateOrder( "6", true, 8, "0", "single AAAA record" );
+	ExpectCandidateOrder( "64", true, 8, "10", "A record goes first for an unspecified family" );
+	ExpectCandidateOrder( "64", false, 8, "01", "explicit family keeps resolver order" );
+	ExpectCandidateOrder( "6644", true, 8, "2031", "families alternate after the first" );
+	ExpectCandidateOrder( "4466", true, 8, "0213", "dual-stack records interleave" );
+	ExpectCandidateOrder( "444", true, 8, "012", "one family keeps resolver order" );
+	ExpectCandidateOrder( "66664", true, 8, "40123", "late A record still leads" );
+	ExpectCandidateOrder( "4466", true, 2, "02", "output is capped" );
+	ExpectCandidateOrder( "", true, 8, "", "no records" );
+	{
+		int families[1] = { idNetworkEndpoint::ADDRESS_FAMILY_IPV4 };
+		int order[1] = { -1 };
+		if ( idNetworkEndpoint::OrderCandidates( families, 1, true, order, 0 ) != 0 || order[0] != -1 ||
+				idNetworkEndpoint::OrderCandidates( nullptr, 1, true, order, 1 ) != 0 ||
+				idNetworkEndpoint::OrderCandidates( families, 1, true, nullptr, 1 ) != 0 ) {
+			std::fprintf( stderr, "Candidate order accepted an empty or missing buffer\n" );
+			failures++;
+		}
+	}
+
+	// One candidate is challenged forever, exactly as before failover existed.
+	idNetworkEndpoint::connectFailover_t single;
+	idNetworkEndpoint::FailoverReset( single, 1 );
+	for ( int challenge = 0; challenge < 20; challenge++ ) {
+		if ( idNetworkEndpoint::FailoverBeforeChallenge( single ) || single.index != 0 ) {
+			std::fprintf( stderr, "Single-address connection moved off its only address\n" );
+			failures++;
+			break;
+		}
+	}
+
+	// Three candidates: three challenges each, then the next, wrapping around.
+	idNetworkEndpoint::connectFailover_t state;
+	idNetworkEndpoint::FailoverReset( state, 3 );
+	const int per = idNetworkEndpoint::CONNECT_CHALLENGES_PER_CANDIDATE;
+	for ( int challenge = 0; challenge < per * 7; challenge++ ) {
+		const bool moved = idNetworkEndpoint::FailoverBeforeChallenge( state );
+		const int expectedIndex = ( challenge / per ) % 3;
+		const bool expectedMove = challenge > 0 && ( challenge % per ) == 0;
+		if ( state.index != expectedIndex || moved != expectedMove ) {
+			std::fprintf( stderr, "Failover challenge %d: expected candidate %d (move %d), got %d (move %d)\n",
+				challenge, expectedIndex, expectedMove, state.index, moved );
+			failures++;
+			break;
+		}
+	}
+
+	// A zero or negative count still behaves as one candidate.
+	idNetworkEndpoint::connectFailover_t empty;
+	idNetworkEndpoint::FailoverReset( empty, 0 );
+	if ( empty.count != 1 || idNetworkEndpoint::FailoverBeforeChallenge( empty ) || empty.index != 0 ) {
+		std::fprintf( stderr, "Failover with no candidates did not stay on the first\n" );
+		failures++;
+	}
+}
+
 int main() {
 	ExerciseCryptoVectors();
+	ExerciseConnectFailover();
+	failures += ExerciseNetworkImpairment();
 	const int remoteUserInfo = 1 << 0;
 	const int remoteServerInfo = 1 << 1;
 	const int remoteNetworkSync = 1 << 2;

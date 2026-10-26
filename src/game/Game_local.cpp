@@ -36,6 +36,7 @@ idCollisionModelManager *	collisionModelManager = NULL;
 rvBSEManager *				bse = NULL;
 // RAVEN END
 idVRSystem *				vrSystem = NULL;
+idUsercmdGen *				usercmdGen = NULL;
 
 idCVar *					idCVar::staticVars = NULL;
 
@@ -428,6 +429,7 @@ extern "C" gameExport_t *GetGameAPI( gameImport_t *import ) {
 		bse							= import->bse;
 // RAVEN END
 		vrSystem					= import->vrSystem;
+		usercmdGen					= import->usercmdGen;
 
 // RAVEN BEGIN
 // dluetscher: import the memory system variables
@@ -595,6 +597,7 @@ void idGameLocal::Clear( void ) {
 	spawnedEntities.Clear();
 	activeEntities.Clear();
 	presentationEntities.Clear();
+	presentationClientEntities.Clear();
 	numEntitiesToDeactivate = 0;
 	sortPushers = false;
 	sortTeamMasters = false;
@@ -661,6 +664,10 @@ void idGameLocal::Clear( void ) {
 	previousTime = 0;
 	time = 0;
 	presentationClock.Reset();
+	presentationGameplayCount = 0;
+	presentationRendererDepth = 0;
+	presentationRendererEffectCount = 0;
+	presentationPrepStartTicks = 0.0;
 	presentationClockSample = -1.0f;
 	presentationSceneFraction = -1.0f;
 	presentationAnimationTime = -1;
@@ -1883,6 +1890,7 @@ void idGameLocal::LoadMap( const char *mapName, int randseed ) {
 	spawnedEntities.Clear();
 	activeEntities.Clear();
 	presentationEntities.Clear();
+	presentationClientEntities.Clear();
 	numEntitiesToDeactivate = 0;
 	sortTeamMasters = false;
 	sortPushers = false;
@@ -2986,6 +2994,7 @@ void idGameLocal::MapClear( bool clearClients, int instance ) {
 	}
 // RAVEN END
 	presentationEntities.Clear();
+	presentationClientEntities.Clear();
 
 	if ( !clearClients ) {
 		// add back the hashes of the clients/stuff in other instances
@@ -5164,6 +5173,22 @@ void idGameLocal::CalcFov( float base_fov, float &fov_x, float &fov_y ) const {
 void ClearClipProfile( void );
 void DisplayClipProfile( void );
 
+// What the frozen scene's camera shows against the authoritative view, for the
+// late-look latency analysis (tools/tests/presentation_look_runtime.py). Noted
+// once per prepared draw, before the capture records it.
+static struct {
+	float	drawnYaw, authoritativeYaw, lookYaw, inputYaw, drawnZ;
+	int		look;
+} presentationLookDiagnostic;
+
+static void NotePresentationLookDiagnostic( idPlayer *player ) {
+	presentationLookDiagnostic.drawnYaw = player->GetRenderView() != NULL ? player->GetRenderView()->viewaxis.ToAngles().yaw : 0.0f;
+	presentationLookDiagnostic.drawnZ = player->GetRenderView() != NULL ? player->GetRenderView()->vieworg.z : 0.0f;
+	presentationLookDiagnostic.authoritativeYaw = player->viewAngles.yaw;
+	presentationLookDiagnostic.look = player->GetPresentationLookDiagnostic( presentationLookDiagnostic.inputYaw, presentationLookDiagnostic.lookYaw ) ? 1 : 0;
+}
+
+
 /*
 ================
 idGameLocal::PreparePlayerSceneForRender
@@ -5181,6 +5206,7 @@ void idGameLocal::PreparePlayerSceneForRender( idPlayer *player, bool menuPaused
 	if ( player == NULL || GetDemoState() == DEMO_PLAYING || IsTimeDemo() ) {
 		return;
 	}
+	presentationPrepStartTicks = idLib::sys->GetClockTicks();
 
 	// Freeze one draw sample before CalculateRenderView() asks for the camera
 	// fraction.  Animation lives on the previous-to-current interval, whereas
@@ -5198,6 +5224,7 @@ void idGameLocal::PreparePlayerSceneForRender( idPlayer *player, bool menuPaused
 		presentationAnimationTime = time;
 	}
 	player->CalculateRenderView();
+	NotePresentationLookDiagnostic( player );
 	// Refresh the camera before deciding whether the paused scene is reusable.
 	// Its unchanged snapshot needs no entity or weapon pose resubmission; HUD
 	// and view-effect presentation still run on every draw.
@@ -5773,9 +5800,9 @@ void idGameLocal::HandleMainMenuCommands( const char *menuCommand, idUserInterfa
 		// openQ4: the retained pause screen's level block and Objectives
 		// page. The objectives the local player holds, newest first as the
 		// objective screen stacks them, each with its description and
-		// screenshot; the ones completed on this map, newest first; and the
-		// time spent in this mission (game time restarts with each map and is
-		// saved with it).
+		// screenshot; the ones completed on this map, newest first; the time
+		// spent in this mission (game time restarts with each map and is saved
+		// with it); and the run's play time, -1 when it is unknown.
 		idPlayer *player = GetLocalPlayer();
 		const int count = player != NULL ? player->inventory.objectiveNames.Num() : 0;
 		gui->SetStateInt( "pause_objective_count", count );
@@ -5791,6 +5818,7 @@ void idGameLocal::HandleMainMenuCommands( const char *menuCommand, idUserInterfa
 			gui->SetStateString( va( "pause_completed_%d", i ), player->inventory.completedObjectives[ completed - 1 - i ].title.c_str() );
 		}
 		gui->SetStateInt( "pause_mission_seconds", time / 1000 );
+		gui->SetStateInt( "pause_total_seconds", player != NULL ? player->PlaySeconds() : -1 );
 	} else if ( !idStr::Icmp( menuCommand, "retainedLevelImages" ) ) {
 		// openQ4: every objective screenshot this level can show on the
 		// retained pause screen's Objectives page, so the session resolves
@@ -9213,6 +9241,10 @@ static const int MAX_PRESENTATION_CLOCK_SAMPLES = 8192;
 struct presentationClockSample_t {
 	double	realTimeHighRes;
 	int		gameStep, rate;
+	float	drawnYaw, authoritativeYaw, lookYaw, inputYaw, drawnZ;
+	int		look;
+	int		clientDebris, afBlends, listed, afFrames, gameplay, bse;
+	float	prepMs;
 	float	clockFraction;
 	int		realTime;
 	int		gameTime;
@@ -9221,6 +9253,51 @@ struct presentationClockSample_t {
 static presentationClockSample_t presentationClockCaptureSamples[ MAX_PRESENTATION_CLOCK_SAMPLES ];
 static int presentationClockCaptureCount = 0;
 static bool presentationClockCaptureDumped = false;
+
+/*
+================
+idGameLocal::NotePresentationGameplay
+
+A prepared draw (PreparePlayerSceneForRender to EndPresentationSceneForRender)
+may move what is drawn but must never dispatch events, run scripts, step
+physics or start effects: repeated draws, stereo eyes and subviews would run
+them again. Entry points call this; inside a scene it counts the breach for
+g_presentationClockCapture and names the first few.
+================
+*/
+void idGameLocal::NotePresentationGameplay( const char *what ) {
+	if ( presentationClockSample < 0.0f ) {
+		return;
+	}
+	presentationGameplayCount++;
+	static int reported = 0;
+	if ( reported < 8 ) {
+		reported++;
+		Printf( "presentationGameplay: %s ran inside a prepared draw\n", what );
+	}
+}
+
+/*
+================
+idGameLocal::NotePresentationEffect
+
+PlayEffect's guard. The renderer services BSE inside RenderScene, and a particle
+impact or nested segment may start an effect through idGame::PlayEffect there,
+once per particle or authoritative effect step rather than once per draw. Those
+are counted apart (bse=); any other effect started inside a prepared draw is
+gameplay.
+================
+*/
+void idGameLocal::NotePresentationEffect( void ) {
+	if ( presentationClockSample < 0.0f ) {
+		return;
+	}
+	if ( presentationRendererDepth > 0 ) {
+		presentationRendererEffectCount++;
+		return;
+	}
+	NotePresentationGameplay( "idGameLocal::PlayEffect" );
+}
 
 /*
 ================
@@ -9248,6 +9325,25 @@ void idGameLocal::RecordPresentationClockSample( void ) {
 	sample.realTime = Sys_Milliseconds();
 	sample.gameTime = time;
 	sample.fraction = presentationSceneFraction;
+	sample.drawnYaw = presentationLookDiagnostic.drawnYaw;
+	sample.drawnZ = presentationLookDiagnostic.drawnZ;
+	// the camera, look, entity poses and client debris prepared for this draw
+	sample.prepMs = static_cast<float>( ( idLib::sys->GetClockTicks() - presentationPrepStartTicks ) * 1000.0 /
+		idLib::sys->ClockTicksPerSecond() );
+	sample.authoritativeYaw = presentationLookDiagnostic.authoritativeYaw;
+	sample.lookYaw = presentationLookDiagnostic.lookYaw;
+	sample.inputYaw = presentationLookDiagnostic.inputYaw;
+	sample.look = presentationLookDiagnostic.look;
+	sample.clientDebris = presentationClientEntities.Num();
+	sample.afBlends = idAnimator::presentationAFBlendCount;
+	idAnimator::presentationAFBlendCount = 0;
+	sample.listed = presentationEntities.Num();
+	sample.afFrames = idAnimator::presentationAFFrameCount;
+	idAnimator::presentationAFFrameCount = 0;
+	sample.gameplay = presentationGameplayCount;
+	presentationGameplayCount = 0;
+	sample.bse = presentationRendererEffectCount;
+	presentationRendererEffectCount = 0;
 	if ( presentationClockCaptureCount < wanted ) {
 		return;
 	}
@@ -9255,14 +9351,27 @@ void idGameLocal::RecordPresentationClockSample( void ) {
 	presentationClockCaptureDumped = true;
 	Printf( "presentationClock: %d samples\n", presentationClockCaptureCount );
 	for ( int i = 0; i < presentationClockCaptureCount; i++ ) {
-		Printf( "presentationClockSample rt=%d t=%d f=%.4f hrt=%.6f step=%d hz=%d phase=%.9f\n",
+		Printf( "presentationClockSample rt=%d t=%d f=%.4f hrt=%.6f step=%d hz=%d phase=%.9f drawYaw=%.4f authYaw=%.4f look=%d lookYaw=%.4f inYaw=%.4f debris=%d afBlends=%d listed=%d afFrames=%d gameplay=%d bse=%d drawZ=%.3f prepMs=%.4f\n",
 			presentationClockCaptureSamples[ i ].realTime,
 			presentationClockCaptureSamples[ i ].gameTime,
 			presentationClockCaptureSamples[ i ].fraction,
 			presentationClockCaptureSamples[ i ].realTimeHighRes,
 			presentationClockCaptureSamples[ i ].gameStep,
 			presentationClockCaptureSamples[ i ].rate,
-			presentationClockCaptureSamples[ i ].clockFraction );
+			presentationClockCaptureSamples[ i ].clockFraction,
+			presentationClockCaptureSamples[ i ].drawnYaw,
+			presentationClockCaptureSamples[ i ].authoritativeYaw,
+			presentationClockCaptureSamples[ i ].look,
+			presentationClockCaptureSamples[ i ].lookYaw,
+			presentationClockCaptureSamples[ i ].inputYaw,
+			presentationClockCaptureSamples[ i ].clientDebris,
+			presentationClockCaptureSamples[ i ].afBlends,
+			presentationClockCaptureSamples[ i ].listed,
+			presentationClockCaptureSamples[ i ].afFrames,
+			presentationClockCaptureSamples[ i ].gameplay,
+			presentationClockCaptureSamples[ i ].bse,
+			presentationClockCaptureSamples[ i ].drawnZ,
+			presentationClockCaptureSamples[ i ].prepMs );
 	}
 	presentationClockCaptureCount = 0;
 }
@@ -9354,6 +9463,14 @@ void idGameLocal::ClearPresentationEntityPoses( void ) {
 		ent->RestoreAuthoritativePresentationPose();
 		ent->presentationNode.Remove();
 	}
+
+	rvClientEntity *cent;
+	rvClientEntity *nextCent;
+	for ( cent = presentationClientEntities.Next(); cent != NULL; cent = nextCent ) {
+		nextCent = cent->presentationNode.Next();
+		cent->RestoreAuthoritativePresentationPose();
+		cent->presentationNode.Remove();
+	}
 }
 
 /*
@@ -9430,6 +9547,15 @@ void idGameLocal::UpdatePresentationEntityPoses( void ) {
 		next = ent->presentationNode.Next();
 		ent->UpdatePresentationPose();
 		updated++;
+	}
+
+	// Unbound client debris, brass and gibs, which run their own physics. They
+	// list themselves from Think() while they move; see rvClientMoveable.
+	rvClientEntity *cent;
+	rvClientEntity *nextCent;
+	for ( cent = presentationClientEntities.Next(); cent != NULL; cent = nextCent ) {
+		nextCent = cent->presentationNode.Next();
+		cent->UpdatePresentationPose();
 	}
 
 	// Whether the local player's own body reached the presentation clock is not
@@ -9946,6 +10072,7 @@ rvClientEffect* idGameLocal::PlayEffect(
 	effectCategory_t		category,
 	const idVec4&			effectTint ) {
 
+	gameLocal.NotePresentationEffect();
 	if ( !effect ) {
 		return NULL;
 	}

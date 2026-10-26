@@ -10,8 +10,8 @@ authoritative simulation, save formats, network timestamps or demo timing.
 | Scheduler/usercmd | `idCommon::GetUserCmdTime`: floor(tick * 1000 / Hz), widened multiplication; `Common::Async` | At 60 Hz deadlines alternate 16 and 17 ms. Rendering may run between ticks. This ladder is not game time. |
 | Authoritative game | SP/MP `idGameLocal::RunFrame`, `GetMSec()` | Ordinary 60 Hz game steps remain 16 ms. Physics, scripts, event dispatch, RNG, traces and damage keep this clock. |
 | Network | `idAsyncServer::RunFrame`, game frame * integer game step | Snapshot labels and duplicated usercmd labels agree with the game. Changing them to the scheduler ladder accumulates 40 ms of disagreement per real second. |
-| Prediction | MP prediction/game frames and acknowledged snapshot state | Draw samples cannot submit commands, replay prediction or commit a pose. Remote extrapolation and server rewind remain coupled future work under MP-07. |
-| Camera, eligible roots and view weapon | SP/MP `PreparePlayerSceneForRender` | One frozen high-resolution phase over previous/current authoritative poses. The intentional delay is at most one tick; no collision extrapolation. |
+| Prediction | MP prediction/game frames and acknowledged snapshot state | Draw samples cannot submit commands, replay prediction or commit a pose. A remote player's displayed pose age is the client's lead less the replay tics it re-simulates that remote for; the client advertises that budget (`net_mpRemoteExtrapolation`) and lag compensation rewinds by the age, never by a draw-time sample (MP-07). Remote bodies stay outside presentation interpolation while the local client plays, so the rewind owes them no extra presentation delay; a spectator, which fires nothing, draws them on its camera's clock. |
+| Camera, eligible roots and view weapon | SP/MP `PreparePlayerSceneForRender` | One frozen high-resolution phase over previous/current authoritative poses. The intentional delay is at most one tick; no collision extrapolation. Opt-in late look turns only the drawn first-person eye and what it holds toward unapplied input, frozen once per draw ([presentation owners](presentation-owners.md)). Alternate views, client debris and active AF poses share the same phase. |
 | Skeletons | `presentationAnimationTime` | Previous time plus the rounded phase-scaled interval, clamped to the two snapshots. Integer animator API is retained. Altered tic rates/discontinuous intervals remain authoritative. |
 | Materials and effects | `GetPresentationTimeMsec` | Current time plus the bounded phase-scaled game step, monotonic within an epoch. It consumes the same frozen phase as camera/root sampling. Integer renderer/effect APIs stay integer. |
 | Root UI | `common->GetPresentationTime`, retained UI frame/timer ownership | Host presentation time continues through an SP menu pause; it does not advance game scripts. World-GUI semantics remain UI-09/HF-06 work. |
@@ -49,8 +49,10 @@ engine's other 32-bit timestamp users.
 `PreparePlayerSceneForRender` freezes `presentationClockSample` before camera,
 entity, weapon and material consumers run. `EndPresentationSceneForRender`
 releases it, including multiplayer early exits. No clock policy state is saved
-or transmitted. Camera bypasses, non-rewindable animation/AF state and remote
-actor admission retain their existing exclusions; HF-04 through HF-06 own them.
+or transmitted. HF-03 through HF-05 added draw-only owners for late look,
+alternate views, client debris and AF poses on this clock; their contract,
+remaining exclusions (remote actors, angular joint modifiers, fractures) and
+evidence are in [presentation owners](presentation-owners.md).
 
 ## Regression evidence
 

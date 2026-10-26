@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         set "desktop::dest" "21";
         resetTime "anim_mainOut" "0";
     }
-    onNamedEvent localizationSmokeLanguage { set "gui::gui_set_game_scroll" "50"; }
+    onNamedEvent localizationSmokeLanguage { set "gui::gui_set_game_scroll" "52"; }
 '''.replace("ACTION", action)
         start = menu.index("{") + 1
         fixture = menu[:start] + hook + menu[start:]

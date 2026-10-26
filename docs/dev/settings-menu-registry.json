@@ -3132,6 +3132,65 @@
       "accessibility": "Slider with paired edit field."
     },
     {
+      "id": "game.controller.prompt_style",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Prompt Style",
+      "source": "game",
+      "container": "set_game_controller_prompt_style",
+      "widgets": [
+        "set_game_controller_prompt_style_value"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_231526",
+      "choices_key": "#str_231527",
+      "values": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "target_type": "cvar",
+      "target": "in_promptStyle",
+      "default": "0",
+      "cvar_range": {
+        "low": "0",
+        "high": "5"
+      },
+      "restart_required": false,
+      "accessibility": "Standard focusable choiceDef row: the controller prompt family for the menus and the HUD."
+    },
+    {
+      "id": "game.controller.swap_confirm",
+      "pane": "Game Options",
+      "section": "Controller",
+      "path": "Settings > Game Options > Controller > Swap Confirm and Back",
+      "source": "game",
+      "container": "set_game_controller_swap_confirm",
+      "widgets": [
+        "set_game_controller_swap_confirm_value"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_231528",
+      "choices_key": "#str_231529",
+      "values": [
+        "0",
+        "1",
+        "2"
+      ],
+      "target_type": "cvar",
+      "target": "in_swapConfirmBack",
+      "default": "0",
+      "cvar_range": {
+        "low": "0",
+        "high": "2"
+      },
+      "restart_required": false,
+      "accessibility": "Standard focusable choiceDef row: which face button confirms in menus; prompts follow it."
+    },
+    {
       "id": "game.crosshair_custom",
       "pane": "Game Options",
       "section": "Crosshair",

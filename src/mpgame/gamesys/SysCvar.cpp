@@ -790,12 +790,12 @@ idCVar net_clientPredictWeaponSwitch(		"net_clientPredictWeaponSwitch",	"1",			C
 // openQ4: server side hitscan lag compensation.  Same names, flags and ranges as the
 // single player tree it was ported from - but NOT the same default: the SP copy is
 // dead code (game-sp never runs multiplayer) and still declares "1".
-// This one ships OFF.  The machinery is complete and guarded, but openQ4 clients
-// extrapolate every remote player forward from the relayed user commands rather
-// than interpolating between snapshots, so a server-side rewind can double-count
-// the lead the client already applied.  Turning it on changes hit registration
-// for everybody on the server, so it stays an opt-in until it has been measured
-// against real ping distributions.
+// This one ships OFF.  The machinery is complete and guarded.  A client in mode 1
+// extrapolates remote players forward from the relayed user commands rather than
+// interpolating between snapshots; it advertises that (net_mpRemoteExtrapolation)
+// and the rewind takes it off, so the two corrections no longer double-count.
+// Turning it on still changes hit registration for everybody on the server, so it
+// stays an opt-in until it has been measured against real ping distributions.
 // openQ4: a remote player's Move() is gated on gameLocal.isNewFrame below, so a client
 // integrates a remote exactly once per client frame while every snapshot hard-resets that
 // remote's physics.  Its simulated state therefore sits permanently about the client's own
@@ -811,6 +811,12 @@ idCVar net_mpPredictMode(					"net_mpPredictMode",				"0",			CVAR_GAME | CVAR_IN
 // visible player at once.
 idCVar net_mpPredictMaxFrames(				"net_mpPredictMaxFrames",		"16",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "maximum extra replay tics a remote player may be re-simulated for per chain", 1, 64 );
 idCVar net_mpPredictDebug(					"net_mpPredictDebug",			"0",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "report how far a client's predicted remote-player position was from the server's for the same frame", 0, 1 );
+// What a client tells the server it extrapolates remote players by, in tics: 0 in legacy mode,
+// net_mpPredictMaxFrames in mode 1.  Lag compensation takes it off that client's rewind
+// (idGameLocal::RemoteExtrapolationMS), so the two corrections no longer stack.  Read-only and
+// re-derived from the two cvars above every client frame, so a server that echoes a different
+// value back in the user info changes nothing about what this client simulates.
+idCVar net_mpRemoteExtrapolation(			"net_mpRemoteExtrapolation",		"0",			CVAR_GAME | CVAR_INTEGER | CVAR_USERINFO | CVAR_ROM, "remote-player extrapolation this client advertises to the server, in tics (derived from net_mpPredictMode and net_mpPredictMaxFrames)" );
 idCVar net_mpLagCompensation(				"net_mpLagCompensation",			"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "enable server-side multiplayer lag compensation for hitscan traces" );
 idCVar net_mpLagCompMaxMS(					"net_mpLagCompMaxMS",				"200",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "maximum rewind window in milliseconds for multiplayer lag compensation", 0, 1000 );
 idCVar net_mpLagCompBiasMS(					"net_mpLagCompBiasMS",				"0",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "additional rewind bias in milliseconds applied to multiplayer lag compensation", -200, 200 );

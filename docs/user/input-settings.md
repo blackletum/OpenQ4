@@ -1,5 +1,7 @@
 # Input Settings and Controls Guide
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 This guide covers the main ways to configure keyboard, mouse, and controller input in openQ4, including the in-game menu, console commands, default binds, config files, and common troubleshooting.
 
 ## Quick Start
@@ -130,7 +132,10 @@ On a Nintendo-layout controller, menus confirm with A (the right button) and
 go back with B (the bottom button), as Switch games do. Nintendo prompts
 chosen with `in_promptStyle 3` (see [Button Prompts](#button-prompts)) count
 as a Nintendo layout. Other controllers confirm with the bottom button. To
-choose for any controller, use the console:
+choose for any controller, set **Swap Confirm and Back** in **Settings > Game
+Options > Controller**: **Off** confirms with the bottom button, **On** with the
+right button, and **Automatic** follows the controller. The console setting is
+the same choice:
 
 ```cfg
 seta in_swapConfirmBack 2
@@ -144,6 +149,14 @@ seta in_swapConfirmBack 2
 
 The menu prompts follow the choice. In-game bindings are not affected.
 
+### Menu Buttons
+
+In the menus, the controller's Menu button (Start, Options or +) takes you
+back to the game from the pause menu's Save, Load and Restart Level pages.
+On a multiplayer server's Admin page it applies your server changes, and the
+Apply Changes button shows the Menu button's symbol. While a dialog or an
+open list is showing, it closes that first, as Back does.
+
 ### Button Prompts
 
 Once you use a controller, menu prompts show its buttons instead of
@@ -156,12 +169,14 @@ keyboard keys:
 - Other pads show a diamond with the button to press filled in.
 
 In a multiplayer match's menu, the keys that switch tabs show your
-shoulder buttons: LB and RB, L1 and R1, or L and R. The keyboard or mouse
-switches the prompts back to keys.
+shoulder buttons: LB and RB, L1 and R1, or L and R. On the Match and Admin
+pages, the row of sections ends with your triggers (LT and RT, L2 and R2, or
+ZL and ZR), which step through the sections. The keyboard or mouse switches
+the prompts back to keys.
 
 If Steam Input or another remapper hides your real controller, choose the
-controller prompts yourself from the console. The setting covers the menus
-and the HUD:
+controller prompts yourself with **Prompt Style** in **Settings > Game Options >
+Controller**, or from the console. The setting covers the menus and the HUD:
 
 ```cfg
 seta in_promptStyle 2

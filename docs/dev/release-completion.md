@@ -1,5 +1,21 @@
 # openQ4 release completion and evidence record
 
+**Release status, 23 October 2026:** 0.13.2 is the latest available release.
+0.14.0 (`v0.14.000`) was published and then withdrawn because it was broken.
+Later implementation and validation entries below are unreleased development
+work. Historical CI/publication success does not restore the withdrawn release.
+See [player release status](../user/release-status.md).
+
+## Release-status reconciliation, 23 October 2026
+
+- [x] Verify GitHub's latest release and public release list identify 0.13.2;
+  preserve the withdrawn 0.14.000 tag and evidence without advertising a download.
+- [x] Correct README/player documentation and the mislabeled 0.13.2 notes;
+  preserve later changes in [unreleased notes](releases/unreleased.md).
+- [x] Exclude withdrawn numeric versions from build/release baselines and
+  changelog ranges; reject explicit republication and skip the withdrawn number
+  when selecting a future version. The Meson/source-archive floor is 0.13.2.
+
 **Planning authority, 18 October 2026:** the [development roadmap](roadmap.md)
 is the single active plan for outstanding work. This document retains candidate
 release wording and implementation/validation history. Its older unchecked boxes
@@ -7,6 +23,373 @@ record findings when written; they are not an authoritative current backlog.
 Likewise, a recorded pass or failure applies to its stated revision, package and
 scope. Track new work and closure decisions against roadmap IDs, then record
 completed release material here and publish curated notes in `releases/`.
+
+## Saved language over an installer autoexec, 24 October 2026
+
+- [x] #199 (UI-01/PLAT-04): GOG installers write `q4base/autoexec.cfg` with the
+  install-time `sys_lang`, and extraction tools that unpack every language
+  variant leave the last one (French in the report). It ran after the saved
+  config, so each launch replaced the language chosen in Settings. Once a saved
+  config exists, a loose `autoexec.cfg` in the retail game directory no longer
+  changes `sys_lang`; it still supplies the first launch's language and runs
+  its other commands. A player's own `autoexec.cfg` elsewhere and `+set sys_lang`
+  still win. `startup_language_override.py` pins the order; a hidden client
+  probe on Steam data with a GOG-style autoexec covers first launch, a saved
+  choice across relaunches, the player's own autoexec and the command line.
+
+## Multiplayer network qualification, 24 October 2026
+
+- [x] MP-07/MP-08: simulated network conditions on Windows and POSIX
+  (`src/sys/NetworkImpairment.h`): latency, jitter with the reordering it
+  causes, loss and duplication, seeded for repeatable runs, reported by
+  `netImpairment`. The old Windows-only lag queue dropped datagrams over 1,400
+  bytes, so a client could not connect with `net_forceLatency` set. Native
+  cases and a wiring contract carry eleven failing controls.
+- [x] Loopback qualification with three bots in both prediction modes: no
+  resyncs under 50 ms, jitter, 10% loss, 20% duplication or combined
+  conditions; the lead follows the round trip and rewinds follow the lead; an
+  impaired client connects on its first challenge. A 20-bot dedicated server
+  holds its remote client steady under the same conditions. Three q4dm8 bot
+  audits record no navigation deaths; the jump-down did not recur.
+- Evidence: [network qualification](mp-network-qualification.md). Candidate
+  player wording: [multiplayer refinements](releases/multiplayer-refinements.md).
+
+## Menu button resumes from the pause's pages, 24 October 2026
+
+- [x] The controller's Menu button runs a retained document's `onMenuButton`
+  where declared (Back elsewhere); Save Game, Restart Level and in-game Load
+  Game ask for `menuResume`, which returns the pause and resumes play.
+- [Behavior and checks](ui/input-routing.md#menu-button-24-october-2026):
+  adapter and session gate harnesses, native page checks and an in-game capture.
+  Candidate player wording is in [baseline refinements](releases/baseline-refinements.md).
+- [x] Later the same day the Menu button applies pending changes on the opt-in
+  SYSTEM page and the Escape card's Admin page, and is Back while a dialog or
+  an open list holds the input: adapter harness, native SYSTEM and Escape card
+  checks and in-game captures ([Apply](ui/input-routing.md#menu-button-24-october-2026)).
+
+## Trigger glyphs on the section strips, 24 October 2026
+
+- [x] The Escape card's Match and Admin section strips end with each
+  controller family's trigger glyphs, a legend for a controller only.
+- [Behavior and checks](ui/input-routing.md#trigger-glyphs-24-october-2026):
+  generation width checks, native strip checks and a capture of every family.
+  Candidate player wording is in [baseline refinements](releases/baseline-refinements.md).
+
+## Menu button glyphs, 24 October 2026
+
+- [x] Each controller family's Menu button glyph ends the Escape card's
+  Admin Apply changes plate, which the button presses, for a controller only.
+- [Behavior and checks](ui/input-routing.md#menu-glyphs-24-october-2026):
+  native plate checks and a capture of every family.
+
+## Joined lines and Demos capitals, 24 October 2026
+
+- [x] List separators, the time in the mission, a save's date and time and
+  the load time's decimal mark and unit come from each language's table
+  (`#str_231532`-`#str_231535`); the Demos page's headings and plates are
+  capitals in every language (`#str_231530`, `#str_231531`, `#str_231536`).
+- [Behavior and checks](ui/retained-screens.md#joined-lines-and-capitals-24-october-2026):
+  gate harness fixtures, a format check over every table and captures in
+  three languages. Candidate player wording is in [baseline refinements](releases/baseline-refinements.md).
+
+## Controller prompt settings and list paging, 24 October 2026
+
+- [x] Game Options > Controller gains Prompt Style (`in_promptStyle`) and Swap
+  Confirm and Back (`in_swapConfirmBack`), both console-only before, in all
+  twelve language tables. Later rows, hovers, section anchors and the scroll
+  extent move two rows; the settings registry and coverage test follow.
+- [x] PageUp/PageDown and Home/End move focus a visible page through a retained
+  list, or to its ends; the triggers send them where a document declares no
+  section events, and step a focused slider coarsely.
+- [x] Join Game's row focus follows its server through new orders, refreshes
+  and filters onto its page (UI-03 stable refresh focus), checked by the
+  session gate.
+- [Behavior and checks](ui/input-routing.md#settings-rows-24-october-2026):
+  settings coverage, GUI value/clipping/navigation contracts, the focus reveal
+  and adapter harnesses, and in-game Settings and Load Game captures. Candidate
+  player wording is in [baseline refinements](releases/baseline-refinements.md).
+
+## Audio on Linux, voice output loss and long sessions, 24 October 2026
+
+- [x] AUD-02/03/04/06/07: the output-recovery, subtitle and scene harnesses pass on
+  Linux x64 (Ubuntu 24.04, WSL2, Mesa llvmpipe, system OpenAL Soft 1.23.1). The
+  Linux dedicated server links again: its OpenAL stub gains `alSourceRewind`.
+- [x] AUD-05: voice playback drops frames while the output is gone and restarts with
+  the next one after it returns; the simulated outage stops voice sources too.
+- [x] AUD-02/03: `audio_scene_audit.py --repeat` long sessions; six maps' openings
+  replayed three times keep flat residency, voices and stream reservations.
+- Evidence and limits: [Linux, voice output loss and long sessions](audio-voice-evidence.md#linux-voice-output-loss-and-long-sessions-24-october-2026).
+  Candidate player wording is in [audio refinements](releases/audio-refinements.md).
+
+## Audio scenes, centred reverb and portrait captions, 23 October 2026
+
+- [x] AUD-03: start a streamed track on a recycled voice reliably. A source that
+  had played stayed `AL_STOPPED`, so OpenAL counted its queued blocks as already
+  played and the track never started once the voice pool had cycled. The flush
+  now rewinds the source. This is a regression in this cycle's unreleased
+  streaming.
+- [x] AUD-04: give a centre-routed positional sound a mod reverb's room rolloff on
+  its sends, which OpenAL never applies to direct 5.1 channels.
+- [x] AUD-06/AUD-07: `s_logSpeech` speech audit and `audio_scene_audit.py`, every
+  campaign map's opening with cinematics, probing routing, muted Dialogue Volume,
+  subtitle cues, streams and audio residency. Engine-made lipSync defaults no
+  longer hide sample-path transcripts. Dialogue Volume holds through simulated
+  output loss and in-place resets.
+- [x] AUD-07: portrait cinematic captions hang below the artwork when two lines fit
+  (visual specification 1.25, register increment re-binding).
+- Evidence and limits: [authored scenes, centred reverb and portrait captions](audio-voice-evidence.md#authored-scenes-centred-reverb-and-portrait-captions-23-october-2026).
+  Candidate player wording is in [audio refinements](releases/audio-refinements.md).
+
+## Save details, 23 October 2026
+
+- [x] CONTINUE and the Load Game page name a save's difficulty and the run's
+  play time; the pause's level block adds the run's total time under the
+  mission time and keeps the last save's age on its own line. Objectives
+  completed on a map survive loading a save. The play time and difficulty
+  travel in the persistent player info every save header already holds, so
+  the save format is unchanged; saves from earlier builds show neither. Two
+  play-time phrases are in all twelve language tables.
+- [Behavior, checks and limits](ui/retained-screens.md#save-details): session
+  gate, native page checks, the generator's fit checks, and an in-game
+  capture run across two maps. Candidate player wording is in
+  [baseline refinements](releases/baseline-refinements.md).
+
+## High-refresh presentation owners, 23 October 2026
+
+- [x] HF-03: add opt-in late look (`in_presentationView`) through an absolute-angle
+  engine sampler and a frozen per-draw SP/MP correction of the drawn eye and what
+  it holds. Game API 54 passes the usercmd generator to the game modules; engine
+  and game modules must be replaced together.
+- [x] HF-04: re-place the live view muzzle-flash light and flashlight from the drawn
+  gun; draw unbound client debris, brass and gibs, their trails and active AF
+  (ragdoll) poses between tick samples; record the remaining exclusions.
+- [x] HF-05 (alternate views): sample cinematic and private cameras, third person
+  and the death camera per tick and draw them on the scene clock with cut,
+  identity, cadence, jump and carrier rules. Remote actors stay with MP-07.
+- [x] HF-06/HF-07 definitions: cross-system rules, 240 Hz budgets and the
+  measurement procedure in the [presentation owners contract](presentation-owners.md);
+  physical qualification and live MP late look remain open under HF-07/HF-08.
+- Evidence: `openq4-presentation-look`, `presentation_hf_contract.py --mutations`,
+  the updated interpolation contract and live SP probes recorded in the
+  contract. Candidate player wording is in
+  [baseline refinements](releases/baseline-refinements.md).
+
+## High-refresh presentation, second round, 24 October 2026
+
+- [x] HF-05: decide remote actors. While the local client plays, remote bodies
+  stay on the tick because MP-07 rewinds by the displayed pose age. A spectating
+  client draws them, the followed player's third person and the death camera
+  on its camera's clock. Vehicle cockpit eyes are bounded against their
+  interpolated cockpit, and nested monitor views are recorded.
+- [x] HF-06: a diagnostic guard counts event dispatch, script threads, entity
+  physics and effect spawns that start inside a prepared draw;
+  `g_presentationClockCapture` reports it per draw and the runtime harness
+  fails any case that records one. Effects BSE starts while the renderer
+  services it (particle impacts, nested segments) are counted apart.
+- [x] HF-07: the runtime harness gains a `pacing` case for the cap matrix,
+  judged against the 240 Hz budget; only operator-declared `--reference` runs
+  in a visible foreground window qualify.
+- [x] HF-08 (engine-side part): loopback listen-host and remote-client
+  late-look cases consume input once and remove about 16 ms; spectator and
+  walker-cockpit cases.
+- [x] HF-08 zoom, lifts and loss: the cheat-gated `in_presentationViewProbeZoom`
+  holds zoom without device input. Zoomed look, riding a lift and a remote
+  client losing 5% of its packets all consume input once and draw the sampled
+  input. With the network impairment rework, a client under 40 ms latency,
+  10 ms jitter and 5% loss each way does too.
+- [x] HF-06 demos: a session records a render demo under late look while the
+  capture runs, then plays it back with `timeDemoQuit`; both stay clean.
+- [x] HF-06/HF-07/HF-08 further cases: stereo frames from the OpenXR test
+  runtime and a remote-camera monitor pass the gameplay guard. The capture
+  reports each draw's preparation cost (0.35 ms of a 5 ms frame). Vsync and
+  Vulkan pacing runs are recorded, and the declared frame-rate policy is
+  contract-pinned. Rapid turns at 2200°/s consume input once. Late look stays
+  excluded in vehicles by decision.
+- [x] HF-08 physical latency instrument: `com_latencyFlash` draws a white bar on
+  the first frame after a fire press for LDAT/OSLTT-style sensors; the `flash`
+  runtime case checks one drawn frame per press.
+- [x] HF-06 closed: one session with temporal AA, shadow maps, late look,
+  retained UI and audio survives a save and load, `vid_restart` and an AVI
+  capture, with every capture interpolated and no gameplay in any draw.
+- Evidence: `presentation_hf_contract.py --mutations`, the interpolation
+  contract and live captures recorded in the
+  [presentation owners contract](presentation-owners.md). Physical pacing,
+  physical latency and by-eye review remain open under HF-07/HF-08.
+
+## Audio output recovery, layout changes and memory, 23 October 2026
+
+- [x] AUD-02: restart one-shot sounds that a lost or reopened output stopped at the
+  scene clock, as loops and bounded queues already were; allocate no voices
+  while the endpoint is gone; resume a line paused across the change in place.
+  `s_testDeviceInterruption` and `listSoundVoices` support no-device checks.
+- [x] AUD-04: apply speaker-layout, HRTF and limiter changes with an in-place
+  device reset instead of a full sound restart, and re-route playing voices at
+  their scene clock when the centre speaker comes or goes.
+- [x] AUD-03: trim reclaimable audio on an operating-system low-memory notice
+  (`s_trimIdleSeconds`, `s_trimAudioMemory`); stream Ogg files without usable
+  length metadata through a small stb_vorbis seek extension; drop the one-hour
+  streamed-track limit; build streamed envelopes on job workers during loads.
+- [x] AUD-06/AUD-07: installed-asset dialogue routing audit (no unclassified
+  speech in either campaign) and per-language transcript coverage.
+- Stock-map gameplay, native, compiled-production and static checks pass; see
+  the [evidence and limits](audio-voice-evidence.md#output-recovery-layout-changes-and-memory-pressure-23-october-2026).
+  Physical endpoints, real low-memory notices and other operating systems remain
+  open. Candidate player wording is in [audio refinements](releases/audio-refinements.md).
+
+## Focus-following prompt verbs, 23 October 2026
+
+- [x] The pages' prompt bars name what Accept does for the focused control:
+  LOAD on LOAD GAME and the chosen save, DELETE, SAVE on SAVE GAME and the
+  chosen save, PLAY and JOIN, and SELECT elsewhere. Accept leaves the bar
+  while nothing focused can act. Buttons gain an optional `prompt`; five
+  capitals verbs are in all twelve language tables.
+- [Behavior, checks and limits](ui/retained-screens.md#page-prompt-bars):
+  runtime, adapter and native page checks, and OpenGL (English) and Vulkan
+  (French) captures. Contextual west/north prompts remain open (UI-02).
+  Candidate player wording is in [baseline refinements](releases/baseline-refinements.md).
+
+## Strogg confirmations, 23 October 2026
+
+- [x] Give the Strogg pause's QUIT TO MENU and EXIT questions, and the Strogg
+  Save/Load pages' delete, overwrite and notice dialogs, the Strogg family:
+  30-degree shoulders, #F59512 rails, R_Strogg text and Strogg action plates,
+  with every label translating from runes as the dialog opens. Behavior,
+  focus and timing stay the stock dialog's; Marine dialogs are unchanged.
+- [The construction and its evidence](ui/retained-screens.md#strogg-confirmations)
+  cover native checks and OpenGL/Vulkan captures in English, French and
+  Russian. The art derives from section 13.7 and awaits review under UI-05.
+  Candidate player wording is in [baseline refinements](releases/baseline-refinements.md).
+
+## UI acceptance transition, 23 October 2026
+
+- [x] Add the register's separate acceptance audit (UI-11). It accepts only
+  named requirements and resources from committed, reviewed records that are
+  current and prove each conjunct, constraint, dependency and per-resource
+  behavior/artwork claim. Checkpoints withdraw stale acceptance explicitly.
+- [x] Register three UI checks that earlier increments added without wiring them
+  into CI and local validation.
+- [The transition's rules, tests and limits](ui/acceptance-transition.md) are
+  developer tooling with no player-visible change; nothing has been accepted
+  with it yet.
+
+## Multiplayer and bots round, 23 October 2026
+
+- [x] MP-08: hostname connections try up to eight resolved addresses, the
+  historical first choice then alternating families, three unanswered challenges
+  each. Native ordering/failover cases pass, and a two-process probe joined an
+  IPv6-only loopback server through `localhost` after three unanswered IPv4
+  challenges. The guide documents the sequence.
+- [x] MP-07: clients advertise their remote extrapolation
+  (`net_mpRemoteExtrapolation`). The server rewinds by the displayed pose age and
+  never lets a client claim lengthen it. `lagCompStatus` and the
+  `net_mpPredictDebug` pose age expose both sides. An executable state fixture
+  passes with five failing controls; the runtime probe shows the advertisement
+  and rewinds following the client's mode. The guide no longer recommends
+  enabling both corrections. Defaults are unchanged. The probe's rising
+  reported lead was a client regression since 0.13.0 (42e765882): the
+  widened prediction adjustment turned the unsigned catch-up step into full
+  slowdown, leaving clients a frame behind with late commands. The steps are
+  signed again; a closed-loop fixture with four failing controls covers it.
+- [x] MP-01: passed ballots revalidate against the current session (adapter-owned
+  once-only acknowledgement); veto turns use the series side; spectator follow
+  latches spawn identity. Extended contracts fail against each reverted fix.
+- [x] MP-05: `mvdRecover`, previous/slot/name follow, a named follow overlay and
+  recording status in `mvdStatus`. MVDs with two or more players recorded since
+  27 September failed playback validation because the start-state powerup mask
+  grew to 18 bits; both readers now detect 16 or 18. Recovery (2,032 cut points)
+  and start-state fixtures pass with failing controls; the runtime probe
+  recovered a killed recording and played it to its clean end.
+- [x] MP-02/MP-03: bots refuse splash shots whose predicted push would throw a
+  team-mate into the void, and penetrating rails with a team-mate anywhere on
+  the line; trench far rims are linked; a listen server clears debug lines
+  each frame. MP physics has no ladders; lifts stay unmodelled. A headless
+  build of all 33 catalog variants and seven bot audits pass.
+- [x] MP-06: client air drains once per game frame, not per prediction replay;
+  `s_soundWorlds` reports the underwater muffle; swimming bots dive for an
+  underwater route corner while they have air to spare.
+- Candidate player wording: [multiplayer refinements](releases/multiplayer-refinements.md)
+  and [bot refinements](releases/mp-bot-refinements.md). Evidence and remaining
+  scope are recorded under MP-01 to MP-08 in the [roadmap](roadmap.md).
+
+## Vulkan roadmap round, 23 October 2026
+
+- [x] VK-03: complete, fail-closed device and instance inventories; automatic
+  starts resume on the next compatible GPU after a device, swapchain or resource
+  failure, bounded to four adapters, while explicit `r_vkDevice` choices never
+  substitute. 107 native fake-driver cases, the production startup route
+  against adapter doubles, and NVIDIA/Dozen/Intel hardware drills pass.
+- [x] VK-04: authored GLSL/ARB stages follow a specified per-stage fallback
+  policy with once-per-reason reports and a fuller `reportShaderPrograms`. The
+  version table evicts stale versions, a full ARB table no longer ends the
+  session, and shader parameters with no Vulkan value follow OpenGL.
+- [x] VK-05: per-domain exposure, temporal-history invalidation and settling of
+  late linear-HDR failures; `rendererVulkanHDRInfo` reports admission counts.
+- [x] VK-07: Vulkan captures fail closed instead of saving cleared, skewed or
+  unread images, and stencil diagnostics carry frame and view identity.
+- Evidence and limits: [device admission](vulkan-device-selection.md),
+  [material programs](vulkan-material-programs.md), [HDR](vulkan-hdr.md) and
+  [captures](vulkan-captures.md). AMD, physical Linux and MoltenVK hardware
+  (VK-01), presentation pacing (VK-02) and the measured VK-06 work remain open.
+  Candidate player wording is in [unreleased notes](releases/unreleased.md).
+
+## Save browser controls, 23 October 2026
+
+- [x] Add date/name/location sorting, manual/autosave filter tags and explicit
+  refresh to the Marine and Strogg Save/Load pages. Preserve selection and row
+  focus by filename and keep typed names intact. Freeze catalog operands and
+  reject stale queued actions; keep deletion tied to its confirmation target.
+- [Save browser evidence and limits](ui/save-browser.md) record native,
+  adapter/session and real save/restore qualification. The broader UI-03 scope,
+  physical input and other-platform acceptance remain open. Candidate player
+  wording is in [baseline refinements](releases/baseline-refinements.md).
+
+## Multiplayer player identity, 23 October 2026
+
+- [x] Bind Players selections and local friend/mute marks to a connection's
+  generation. Held or queued menu actions cannot follow a replacement occupant;
+  ordinary score refresh retains valid work. The statistics return to the local
+  player when the selected connection leaves. Package the matching engine and
+  game modules together; the retained-menu cover protocol is now version 2.
+- [x] Pass the Windows build/stage, 12 targeted native suites, the adapter's
+  production case and 20 rejected mutations, the session gate, and production
+  player-state checks across 32 slots with three rejected mutations. Review
+  14 engine screenshots from live slot-replacement matches in OpenGL at
+  1280×720 and Vulkan at 1920×1080. Both return to gameplay with no retained-UI
+  warnings or errors; stock/bot asset warnings remain.
+- [Player identity evidence and limits](ui/player-identity.md) preserve delayed
+  remote voice-mute packets, kick/admin identity, device/platform qualification
+  and full UI-03/UI-09 acceptance as outstanding. Candidate player wording is in
+  [baseline refinements](releases/baseline-refinements.md).
+
+## Multiplayer roster reachability, 23 October 2026
+
+- [x] Keep multiplayer player lists and summary scoreboards readable with fixed
+  headings, 24 dp rows and scrolling through all 32 connection slots. Late
+  players and spectators remain reachable; refresh and view restoration retain
+  the scroll, while a smaller roster clears obsolete offsets. The kick chooser
+  also includes every other connection. This leaves the configured server limit
+  of 16 unchanged.
+- [x] Pass the full Windows build/stage, six native suites, the session gate,
+  four capture-oracle tests and generated-document checks. Review 30 engine
+  screenshots from OpenGL at 1280×720 and Vulkan at 1920×1080, using live
+  three-player gameplay plus explicit 32-slot production-document fixtures.
+  This does not qualify a 32-client network session. Existing stock/bot precache
+  warnings remain; there are no retained-UI warnings or errors in either run.
+  [Evidence and remaining scope](ui/multiplayer-menus.md#full-roster-scrolling-23-october-2026)
+  keep the broader UI-03, device, layout and performance gates open.
+- Candidate player wording is included in [baseline refinements](releases/baseline-refinements.md).
+
+## UI settings and control follow-through, 23 October 2026
+
+- [x] Refresh an open, clean SYSTEM page after external settings and performance
+  preset changes. Preserve dirty drafts and unfinished numeric text, report
+  conflicts and prevent stale Apply. Queued value controls now check their
+  starting values and current choice availability before dispatch, while valid
+  ordered edits still work. Eleven native suites, 110 production-service
+  scenarios and nine-stage SP/OpenGL/MP/Vulkan gameplay captures cover this
+  bounded UI-01/UI-09 increment. [Evidence and remaining scope](ui/external-settings-refresh.md).
+  No requirement, migration or final UI gate is accepted.
+- Candidate player wording is included in [baseline refinements](releases/baseline-refinements.md).
 
 ## Outstanding-session follow-through, 22 October 2026
 
@@ -30,7 +413,19 @@ completed release material here and publish curated notes in `releases/`.
   still fail, and the open System page's external-preset binding remains stale.
   See [current UI evidence](ui/runtime-performance.md#current-build-measurements-and-presetscale-reproduction-22-october-2026).
 
-## Post-0.14.000 corrections
+## Unreleased corrections after the withdrawn 0.14.000 build
+
+- [x] Clarify UI defaults against the source and release tag: current
+  `Session_menu.cpp` declares archived `ui_retained 1`; tag `v0.14.000`
+  declared 0 before commit `1aa2332d9` restored 1. Align current player and
+  developer guides, retain the release's historical default, and explain
+  saved preferences and explicit launch overrides. Correct stale gate comments
+  and the player guide's in-match multiplayer menu coverage.
+
+- [x] Link Schnapple's [signed and notarized macOS builds at Mac Source Ports](https://www.macsourceports.com/game/quake4)
+  from the README, macOS setup guide and 0.14.000 release notes, with contributor
+  credit. Distinguish its Apple Silicon/Intel Universal 2 download from our
+  unsigned Apple Silicon preview packages on GitHub.
 
 - [ ] Keep script-choreographed movers at their authored speed in Turbo mode
   (#184). Turbo doubled every mover, but map scripts time their own waits and
@@ -1002,7 +1397,14 @@ on wide and tall displays. The optional new UI keeps its scope and dialog effect
   Addresses the documentation gap in [#185](https://github.com/themuffinator/openQ4/issues/185);
   the reporter's installation confirmation remains open under PLAT-04/REL-01.
 
-## 0.14.000 release
+## 0.14.000 release — withdrawn
+
+The completed steps below record the original attempt. The release was later
+withdrawn because it was broken; 0.13.2 remains the latest available download.
+
+This section records the tagged release, whose default was `ui_retained 0`.
+Later source builds restored `ui_retained 1` in commit `1aa2332d9`; see the
+[current interface guide](../user/client-settings.md#modern-and-classic-screens).
 
 - [x] Restore the shipping `ui_retained 0` default because retained gameplay
   overhead is still not negligible. Preserve archived player preferences and
@@ -1017,13 +1419,17 @@ on wide and tall displays. The optional new UI keeps its scope and dialog effect
   matching pinned dependencies, corresponding source downloads and signature,
   manifest, native-library and overlay verification. Keep Android's device
   qualification limits explicit even when the overall release is stable.
-- [x] Publish and verify [0.14.000](https://github.com/themuffinator/openQ4/releases/tag/v0.14.000)
-  as the latest stable release through [Manual Releases](https://github.com/themuffinator/openQ4/actions/runs/38297252865).
-  All seven platform jobs and publication passed. All 16 download assets are
-  present with verified stored hashes, including the signed Android APK and
-  corresponding dependency sources. Legacy UI remains the shipping default.
+- [x] Originally publish 0.14.000 through [Manual Releases](https://github.com/themuffinator/openQ4/actions/runs/38297252865).
+  All seven platform jobs and publication passed at the time, and the 16 assets
+  were verified. The broken release was subsequently removed. Its APK, legacy
+  UI default and other changes are not claims about the available 0.13.2 package.
 
-## 0.13.2 release candidate
+## Unreleased candidate work previously grouped under 0.13.2
+
+This section accumulated later development changes under an old candidate
+heading. It is not the contents of the 14 September 2026 release. See the
+[corrected 0.13.2 notes](releases/v0.13.2.md) for that package and
+[unreleased notes](releases/unreleased.md) for the later candidate material.
 
 - [x] Restore the actual legacy HUD audiograph and reduce repeated UI work. Radio and
   voice use the installed legacy waveform with its complete height table;
@@ -2396,10 +2802,10 @@ on wide and tall displays. The optional new UI keeps its scope and dialog effect
 - [ ] Linux x64/ARM64 push and ARM64 pull-request jobs now select mandatory lavapipe Vulkan startup/render-target and fallback checks. Hosted results, full Vulkan feature parity, physical GPU/platform qualification, repeated comparisons and promotion sign-off remain pending. See [Vulkan gap closure](archive/2026-10-18/plans/2026-09-20-vulkan-gap-closure.md).
 - [x] Bot-only effect/feedback queues no longer fill in busy multiplayer combat, and bot recipients skip network visibility work. Native delivery checks preserve human spectators, demo/repeater recording and the documented unreliable broadcast destination. This resolves queue-overflow warnings found during the bot audit.
 - [x] Multiplayer bots retain valid routes when a replacement is blocked, release stalled and no-longer-useful goals, and stop using unseen enemy positions for combat movement/weapon range. Explosion-aware threat filtering catches nearby resting explosives. Visibility and pickup shortlists avoid redundant collision queries; the native fixture reduces 80-item snap queries from 81 to 11 and checks 240 perception cases. Windows x64 build/staging, eight existing bot contracts, native regressions and live stock DM/CTF gameplay passed. CTF exercised fetch, defend, escort and capture goals. Details and reproduction: [Multiplayer bots](mp-bots.md).
-- [x] German is selectable as **Deutsch** in Game Options, with complete bundled menu, objective, terminal and gameplay-message translations. Retail German campaign dialogue remains supported; English-only installations retain English dialogue. Coverage, format arguments, choice ordering and German glyphs are checked alongside the existing localization contracts. Language changes force a deferred GUI reload so cached labels use the selected language. Player notes: [0.13.2](releases/v0.13.2.md).
+- [x] German is selectable as **Deutsch** in Game Options, with complete bundled menu, objective, terminal and gameplay-message translations. Retail German campaign dialogue remains supported; English-only installations retain English dialogue. Coverage, format arguments, choice ordering and German glyphs are checked alongside the existing localization contracts. Language changes force a deferred GUI reload so cached labels use the selected language. Player notes: [unreleased](releases/unreleased.md).
 - [x] Windows x64 build/staging and German SP/OpenGL and MP/Vulkan gameplay checks passed. The runtime regression checks live language switching, visible menus and the translated Match Control view using engine screenshots. German retail voice playback still requires qualification with the complete retail pack; the available English dialogue fallback was exercised.
 - [x] The TrueType faces were audited glyph by glyph against the retail atlases they are traced from, and repaired. The 17 Latin-1 symbols every face lacked and Chain's `!` are built from each face's own glyphs, and the bullet is no longer a missing-glyph box. Accented letters compose on the face's own letters (breve and ogonek from the weight-matched donor) instead of arriving whole from Noto, stacked accents no longer overlap, and ProFont's and the console sheet's squeezed capital accents are recomposed. The console face no longer draws `ß` as `á` (a retail cell slip), maps no C1 codes, keeps every glyph inside the cell the console clips to, and traces without stepped bevels. `tools/assets/fonts/audit_fonts.py` scores a build against the atlases, and `tools/tests/ttf_font_integrity.py` guards the shipped files in CI. Details: [TrueType font system](ttf-font-system.md).
-- [x] Brazilian Portuguese, Czech, Hungarian, Turkish and Ukrainian are selectable as **Português (Brasil)**, **Čeština**, **Magyar**, **Türkçe** and **Українська**, with complete bundled code, menu, map, map-pack and openQ4 tables; dialogue stays English. Turkish uses Windows-1254, Hungarian Windows-1250 and Ukrainian Windows-1251 for the console and legacy paths, first launch follows the OS language, and Czech, Hungarian, Turkish and Ukrainian always use the scalable fonts. Each translated table is checked against English for keys, order, format arguments, escapes, choice lists, endonyms and drawable signature letters; the retained gate fits every loading tip and server card, and the SYSTEM page native fit tests pass for all five, run locally with their 1.4x glyph-width margin (CI samples seven other locales). Player notes: [0.13.2](releases/v0.13.2.md).
+- [x] Brazilian Portuguese, Czech, Hungarian, Turkish and Ukrainian are selectable as **Português (Brasil)**, **Čeština**, **Magyar**, **Türkçe** and **Українська**, with complete bundled code, menu, map, map-pack and openQ4 tables; dialogue stays English. Turkish uses Windows-1254, Hungarian Windows-1250 and Ukrainian Windows-1251 for the console and legacy paths, first launch follows the OS language, and Czech, Hungarian, Turkish and Ukrainian always use the scalable fonts. Each translated table is checked against English for keys, order, format arguments, escapes, choice lists, endonyms and drawable signature letters; the retained gate fits every loading tip and server card, and the SYSTEM page native fit tests pass for all five, run locally with their 1.4x glyph-width margin (CI samples seven other locales). Player notes: [unreleased](releases/unreleased.md).
 - [x] Windows x64 build/staging passed. Each new language passed the SP/OpenGL localization smoke on airdefense1 (gameplay, live switching to English and back, Settings and the language chooser) and the MP smoke on q4dm1 (translated Match Control; Turkish on Vulkan), checked with engine screenshots.
 - [x] Restaging openQ4-game sources is incremental. The stage is now synced in place, so
   staged files whose bytes are unchanged keep their timestamps and ninja no longer

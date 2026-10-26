@@ -162,6 +162,9 @@ void AL_APIENTRY alSourceQueueBuffers( ALuint, ALsizei, const ALuint* ) AL_API_N
 void AL_APIENTRY alSourceStop( ALuint ) AL_API_NOEXCEPT {
 }
 
+void AL_APIENTRY alSourceRewind( ALuint ) AL_API_NOEXCEPT {
+}
+
 void AL_APIENTRY alSpeedOfSound( ALfloat ) AL_API_NOEXCEPT {
 }
 

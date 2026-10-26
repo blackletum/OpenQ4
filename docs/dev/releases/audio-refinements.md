@@ -1,4 +1,6 @@
-# Audio refinements after 0.14.000
+# Audio refinements (unreleased)
+
+> **Unreleased development notes.** 0.13.2 is the latest available release; 0.14.0 was withdrawn. These changes are not a new download. See [release status](../../user/release-status.md).
 
 ## Highlights
 
@@ -15,7 +17,9 @@
   of audio queued, so a brief stall such as a mid-level load no longer cuts
   them out. The audio memory budget is unchanged.
 - Mods using distance-dependent room reverb retain the intended wet sound level
-  instead of losing it too quickly. Stock room reverb keeps its existing mix.
+  instead of losing it too quickly, and sounds a mod plays from the centre
+  speaker now lose reverb with distance like every other sound. Stock room
+  reverb keeps its existing mix.
 - Surround output now places mono radio and global dialogue toward the centre
   speaker. Nearby NPC voices keep their direction, and stereo/headphone output
   keeps its existing mix.
@@ -23,13 +27,27 @@
   controls. Microphone access starts off; enable it on the match's Voice page
   and bind Voice Chat in Settings > Controls > Other. The local microphone test
   stays private to your machine.
+- Unplugging headphones or switching audio devices no longer cuts off the line
+  of dialogue that was playing: speech and effects pick up where the scene is
+  when audio returns, and a line paused in a menu continues from where it
+  stopped instead of starting over. Voice chat from other players picks up
+  again too, without a backlog of late speech.
+- Changing the speaker layout, headphone 3D audio or the output limiter now
+  applies instantly without reloading the game's sounds, and dialogue that is
+  playing moves to or from the centre speaker at its current point.
+- On phones and tablets, a low-memory warning from the system now frees audio
+  the current scene is not using; those sounds reload when they next play.
+- Music and dialogue files whose length information is missing or damaged now
+  stream like any other long track instead of being decoded whole, and level
+  loads spend less time preparing long music tracks.
 
 ## Upgrade notes
 
 - Subtitles start off and cover lines with usable text in your installed assets.
   Coverage is incomplete in both campaigns; lines without a verified transcript
-  stay uncaptioned. Large captions can overlap Awakening title cards in portrait
-  windows. This feature does not transcribe player voice chat or caption effects.
+  stay uncaptioned. In portrait windows, cinematic captions sit just below the
+  picture, clear of title cards, except at the very largest text sizes. This
+  feature does not transcribe player voice chat or caption effects.
 - Replace the engine and matching game modules together. Dialogue Volume starts
   at full authored volume; existing saves do not need conversion for this setting.
 - Voice requires matching support on the server and clients. It uses narrowband
@@ -52,3 +70,13 @@
   large RoQ videos no longer require a full encoded-video copy for sound.
 - Added decode backpressure and bounded handling of Ogg files without length
   metadata, with memory accounting for diagnostics.
+- Streamed tracks are no longer limited to one hour.
+- Subtitles in other menu languages use the English transcripts: the Steam
+  release installs them in English only, and The Awakening writes them in English.
+- New developer commands: `listSoundVoices` reports each sound's output routing
+  and position, `s_trimAudioMemory` runs the low-memory response on demand, and
+  `s_testDeviceInterruption` simulates a lost audio device for testing.
+  `s_logSpeech 1` lists every line of speech as it starts, with whether Dialogue
+  Volume and subtitles reach it.
+- Lines whose transcript is declared for the voice file, rather than for the
+  sound's name, now show their subtitle when a character speaks them.

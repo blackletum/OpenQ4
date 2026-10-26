@@ -2657,12 +2657,37 @@ static void Session_DrawLevelshotBounds() {
 	renderSystem->SetUseUIViewportFor2D( previousUIViewportMode );
 }
 
-// The current difficulty's localized name, as the retained pause and loading
-// screens show it: the names the difficulty pages give, Warlord the fifth
-// (the Arena's NIGHTMARE is another ladder's).
-static const char *Session_GetSkillName( void ) {
+// A difficulty's localized name, as the retained screens show it: the names
+// the difficulty pages give, Warlord the fifth (the Arena's NIGHTMARE is
+// another ladder's).
+const char *Session_SkillName( int skill ) {
 	static const char *skills[] = { "#str_200014", "#str_200015", "#str_200016", "#str_200017", "#str_41117" };
-	return common->GetLanguageDict()->GetString( skills[ idMath::ClampInt( 0, 4, cvarSystem->GetCVarInteger( "g_skill" ) ) ] );
+	return common->GetLanguageDict()->GetString( skills[ idMath::ClampInt( 0, 4, skill ) ] );
+}
+
+// The current difficulty's name, as the retained pause and loading screens
+// show it.
+static const char *Session_GetSkillName( void ) {
+	return Session_SkillName( cvarSystem->GetCVarInteger( "g_skill" ) );
+}
+
+// A play time as the retained screens show it: hours, minutes and seconds.
+idStr Session_RetainedPlayTime( int seconds ) {
+	seconds = Max( 0, seconds );
+	return va( "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60 );
+}
+
+// Two parts of a line the retained screens show, joined as the language
+// joins a list (#str_231533: in English the two around a middle dot);
+// either alone when the other is empty.
+idStr Session_RetainedList( const char *first, const char *second ) {
+	if ( first == NULL || first[0] == '\0' ) {
+		return second != NULL ? second : "";
+	}
+	if ( second == NULL || second[0] == '\0' ) {
+		return first;
+	}
+	return va( common->GetLanguageDict()->GetString( "#str_231533" ), first, second );
 }
 
 static const char *Session_GetLongMPGameTypeName( const char *gametype ) {
@@ -3867,6 +3892,9 @@ void idSessionLocal::Clear() {
 	retainedPageReturn = false;
 	retainedLoadSlots.Clear();
 	retainedLoadTimes.Clear();
+	retainedLoadNames.Clear();
+	retainedLoadLocations.Clear();
+	retainedSaveGeneration = 0;
 	retainedLoadFirst = 0;
 	retainedLoadSelected = -1;
 	guiRetainedSave = NULL;
@@ -6381,8 +6409,7 @@ void idSessionLocal::PublishRetainedLoadingServer( const idDict &serverInfo ) {
 		extra = va( common->GetLanguageDict()->GetString( "#str_230072" ), spectators );
 	}
 	if ( retainedRosterConnecting > 0 ) {
-		extra += extra.Length() ? " \xc2\xb7 " : "";
-		extra += va( common->GetLanguageDict()->GetString( "#str_230071" ), retainedRosterConnecting );
+		extra = Session_RetainedList( extra.c_str(), va( common->GetLanguageDict()->GetString( "#str_230071" ), retainedRosterConnecting ) );
 	}
 	guiLoading->SetStateBool( "server_roster_known", retainedRosterKnown );
 	guiLoading->SetStateBool( "server_team_mode", teams );
@@ -6649,7 +6676,7 @@ idSessionLocal::PublishRetainedPauseState
 The retained pause screen's level block and Objectives page: the level,
 difficulty, the map's objectives summary and its levelshot, and what the
 game publishes (the objectives with their descriptions and screenshots, the
-completed ones and the time in the mission).
+completed ones, the time in the mission and the run's play time).
 ===============
 */
 void idSessionLocal::PublishRetainedPauseState( idUserInterface *gui ) {
@@ -6667,11 +6694,12 @@ void idSessionLocal::PublishRetainedPauseState( idUserInterface *gui ) {
 	gui->SetStateString( "pause_detail", Session_GetSkillName() );
 	gui->SetStateString( "pause_objectives", objectives );
 	gui->SetStateString( "pause_shot", RetainedPauseShot( mapPath ).c_str() );
-	// The game publishes the objectives the player holds and the time in the
-	// mission. A game module that does not leaves the map's own summary and
-	// no time line.
+	// The game publishes the objectives the player holds, the time in the
+	// mission and the run's play time. A game module that does not leaves the
+	// map's own summary and no time lines.
 	gui->SetStateInt( "pause_objective_count", 0 );
 	gui->SetStateInt( "pause_mission_seconds", -1 );
+	gui->SetStateInt( "pause_total_seconds", -1 );
 	if ( game != NULL && mapSpawned ) {
 		game->HandleMainMenuCommands( "retainedPauseState", gui );
 	}
@@ -6686,17 +6714,24 @@ void idSessionLocal::PublishRetainedPauseState( idUserInterface *gui ) {
 			gui->SetStateString( va( "pause_objective_shot_%d", i ), "" );
 		}
 	}
-	// The time in the mission, then how long ago the newest save was written.
+	// The time in the mission and the run's play time, unless a save from an
+	// earlier build began the run; under them, how long ago the newest save
+	// was written.
 	const int seconds = gui->State().GetInt( "pause_mission_seconds", "-1" );
-	idStr stats;
+	const int total = gui->State().GetInt( "pause_total_seconds", "-1" );
+	idStr stats, saved;
 	if ( seconds >= 0 ) {
-		stats = va( "%d:%02d:%02d %s", seconds / 3600, seconds / 60 % 60, seconds % 60, common->GetLanguageDict()->GetString( "#str_230046" ) );
+		stats = va( common->GetLanguageDict()->GetString( "#str_231532" ), Session_RetainedPlayTime( seconds ).c_str() );
+		if ( total >= 0 ) {
+			stats = Session_RetainedList( stats.c_str(), va( common->GetLanguageDict()->GetString( "#str_231524" ),
+				Session_RetainedPlayTime( total ).c_str() ) );
+		}
 		if ( retainedNewestSave > 0 ) {
-			stats += " \xc2\xb7 ";
-			stats += Session_RetainedSaveAge( retainedNewestSave, time( NULL ) );
+			saved = Session_RetainedSaveAge( retainedNewestSave, time( NULL ) );
 		}
 	}
 	gui->SetStateString( "pause_stats", stats.c_str() );
+	gui->SetStateString( "pause_saved", saved.c_str() );
 	gui->StateChanged( common->GetPresentationTime() );
 #endif
 }
@@ -7408,8 +7443,11 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	common->PrintWarnings();
 
-	// The phase line reports the load time once the level is ready.
-	SetRetainedLoadingPhase( RETAINED_LOAD_READY, va( "%.1f s", msec * 0.001f ) );
+	// The phase line reports the load time once the level is ready, in tenths
+	// of a second as the language writes them (#str_231534, "%d.%d s").
+	const int loadTenths = Max( 0, msec + 50 ) / 100;
+	SetRetainedLoadingPhase( RETAINED_LOAD_READY,
+		va( common->GetLanguageDict()->GetString( "#str_231534" ), loadTenths / 10, loadTenths % 10 ) );
 	if ( guiLoading ) {
 		float pct = idMath::ClampFloat( 0.0f, 1.0f, guiLoading->State().GetFloat( "map_loading" ) );
 		while ( pct < 1.0f ) {

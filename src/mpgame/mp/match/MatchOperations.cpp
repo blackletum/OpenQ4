@@ -509,6 +509,7 @@ mpOperationAdapterContext_s::mpOperationAdapterContext_s( void ) {
 	preauthenticatedRefereeGrant = false;
 	actorCompetitionContestant = false;
 	actorCompetitionSide = MP_MATCH_SIDE_NONE;
+	actorSeriesSide = MP_MATCH_SIDE_NONE;
 	sessionOperational = false;
 	countdownPrerequisitesSatisfied = false;
 	cooldownPolicyAccepted = false;
@@ -1423,8 +1424,9 @@ mpOperationExecutionResult_t mpMatchOperationExecutor::ExecuteInternal(
 				return Reject( MP_OPERATION_REASON_UNREPRESENTABLE,
 					session, rules, proposals, series );
 			}
-			int actingSide = context.actorCompetitionContestant ?
-				context.actorCompetitionSide : principal.actorState->side;
+			// The turn is checked on the same series side the view showed the actor,
+			// never on the gameplay side it happens to hold.
+			int actingSide = context.actorSeriesSide;
 			const bool controlsVeto = context.localOperator ||
 				context.preauthenticatedRefereeGrant ||
 				HasCapability( principal.actorCapabilities, MP_MATCH_CAP_VETO_CONTROL );
@@ -1549,7 +1551,15 @@ mpOperationExecutionResult_t mpMatchOperationExecutor::ExecutePassedProposal(
 
 	// Copy before execution because a successful target may mutate a core.  The
 	// proposal record remains retained until the explicit acknowledgement call.
-	const mpMatchOperationRequest_t operation = record->operation;
+	mpMatchOperationRequest_t operation = record->operation;
+	// A ballot's authority is its vote, and a vote takes up to its whole window.
+	// Ready changes, connections and every other session mutation in that window
+	// advance the session revision, so the revision the proposer saw would make
+	// almost every passed ballot stale.  Revalidate against the session as it is
+	// now instead: phase, the proposer's binding and eligibility, the target's
+	// identity and side and the opcode's own semantic checks all run again below.
+	// Once-only execution is the adapter's acknowledgement, not this revision.
+	operation.expectedSessionRevision = session.GetSessionRevision();
 	mpOperationExecutionResult_t result = ExecuteInternal( operation, context,
 		session, rules, proposals, series, true );
 	result.continuation.proposalScope = scope;

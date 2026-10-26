@@ -79,6 +79,7 @@ public:
     void Joystick(){++joysticks;}
     void MakeCurrent(){++simulations;}
     void ResetMouseFilter(){++filters;}
+    void MouseProbe(){} // in_presentationViewProbe adds no device events
     void SetButtonAction(int action,bool down){buttonState[action]+=down?1:-1;}
     unsigned initializations=0,joysticks=0,simulations=0,filters=0;
     bool keyState[K_LAST_KEY]={},directButtonState[UB_MAX_BUTTONS]={},retainedKeyBlocked[K_LAST_KEY]={};

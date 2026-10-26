@@ -3702,6 +3702,7 @@ idEntity::RunPhysics
 ================
 */
 bool idEntity::RunPhysics( void ) {
+	gameLocal.NotePresentationGameplay( "idEntity::RunPhysics" );
 	int			i, reachedTime, startTime, endTime;
 	idEntity *	part, *blockedPart, *blockingEntity = NULL;
 	trace_t		results;

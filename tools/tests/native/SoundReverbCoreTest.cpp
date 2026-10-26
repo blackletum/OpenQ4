@@ -350,11 +350,48 @@ static void TestSends() {
 	CHECK( sends.directGainHF == 0.0f && sends.directGain == 1.0f );
 }
 
+// A centre-routed voice's sends take the room rolloff OpenAL gives a mono source
+// (audio_mod_reverb.py renders both and compares them).
+static void TestRoomRolloff() {
+	// stock presets have none, and inside the reference distance nothing changes
+	CHECK( SoundReverb_RoomRolloffGain( 400.0f, 100.0f, 0.0f ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( 0.0f, 100.0f, 1.0f ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( 100.0f, 100.0f, 1.0f ) == 1.0f );
+	// inverse distance: half at twice the reference, a quarter at four times
+	CHECK( Near( SoundReverb_RoomRolloffGain( 200.0f, 100.0f, 1.0f ), 0.5f, 1e-6f ) );
+	CHECK( Near( SoundReverb_RoomRolloffGain( 400.0f, 100.0f, 1.0f ), 0.25f, 1e-6f ) );
+	CHECK( Near( SoundReverb_RoomRolloffGain( 200.0f, 100.0f, 2.0f ), 1.0f / 3.0f, 1e-6f ) );
+	CHECK( Near( SoundReverb_RoomRolloffGain( 150.0f, 100.0f, 0.5f ), 100.0f / 125.0f, 1e-6f ) );
+	// the units cancel: map units and metres give the same gain
+	CHECK( Near( SoundReverb_RoomRolloffGain( 2.0f, 1.0f, 1.0f ), SoundReverb_RoomRolloffGain( 200.0f, 100.0f, 1.0f ), 1e-6f ) );
+	// the most the EFX range allows, far away, stays a finite gain above zero
+	const float far = SoundReverb_RoomRolloffGain( 1.0e6f, 1.0f, SOUND_REVERB_EFX_MAX_ROOM_ROLLOFF_FACTOR );
+	CHECK( far > 0.0f && far < 1.0e-6f );
+	// monotonic in distance
+	float previous = 1.0f;
+	for ( float distance = 0.0f; distance <= 4096.0f; distance += 16.0f ) {
+		const float gain = SoundReverb_RoomRolloffGain( distance, 64.0f, 1.0f );
+		CHECK( gain <= previous && gain > 0.0f );
+		previous = gain;
+	}
+	// no reference, invalid or infinite inputs leave the send alone or silence it, never NaN
+	CHECK( SoundReverb_RoomRolloffGain( 200.0f, 0.0f, 1.0f ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( 200.0f, -5.0f, 1.0f ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( 200.0f, 100.0f, -1.0f ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( std::nanf( "" ), 100.0f, 1.0f ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( 200.0f, std::nanf( "" ), 1.0f ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( 200.0f, 100.0f, std::nanf( "" ) ) == 1.0f );
+	CHECK( SoundReverb_RoomRolloffGain( 200.0f, INFINITY, 1.0f ) == 1.0f );
+	const float infinite = SoundReverb_RoomRolloffGain( INFINITY, 100.0f, 1.0f );
+	CHECK( std::isfinite( infinite ) && infinite >= 0.0f && infinite < 1.0e-30f );
+}
+
 int main() {
 	TestRanges();
 	TestConversion();
 	TestPlanner();
 	TestSends();
+	TestRoomRolloff();
 	std::printf( "SoundReverbCore: %d checks passed\n", checks );
 	return 0;
 }

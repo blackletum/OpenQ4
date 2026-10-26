@@ -564,7 +564,19 @@ struct idStr {template<class... T> static void snPrintf(char* out,int size,const
 static const char* vkStartupDeviceStage="window system";
 static bool VK_Device_InjectStartupFailure(int){return false;}
 static void VK_Bringup_ReleaseHeldInstance(){}
-static bool VK_GuiExecutor_PrepareStartup(){events.emplace_back("resources");return true;}
+// Fake adapters in enumeration order for the startup adapter retry. Each says
+// whether admission accepts it and whether its logical device and renderer
+// resources come up; the production loop decides what is retried.
+struct AdapterDouble { bool compatible=true, deviceOkay=true, resourcesOkay=true; };
+static std::vector<AdapterDouble> adapters;
+static int forcedDevice=-1, currentAdapter=-1;
+static const int VK_MAX_STARTUP_ADAPTER_ATTEMPTS=4;
+static const int VK_MAX_PHYSICAL_DEVICE_NAME_SIZE=256;
+struct vkDeviceAttempt_t { bool admitted; bool automatic; uint32_t index; char deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE]; };
+static bool VK_GuiExecutor_PrepareStartup(){
+    events.emplace_back("resources");
+    return currentAdapter<0||adapters[currentAdapter].resourcesOkay;
+}
 static void R_RendererMetrics_ShutdownGpuTimers(){}
 struct CVar { bool GetBool() const { return false; } int GetInteger() const { return 0; } };
 static CVar r_fullscreen,r_borderless,r_displayRefresh,r_hiddenWindow;
@@ -610,14 +622,31 @@ struct Services {
 } services,*vkBackendServices=nullptr;
 static Services* Sys_GetRenderWindowServices() { return servicesAvailable?&services:nullptr; }
 static bool R_GetInitialWindowSize(bool,int* width,int* height) { *width=640;*height=480;return initialSizeOkay; }
-static bool VK_Device_Init(Services* value) {
+// deviceOkay false fails before admission (loader, instance or surface); an
+// adapter's own failures come after it, as in VK_Device_Init.
+static bool VK_Device_Init(Services* value, uint32_t firstCandidate, vkDeviceAttempt_t& attempt) {
     assert(value==&services && windowAlive && !deviceAlive && !glConfig.isInitialized);
-    events.emplace_back("device-init"); deviceAlive=vkCtx.initialized=deviceOkay;
-    vkCtx.swapchainExtent={640,480}; return deviceOkay;
+    events.emplace_back("device-init"); attempt={}; currentAdapter=-1;
+    attempt.automatic=forcedDevice<0;
+    if(!deviceOkay)return false;
+    if(forcedDevice>=0&&firstCandidate>0)return false;
+    for(uint32_t i=firstCandidate;i<adapters.size();++i){
+        if(forcedDevice>=0&&i!=static_cast<uint32_t>(forcedDevice))continue;
+        if(!adapters[i].compatible)continue;
+        attempt.admitted=true;attempt.index=i;std::snprintf(attempt.deviceName,sizeof(attempt.deviceName),"adapter %u",i);
+        if(!adapters[i].deviceOkay)return false;
+        currentAdapter=static_cast<int>(i);deviceAlive=vkCtx.initialized=true;
+        vkCtx.swapchainExtent={640,480};return true;
+    }
+    return false;
 }
 static void VK_Device_Shutdown() {
     assert(!glConfig.isInitialized);
     if(deviceAlive)events.emplace_back("device-shutdown");deviceAlive=vkCtx.initialized=false;
+}
+static void VK_Device_AbandonAdapter() {
+    assert(!glConfig.isInitialized);
+    events.emplace_back("abandon");deviceAlive=vkCtx.initialized=false;currentAdapter=-1;
 }
 static bool VK_Device_RecreateSwapchain() {
     assert(deviceAlive && windowAlive && !glConfig.isInitialized);
@@ -640,6 +669,7 @@ static void Reset() {
     events.clear(); servicesAvailable=prepareOkay=createOkay=deviceOkay=applyOkay=recreateOkay=true;
     preserved=deviceAlive=windowAlive=false;glConfig={};vkCtx={};pixelWidth=1280;pixelHeight=720;
     strict=false;haveRequest=initialSizeOkay=true;strictRequest={};services.ApplyScreenParmsStrict=ApplyStrict;
+    adapters.assign(1,AdapterDouble());forcedDevice=-1;currentAdapter=-1;
 }
 static void Expect(std::initializer_list<const char*> expected) {
     std::vector<std::string> names;for(const char* value:expected)names.emplace_back(value);
@@ -691,7 +721,42 @@ int main() {
     Reset();strict=true;services.ApplyScreenParmsStrict=nullptr;
     assert(!VK_InitRenderDevice() && !deviceAlive && !windowAlive && !glConfig.isInitialized);
     Expect({"prepare","window-create","device-init","warning","device-shutdown","window-destroy","warning"});
-    std::puts("Vulkan startup: screen/swapchain refusal cleans device before attempt window, skips publication/input and permits retry");
+
+    // Adapter retry: an automatic start resumes on the next compatible adapter
+    // after one fails its resources, and applies the screen parameters once.
+    Reset();pixelWidth=640;pixelHeight=480;adapters.assign(2,AdapterDouble());adapters[0].resourcesOkay=false;
+    assert(VK_InitRenderDevice() && currentAdapter==1 && deviceAlive && glConfig.isInitialized);
+    Expect({"prepare","window-create","device-init","window-apply","refresh","resources","warning","abandon",
+        "device-init","refresh","resources","refresh","config","ready","input"});
+    // A logical-device failure after admission is retried the same way.
+    Reset();pixelWidth=640;pixelHeight=480;adapters.assign(2,AdapterDouble());adapters[0].deviceOkay=false;
+    assert(VK_InitRenderDevice() && currentAdapter==1);
+    Expect({"prepare","window-create","device-init","warning","abandon","device-init","window-apply","refresh","resources",
+        "refresh","config","ready","input"});
+    // Incompatible adapters are skipped by admission, not counted as attempts.
+    Reset();pixelWidth=640;pixelHeight=480;adapters.assign(3,AdapterDouble());adapters[0].resourcesOkay=false;adapters[1].compatible=false;
+    assert(VK_InitRenderDevice() && currentAdapter==2);
+    // An explicit r_vkDevice choice never substitutes another adapter.
+    Reset();pixelWidth=640;pixelHeight=480;adapters.assign(2,AdapterDouble());adapters[0].resourcesOkay=false;forcedDevice=0;
+    assert(!VK_InitRenderDevice() && !deviceAlive && !windowAlive && !glConfig.isInitialized);
+    Expect({"prepare","window-create","device-init","window-apply","refresh","resources","device-shutdown","window-destroy","warning"});
+    // No further compatible adapter: the start fails over as before.
+    Reset();pixelWidth=640;pixelHeight=480;adapters.assign(2,AdapterDouble());adapters[0].resourcesOkay=false;adapters[1].compatible=false;
+    assert(!VK_InitRenderDevice() && !deviceAlive && !windowAlive);
+    Expect({"prepare","window-create","device-init","window-apply","refresh","resources","warning","abandon","device-init",
+        "window-destroy","warning"});
+    // Attempts are bounded however many adapters fail.
+    Reset();pixelWidth=640;pixelHeight=480;adapters.assign(6,AdapterDouble());
+    for(auto& adapter:adapters)adapter.resourcesOkay=false;
+    assert(!VK_InitRenderDevice() && !deviceAlive && !windowAlive);
+    Expect({"prepare","window-create","device-init","window-apply","refresh","resources","warning","abandon",
+        "device-init","refresh","resources","warning","abandon","device-init","refresh","resources","warning","abandon",
+        "device-init","refresh","resources","warning","device-shutdown","window-destroy","warning"});
+    // A failed resize swapchain belongs to the window: no adapter retry.
+    Reset();adapters.assign(2,AdapterDouble());recreateOkay=false;
+    assert(!VK_InitRenderDevice() && currentAdapter==0);
+    Expect({"prepare","window-create","device-init","window-apply","refresh","recreate","device-shutdown","window-destroy","warning"});
+    std::puts("Vulkan startup: screen/swapchain refusal cleans device before attempt window, skips publication/input and permits retry; automatic starts resume on the next compatible adapter, bounded, explicit choices never substitute");
 }
 '''
 
