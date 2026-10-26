@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdarg>
 #include <cstring>
 #include <map>
 #include <string>
@@ -27,7 +28,7 @@ struct Parms{int soundShaderFlags=0,soundClass=0;float volume=1,minDistance=1,ma
 struct idSoundSample {const char*name="sound/vo/test.wav";int length=1000;bool fallback=false;const char*GetName()const{return name;}int LengthInMsec()const{return length;}bool IsDefault()const{return fallback;}};
 struct Shader{const char*name="dialogue";int entries=1;int GetNumEntries()const{return entries;}const char*GetName()const{return name;}};
 using idSoundShader=Shader;
-struct idSoundChannel{Shader*soundShader=nullptr;idSoundSample*leadinSample=nullptr,*loopingSample=nullptr;int startTime=0,cursor=100;bool stopped=false,radio=false;Parms parms;Fade volumeFade;};
+struct idSoundChannel{Shader*soundShader=nullptr;idSoundSample*leadinSample=nullptr,*loopingSample=nullptr;int startTime=0,cursor=100,logicalChannel=1;void*hardwareVoice=nullptr;bool stopped=false,radio=false;Parms parms;Fade volumeFade;};
 struct idSoundEmitterLocal {List<idSoundChannel*>channels;int emitterId=5,index=2;Vec origin;float spatializedDistance=1;int Index()const{return index;}};
 struct rvDeclLipSync {const char*raw="text",*text="caption";bool implicit=false;const char*GetRawTranscribeText()const{return raw;}const char*GetSubtitleText()const{return text;}bool IsImplicit()const{return implicit;}};
 struct DeclManager{std::map<std::string,rvDeclLipSync>decls;const rvDeclLipSync*FindType(int,const char*n,bool){auto i=decls.find(n);return i==decls.end()?nullptr:&i->second;}}manager;
@@ -36,9 +37,15 @@ struct soundSubtitle_t {const char*text,*shader;int emitterIndex,speakerId,start
 struct idSoundWorldLocal {List<idSoundEmitterLocal*>emitters;struct {int id=5;Vec pos;}listener;Fade soundClassFade[4];int now=100;int GetSoundTime(){return now;}int GetSubtitles(soundSubtitle_t*,int);};
 static bool SoundChannelHasCompleted(idSoundChannel*c,int){return c->stopped;}
 static float SoundChannelPlaybackTimeMsec(idSoundChannel*c,int){return float(c->cursor);}
-static bool SoundUsesMusicVolume(const Parms&p){return(p.soundShaderFlags&SSF_MUSIC)!=0;}
+static bool SoundUsesMusicVolume(const Parms&p){return(p.soundShaderFlags&SSF_MUSIC)!=0||p.soundClass==3;}
 static bool IsRadioChatterChannel(idSoundChannel*c){return c->radio;}
 static void SoundWorldApplyDistanceFalloff(float&v,float d,float min,float max){v*=std::clamp((max-d)/(max-min),0.f,1.f);}
+struct idCmdArgs{};
+constexpr int SOUNDWORLD_GAME=1;
+static std::string diagnostic;
+struct idLib{static void Printf(const char*format,...){char out[2048];va_list args;va_start(args,format);vsnprintf(out,sizeof(out),format,args);va_end(args);diagnostic+=out;}};
+struct SoundSystem{struct Hardware{std::vector<void*>voices;void PrintDistanceInfo(void*v){voices.push_back(v);}}hardware;
+	idSoundWorldLocal*world=nullptr;idSoundWorldLocal*GetSoundWorldFromId(int){return world;}}soundSystemLocal;
 #include "SoundSubtitlesUnderTest.inc"
 int main(){
 	Shader shader;idSoundSample sample;idSoundChannel channel;
@@ -100,5 +107,31 @@ int main(){
 		single.entries=1;
 		assert(std::string(SoundTranscriptName(SoundTranscript::Variant))=="variant");
 	}
-	std::puts("Production subtitles: playback selection, stop, privacy, distance, mapping, loops, overlap and transcript status passed");
+	// The audit must classify a current channel, not every use of a sample.
+	{
+		idSoundSample shared;shared.name="sound/shared.wav";Shader spoken,effect;effect.name="effect";
+		idSoundChannel speech,fx;speech.soundShader=&spoken;speech.leadinSample=&shared;speech.parms.soundShaderFlags=SSF_IS_VO;
+		fx=speech;fx.soundShader=&effect;fx.parms.soundShaderFlags=0;fx.logicalChannel=2;
+		speech.hardwareVoice=&speech;fx.hardwareVoice=&fx;
+		idSoundEmitterLocal owner;owner.channels.push_back(&speech);owner.channels.push_back(&fx);
+		idSoundWorldLocal testWorld;testWorld.emitters.push_back(&owner);
+		soundSystemLocal.world=&testWorld;manager.decls.clear();manager.decls["dialogue"]={"raw","DO_NOT_PRINT_THIS_TRANSCRIPT"};
+		auto report=[&](){diagnostic.clear();soundSystemLocal.hardware.voices.clear();SoundDialogueVoices_f(idCmdArgs{});};
+		report();
+		assert(diagnostic.find("shader=dialogue sample=sound/shared.wav dialogue=1 transcript=text")!=std::string::npos);
+		assert(diagnostic.find("shader=effect sample=sound/shared.wav dialogue=0 transcript=undeclared")!=std::string::npos);
+		assert(diagnostic.find("DO_NOT_PRINT_THIS_TRANSCRIPT")==std::string::npos);
+		assert(soundSystemLocal.hardware.voices==std::vector<void*>({&speech,&fx}));
+		// Music classification wins even when a channel has the speech flag.
+		speech.parms.soundClass=3;report();assert(diagnostic.find("dialogue=1")==std::string::npos);speech.parms.soundClass=0;
+		// A leadin/loop transition uses the sample playing now.
+		idSoundSample loop;loop.name="sound/vo/loop.wav";fx.loopingSample=&loop;fx.cursor=1000;
+		report();assert(diagnostic.find("shader=effect sample=sound/vo/loop.wav dialogue=1")!=std::string::npos);
+		// A finished channel stays attributable until the mixer releases its
+		// hardware voice; unallocated channels and absent worlds have no sources.
+		speech.stopped=true;fx.startTime=200;report();assert(soundSystemLocal.hardware.voices.size()==2);
+		speech.hardwareVoice=nullptr;fx.hardwareVoice=nullptr;report();assert(diagnostic=="SOUND_DIALOGUE_END channels=0\n");
+		soundSystemLocal.world=nullptr;report();assert(diagnostic=="SOUND_DIALOGUE_END channels=0\n");
+	}
+	std::puts("Production subtitles and dialogue diagnostics: selection, routing, sample reuse, loops, privacy and transcript policy passed");
 }

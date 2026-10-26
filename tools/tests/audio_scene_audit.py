@@ -16,6 +16,12 @@ between them, as the console `trigger` command does. Anything that reaches the
 level's end is left out. Scenes start out of their gameplay order, so a line
 whose speaker has not spawned yet stays silent; the report counts what plays.
 
+With --progress the player is moved instead: teleported into each trigger volume the
+player can touch, nearest first from the player start, so the map's own trigger chains
+run as the player reaches them (doors, spawns, scripted scenes and the conversations
+that wait on them). Volumes that hurt or reach the level's end are left out. This is
+still not a playthrough: no enemy is fought and no route is walked.
+
 Checks: declared or flagged speech always follows Dialogue Volume; muting it
 silences every dialogue voice while other sounds continue; every cue shown has
 a transcript. The report keeps shader and sample identifiers and counts, never
@@ -25,6 +31,7 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -49,7 +56,11 @@ SPEECH = re.compile(r'^SOUND_SPEECH game=(\d) time=(-?\d+) emitter=(\d+) speaker
                     r'declared=(\d) transcript=(\w+)', re.M)
 FIELDS = ('game', 'time', 'emitter', 'speaker', 'channel', 'shader', 'sample', 'dialogue', 'authored', 'vo', 'radio',
           'music', 'global', 'private', 'declared', 'transcript')
-ROW = re.compile(r'^\s*\d+\s+\d+\s+([\d.]+)\s+([\d.]+)\s+(\S+)', re.M)
+SOURCE_ROW = re.compile(r'^\s*\d+\s+(\d+)\s+[\d.]+\s+[\d.]+\s+(\S+)', re.M)
+CHANNEL = re.compile(r'^SOUND_DIALOGUE emitter=(\d+) channel=(-?\d+) shader=(\S+) sample=(\S+) '
+                     r'dialogue=(\d) transcript=(\w+)\r?\nSOUND_DISTANCE_BACKEND ([^\n]+)', re.M)
+CHANNEL_END = re.compile(r'^SOUND_DIALOGUE_END channels=(\d+)\s*$', re.M)
+SCENE_MARK = re.compile(r'^SCENE_(?:PROBE|STEP|MEMORY|END|BEGIN)\b', re.M)
 CUE = re.compile(r'^Subtitle shader=(\S+) emitter=\d+ speaker=\d+ time=\d+ duration=\d+ radio=\d textBytes=\d+', re.M)
 PROBE = re.compile(r'^SCENE_PROBE (\S+) (\d+) (full|mute)\s*$', re.M)
 ADMISSION = re.compile(r'^Audio admission: reserved=(\d+) KiB peak=(\d+) KiB budget=(\d+) MiB refused=(\d+)', re.M)
@@ -109,8 +120,49 @@ def script_functions(scripts):
     return bodies
 
 
-def scene_steps(roots, maps):
-    """Per map, the (classname, entity) pairs whose trigger starts speech, in authored order."""
+# Trigger classes that can react to player contact (not activation-only counters).
+TOUCHED = ('trigger_once', 'trigger_multiple', 'trigger_once_entityname', 'trigger_facing')
+
+
+def origin_of(entity):
+    try:
+        origin = tuple(float(v) for v in entity.get('origin', '').split())
+        return origin if len(origin) == 3 and all(math.isfinite(v) for v in origin) else None
+    except ValueError:
+        return None
+
+
+def player_touchable(entity):
+    """Conservative candidates; activation still depends on the running scene."""
+    if entity.get('classname') not in TOUCHED:
+        return False
+    def enabled(key):
+        return entity.get(key, '0').strip() not in ('', '0')
+    if enabled('onlyvehicle') or enabled('flashlight_trigger'):
+        return False
+    if not enabled('anytouch') and (enabled('notouch') or enabled('noclient')):
+        return False
+    if entity.get('classname') == 'trigger_once_entityname':
+        matches = entity.get('entityname') == 'player1'
+        if matches == enabled('excludeentityname'):
+            return False
+    return True
+
+
+def nearest_route(start, entities):
+    """Entities ordered by a nearest-neighbour tour from start, a rough route through the level."""
+    left, route, here = list(entities), [], start
+    while left:
+        best = min(left, key=lambda e: sum((a - b) ** 2 for a, b in zip(origin_of(e), here)))
+        left.remove(best)
+        route.append(best)
+        here = origin_of(best)
+    return route
+
+
+def scene_steps(roots, maps, progress=False, blocked_exits=None):
+    """Per map, the (classname, entity) pairs to visit: the triggers whose script starts
+    speech in authored order, or with progress every trigger volume the player touches."""
     scripts = content_files(roots, lambda n: n.endswith('.script') and n.startswith(('scripts/', 'maps/')))
     wanted = {f'maps/{m.lower()}.map' for m in maps}
     sources = content_files(roots, lambda n: n in wanted)
@@ -160,6 +212,17 @@ def scene_steps(roots, maps):
                                        any(ends_level('$' + r, seen) for r in refs[node]))
 
         chosen = []
+        if progress:
+            # Moving near an unrelated trigger can touch an overlapping exit,
+            # and scripts can reach an exit indirectly. Remove the end targets
+            # in this disposable session as well as excluding their chains.
+            if blocked_exits is not None:
+                blocked_exits[name] = sorted(by_name[n]['name'] for n in endings)
+            starts = [origin_of(e) for e in entities if e.get('classname') == 'info_player_start' and origin_of(e)]
+            volumes = [e for e in entities if player_touchable(e) and e.get('name') and origin_of(e)
+                       and not ends_level('$' + e['name'].lower(), set())]
+            steps[name] = [(e['classname'], e['name']) for e in nearest_route(starts[0] if starts else (0, 0, 0), volumes)]
+            continue
         for entity in entities:
             classname, entity_name = entity.get('classname', ''), entity.get('name', '')
             if classname == 'worldspawn' or not entity_name:
@@ -187,7 +250,7 @@ def scene_entries(maps, repeat):
     return [(f'pass{run}/{name}' if repeat > 1 else name, name) for run in range(1, repeat + 1) for name in maps]
 
 
-def scene_cfgs(entries, seconds, interval, walk=None, step_msec=4000, tail=0):
+def scene_cfgs(entries, seconds, interval, walk=None, step_msec=4000, tail=0, move='trigger', blocked_exits=None):
     """One cfg per opening; with a walk, each map's scene triggers follow its opening probes."""
     probes = max(1, (seconds * 1000) // (interval + 150))
     files = []
@@ -195,19 +258,23 @@ def scene_cfgs(entries, seconds, interval, walk=None, step_msec=4000, tail=0):
         # Disarmed until this cfg re-arms it for the next map, so a level change no
         # step should make cannot run this cfg again on top of itself.
         steps = ['set g_autoExecAfterMapLoad ""', 'god', f'echo SCENE_BEGIN {name}']
+        for entity in (blocked_exits or {}).get(level, []):
+            steps += [f'echo SCENE_SUPPRESS_EXIT {name} "{entity}"', f'remove "{entity}"']
         count = 0
 
         def probe(wait):
             nonlocal count
             count += 1
-            return [f'waitMsec {wait}', f'echo SCENE_PROBE {name} {count - 1} full', 'listPlayingSounds', 'listSubtitles',
+            return [f'waitMsec {wait}', f'echo SCENE_PROBE {name} {count - 1} full', 'listPlayingSounds', 's_dialogueVoices', 'listSubtitles', 'listSoundVoices',
                     'set s_dialogueVolume 0', 'waitMsec 150', f'echo SCENE_PROBE {name} {count - 1} mute', 'listPlayingSounds',
-                    'set s_dialogueVolume 1']
+                    's_dialogueVoices', 'set s_dialogueVolume 1']
         for _ in range(probes):
             steps += probe(interval)
         if walk is not None:
             for number, (_, entity) in enumerate(walk.get(level, [])):
-                steps += [f'echo SCENE_STEP {name} {number} {entity}', f'trigger {entity}'] + probe(step_msec)
+                # Quoted names survive idLexer tokenization even when they
+                # start with a digit (e.g. recomp's 2wavfinal_berserker_trig).
+                steps += [f'echo SCENE_STEP {name} {number} "{entity}"', f'{move} "{entity}"'] + probe(step_msec)
             # Let the conversations the last steps started finish.
             for _ in range((tail * 1000) // (interval + 150)):
                 steps += probe(interval)
@@ -224,11 +291,12 @@ def scene_cfgs(entries, seconds, interval, walk=None, step_msec=4000, tail=0):
     return files
 
 
-def launch(args, root, entries, walk=None):
+def launch(args, root, entries, walk=None, blocked_exits=None):
     game_dir = 'q4xbase' if args.awakening else 'baseoq4'
     game = root / 'save' / game_dir
     game.mkdir(parents=True, exist_ok=True)
-    for index, text in enumerate(scene_cfgs(entries, args.seconds, args.interval, walk, args.step_msec, args.tail)):
+    move = 'teleport' if args.progress else 'trigger'
+    for index, text in enumerate(scene_cfgs(entries, args.seconds, args.interval, walk, args.step_msec, args.tail, move, blocked_exits)):
         (game / f'scene-{index}.cfg').write_text(text, encoding='utf-8')
     config = root / 'alsoft.conf'
     config.write_text('[general]\ndrivers=wave\nchannels=stereo\nhrtf=false\n[wave]\nfile=' + str(root / 'mix.wav') + '\n',
@@ -272,6 +340,34 @@ def launch(args, root, entries, walk=None):
     return code, log, command, round(time.monotonic() - started, 1)
 
 
+def probe_state(body):
+    """Join audible sources to current channels, never to earlier uses of a sample."""
+    channels = list(CHANNEL.finditer(body))
+    end = CHANNEL_END.search(body)
+    sources = {}
+    for channel in channels:
+        backend = dict(re.findall(r'(\w+)=([^\s]+)', channel[7]))
+        if backend.get('available') == '1' and 'source' in backend:
+            sources[backend['source']] = {'sample': sample_key(channel[4]), 'shader': channel[3].lower(),
+                                          'dialogue': channel[5] == '1', 'transcript': channel[6]}
+    dialogue, effects, mapped, unattributed = [], [], [], []
+    for source, sample in SOURCE_ROW.findall(body):
+        sample = sample_key(sample)
+        channel = sources.get(source)
+        if channel is None or channel['sample'] != sample:
+            unattributed.append(f'{source}:{sample}')
+        elif channel['dialogue']:
+            dialogue.append(sample)
+            if channel['transcript'] == 'text':
+                mapped.append((sample, channel['shader']))
+        else:
+            effects.append(sample)
+    return {'dialogue': dialogue, 'effects': effects, 'mapped': mapped,
+            'cues': [c.lower() for c in CUE.findall(body)],
+            'routing_complete': bool(end) and int(end[1]) == len(channels) and not unattributed,
+            'unattributed': unattributed}
+
+
 def audit(log, labels):
     """Per opening: its speech starts and probes, from the log segment ending at its SCENE_END."""
     scenes = {}
@@ -293,30 +389,26 @@ def audit(log, labels):
         walked = [s for s in walked if s['game'] == '1' and s['dialogue'] == '1']
         opening = [s for s in opening if s['game'] == '1' and s['dialogue'] == '1']
         level_changes = MAP_LOAD.findall(segment[begin_at.end():]) if begin_at else []
-        dialogue_samples = {sample_key(s['sample']) for s in speech if s['dialogue'] == '1'}
         text_shaders = {s['shader'].lower() for s in speech if s['transcript'] == 'text'}
-        mapped_samples = {sample_key(s['sample']): s['shader'].lower() for s in speech
-                          if s['dialogue'] == '1' and s['transcript'] == 'text'}
         probes = {}
         marks = list(PROBE.finditer(segment))
         for i, m in enumerate(marks):
-            body = segment[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(segment)]
-            probes[(int(m[2]), m[3])] = {'playing': [sample_key(r[2]) for r in ROW.findall(body)],
-                                        'cues': [c.lower() for c in CUE.findall(body)]}
+            next_mark = SCENE_MARK.search(segment, m.end())
+            body = segment[m.end():next_mark.start() if next_mark else len(segment)]
+            probes[(int(m[2]), m[3])] = probe_state(body)
         misrouted = sorted({f"{s['shader']} {s['sample']}" for s in speech
                             if (s['declared'] == '1' or s['authored'] == '1') and s['music'] == '0' and s['dialogue'] == '0'})
         mute_leaks, effects_while_muted, heard, cue_without_text = [], 0, 0, []
         reach, missed = 0, []
         for (index, kind), probe in sorted(probes.items()):
-            playing = set(probe['playing'])
             if kind == 'mute':
-                mute_leaks += sorted(playing & dialogue_samples)
-                effects_while_muted += 1 if playing - dialogue_samples else 0
+                mute_leaks += probe['dialogue']
+                effects_while_muted += bool(probe['effects'])
                 continue
-            heard += 1 if playing & dialogue_samples else 0
+            heard += bool(probe['dialogue'])
             cue_without_text += [c for c in probe['cues'] if c not in text_shaders]
-            for sample in playing & set(mapped_samples):
-                if mapped_samples[sample] in probe['cues']:
+            for sample, shader in probe['mapped']:
+                if shader in probe['cues']:
                     reach += 1
                 elif len(probe['cues']) < 2:  # the overlay shows the two newest utterances
                     missed.append(sample)
@@ -353,6 +445,8 @@ def audit(log, labels):
             'untranscribed_shaders': sorted({s['shader'] for s in speech if s['dialogue'] == '1' and s['transcript'] != 'text'}),
             'misrouted_speech': misrouted,
             'probes': len(probes) // 2,
+            'voice_routing_recorded': bool(probes) and all(p['routing_complete'] for p in probes.values()),
+            'unattributed_audible_sources': sorted({s for p in probes.values() for s in p['unattributed']}),
             'dialogue_heard_at_full': heard,
             'mute_leaks': sorted(set(mute_leaks)),
             'effects_while_muted': effects_while_muted,
@@ -362,6 +456,8 @@ def audit(log, labels):
             'scene_steps': len(step_marks),
             'scene_steps_not_spawned': missing_steps,
             'scene_dialogue_starts': len(walked),
+            'streams_observed_playing': sorted({sample_key(v[2]) for v in VOICE.findall(segment)
+                                                if v[1] == '1' and v[0] == 'playing'}),
             'scene_dialogue_shaders': sorted({s['shader'].lower() for s in walked}),
             'opening_dialogue_shaders': sorted({s['shader'].lower() for s in opening}),
             'unexpected_level_changes': level_changes,
@@ -381,6 +477,8 @@ def main():
     parser.add_argument('--interval', type=int, default=3000, help='Milliseconds between probes')
     parser.add_argument('--repeat', type=int, default=1, help='Play the maps this many times in one client (a long session)')
     parser.add_argument('--walk', action='store_true', help="Trigger each map's speech scenes after its opening")
+    parser.add_argument('--progress', action='store_true',
+                        help='With --walk: teleport the player through every trigger volume it can touch instead')
     parser.add_argument('--step-msec', type=int, default=4000, help='Milliseconds between scene triggers')
     parser.add_argument('--tail', type=int, default=15, help='Seconds of probes after the last scene of a map')
     parser.add_argument('--silent-baseline', action='store_true',
@@ -393,18 +491,23 @@ def main():
         parser.error('choose a new output directory under the project .tmp')
     if args.walk and args.silent_baseline:
         parser.error('the silent baseline compares openings; run it without --walk')
+    if args.progress and not args.walk:
+        parser.error('--progress requires --walk')
+    if args.seconds < 1 or args.interval < 1 or args.step_msec < 1 or args.tail < 0:
+        parser.error('seconds, interval and step-msec must be positive; tail must be nonnegative')
     verify_runtime_is_current(ROOT / '.install')
     maps = [m.strip() for m in args.maps.split(',')] if args.maps else (AWAKENING_MAPS if args.awakening else STOCK_MAPS)
     entries = scene_entries(maps, args.repeat)
     labels = [label for label, _ in entries]
     walk = None
+    blocked_exits = {}
     if args.walk:
         roots = [args.assets.resolve(strict=True) / 'q4base']
         if args.awakening:
             roots.append(args.awakening.resolve(strict=True) / 'q4xbase')
-        walk = scene_steps(roots, maps)
+        walk = scene_steps(roots, maps, args.progress, blocked_exits)
     output.mkdir(parents=True)
-    code, log, command, seconds = launch(args, output, entries, walk)
+    code, log, command, seconds = launch(args, output, entries, walk, blocked_exits)
     scenes = audit(log, labels)
     loaded = [name for name, scene in scenes.items() if scene['loaded']]
     total = Counter()
@@ -424,6 +527,7 @@ def main():
     checks = {
         'complete': code == 0 and 'SCENE_COMPLETE' in log and len(loaded) == len(entries),
         'speech_heard': total['dialogue_starts'] > 0,
+        'voice_routing_recorded': all(s['voice_routing_recorded'] for s in scenes.values()),
         'declared_speech_is_dialogue': all(not s['misrouted_speech'] for s in scenes.values()),
         'muted_dialogue_silent': all(not s['mute_leaks'] for s in scenes.values()),
         'effects_continue_while_muted': all(s['effects_while_muted'] > 0 for s in scenes.values() if s['loaded']),
@@ -432,11 +536,11 @@ def main():
         # Every opening, and the level changes between them, fit the default budget.
         'residency_recorded': all(s['memory'] for s in scenes.values() if s['loaded']),
         'no_audio_refusals': all(s['memory'].get('refused_total', 1) == 0 for s in scenes.values() if s['loaded']),
-        # Every map after the first starts its streams on recycled voices, whose
-        # sources must start over to play (streams_not_playing is reported only:
-        # an underrun on a loaded machine can catch one between restarts).
+        # Observe throughout the scene, not only its final residency snapshot:
+        # a progression step can legitimately stop the last music/ambience track.
+        # Later maps still have to play a stream on a recycled voice.
         'streams_play_on_recycled_voices': len(entries) < 2 or
-            any(s['memory'].get('streams_playing') for s in list(scenes.values())[1:]),
+            any(s['streams_observed_playing'] for s in list(scenes.values())[1:]),
     }
     if walk is not None:
         # Every scene trigger ran on its own map: none changed the level, and the
@@ -498,6 +602,7 @@ def main():
         'maps': maps, 'repeat': args.repeat, 'seconds_per_map': args.seconds, 'probe_interval_ms': args.interval, 'run_seconds': seconds,
         'walk': {level: [entity for _, entity in steps] for level, steps in walk.items()} if walk else None,
         'step_msec': args.step_msec if walk else None,
+        'progress': args.progress, 'suppressed_level_exits': blocked_exits,
         'game': 'q4xbase' if args.awakening else 'baseoq4', 'returncode': code, 'command': command,
         'microphone': False, 'host_input': False, 'output': 'OpenAL wave writer', 'transcripts_recorded': False,
         'executable_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(),

@@ -891,6 +891,7 @@ jobs:
           python tools/tests/audio_memory.py
           python tools/tests/audio_stream_budget.py
           python tools/tests/audio_subtitles.py
+          python tools/tests/audio_scene_audit_contract.py
           python tools/tests/voice_capture_lifecycle.py
           python tools/tests/voice_transport.py
           python tools/tests/voice_protocol_gating_contract.py

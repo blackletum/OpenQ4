@@ -371,6 +371,15 @@ completed release material here and publish curated notes in `releases/`.
   and adapter harnesses, and in-game Settings and Load Game captures. Candidate
   player wording is in [baseline refinements](releases/baseline-refinements.md).
 
+## Audio progression-audit recovery, 26 October 2026
+
+- [x] AUD-06/07: preserve the unfinished progression run's failures and distinguish
+  current speech channels from effects that reuse the same sound files.
+- [x] AUD-06/07: qualify progression with player-contact trigger filtering and
+  level exits suppressed in disposable sessions; retain missing-entity counts
+  and the distinction from an ordered playthrough.
+- Evidence and remaining gates: [progression audit](audio-voice-evidence.md#progression-audit-recovery-26-october-2026).
+
 ## Audio save/restore on Linux, Arena on Linux and longer scene walks, 25 October 2026
 
 - [x] AUD-02/06/07: a real save and load passes on Linux (subtitles and Dialogue Volume);

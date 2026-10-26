@@ -409,6 +409,32 @@ yet stays silent; the audit counts what plays. Each map's command file disarms
 `g_autoExecAfterMapLoad` as it starts, so a level change that no step should make
 cannot run it again; the audit reports any map load inside a scene.
 
+With `--walk --progress` the player is teleported to candidate contact triggers,
+nearest first from the player start. This exercises doors, spawns and conversations
+that wait for the player. Activation-only counters, non-player triggers, invalid
+origins and known exit chains are excluded. The audit also removes each map's
+`target_endlevel` entities in the disposable session: an otherwise safe destination
+can overlap an exit volume or start a delayed exit script. Installed assets stay
+unchanged. Steps count attempted teleports, not confirmed trigger activations;
+entities already removed or not yet spawned are reported separately. This is
+additional scene coverage, not an ordered playthrough: no route is walked and no
+enemy is fought. Teleports can telefrag nearby actors or doors and cause script
+warnings; the probe does not certify those scenes as normal gameplay.
+Entity names are quoted in commands and log markers so the console keeps names
+beginning with digits intact.
+
+Each full/muted probe now pairs `listPlayingSounds` with `s_dialogueVoices`, which
+reports current channel/sample classification and its OpenAL source without
+transcript text. Classification belongs to the current channel: an AI effect can
+reuse a sample that another channel played as dialogue. The audit joins by source
+and sample at the probe, fails on missing attribution, and still rejects an
+audible dialogue channel while muted. The diagnostic retains channels with an
+allocated hardware voice until the mixer releases them, including sounds whose
+logical duration just ended. This avoids losing their last audible frame.
+`listSoundVoices` runs at each full probe too, so the recycled-voice stream
+check does not depend on a track still playing at the map's final memory
+snapshot after a scene has deliberately stopped its music.
+
 **Process memory.** `listSounds` now ends with `Process memory: private=… KiB
 resident=… KiB` from `Sys_GetProcessMemoryUsage`. On Windows that is the commit
 charge and working set (`K32GetProcessMemoryInfo`, looked up at run time so no psapi
