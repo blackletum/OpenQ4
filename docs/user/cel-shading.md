@@ -1,5 +1,7 @@
 # Cel Shading Guide
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 can render Quake 4 with a cel-shaded look: lighting quantized into flat bands, and black ink around the shapes. It ships off, so stock Quake 4 still looks like Quake 4 until you ask for something else.
 
 ## Quick Start

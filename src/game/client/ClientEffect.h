@@ -21,6 +21,7 @@ public:
 	virtual void		DrawDebugInfo	( void ) const;
 	virtual void		FreeEntityDef	( void );
 	virtual void		UpdateBind		( int presentationTime = -1 );
+	void				PresentAt		( const idVec3 &origin, const idMat3 &axis );
 
 	bool				Play			( int startTime, bool loop = false, const idVec3& origin = vec3_origin );
 	void				Stop			( bool destroyParticles = false );

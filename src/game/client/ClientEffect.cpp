@@ -242,6 +242,29 @@ void rvClientEffect::UpdatePresentationTransform ( int presentationTime ) {
 
 /*
 ================
+rvClientEffect::PresentAt
+
+Presentation-only placement of an unbound effect that an owner moves itself,
+such as a debris trail. Like UpdatePresentationTransform it repeats the
+authoritative game time, so particles move without respawning or ageing, and
+the "effect finished" result is ignored: lifetime stays in Think().
+================
+*/
+void rvClientEffect::PresentAt ( const idVec3 &origin, const idMat3 &axis ) {
+	if ( effectDefHandle < 0 || !renderEffect.declEffect || bindMaster ) {
+		return;
+	}
+	const idVec3 authoritativeOrigin = renderEffect.origin;
+	const idMat3 authoritativeAxis = renderEffect.axis;
+	renderEffect.origin = origin;
+	renderEffect.axis = axis;
+	gameRenderWorld->UpdateEffectDef( effectDefHandle, &renderEffect, gameLocal.time );
+	renderEffect.origin = authoritativeOrigin;
+	renderEffect.axis = authoritativeAxis;
+}
+
+/*
+================
 rvClientEffect::Play
 ================
 */

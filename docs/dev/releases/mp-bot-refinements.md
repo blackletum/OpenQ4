@@ -1,7 +1,24 @@
 # Multiplayer bot refinements — pending release notes
 
+> **Unreleased development notes.** 0.13.2 is the latest available release; 0.14.0 was withdrawn. These changes are not a new download. See [release status](../../user/release-status.md).
+
 ## Highlights
 
+- **Bots stop knocking team-mates off walkways.** Before firing a rocket or
+  other blast weapon, a bot checks where the blast would push each nearby
+  team-mate, with team damage on or off, and holds fire when the push would
+  throw one into the void.
+- **Bots no longer rail through an enemy into a team-mate.** The multiplayer
+  railgun passes through players, so a bot now holds fire when a team-mate
+  stands anywhere along the shot, behind its target included.
+- **Bots swim down to underwater routes.** In maps with water, a bot whose
+  route leads to a pool floor dives for it while it has air to spare, instead
+  of treading water at the surface until it gives up.
+- **Bots jump across shallow trenches.** Where a trench is shallow enough to
+  drop into, bots also learn the running jump across it to the far side, when
+  the whole jump is clear. Most stock maps gain a few of these routes.
+- **Bot route drawing stays live on a listen server.** `bot_debugNav` no longer
+  fills up and freezes after a few seconds on the host's own screen.
 - **Bots find more recoverable landings after a hit.** Air steering checks finer
   directions and keeps a safe heading. A critically hurt bot with no safe impact
   can aim for a reachable health pickup instead of braking into the void.

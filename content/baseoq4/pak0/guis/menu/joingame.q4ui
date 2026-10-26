@@ -670,6 +670,7 @@
   "join.favorite": {"type": "boolean", "initial": false},
   "prompt.glyphs": {"type": "number", "initial": 0},
   "prompt.swapped": {"type": "boolean", "initial": false},
+  "prompt.accept": {"type": "string", "initial": "#str_231042"},
   "join.detail": {"type": "number", "initial": -1},
   "join.detail.row": {"type": "number", "initial": -1},
   "join.detail.address": {"type": "string", "initial": ""},
@@ -767,6 +768,70 @@
     "then": [{"op": "action", "action": "joinSortNext"}]
    }
   ],
+  "joinFocus0": [{"op": "focus", "control": "server-0"}],
+  "joinFocus1": [{"op": "focus", "control": "server-1"}],
+  "joinFocus2": [{"op": "focus", "control": "server-2"}],
+  "joinFocus3": [{"op": "focus", "control": "server-3"}],
+  "joinFocus4": [{"op": "focus", "control": "server-4"}],
+  "joinFocus5": [{"op": "focus", "control": "server-5"}],
+  "joinFocus6": [{"op": "focus", "control": "server-6"}],
+  "joinFocus7": [{"op": "focus", "control": "server-7"}],
+  "joinFocus8": [{"op": "focus", "control": "server-8"}],
+  "joinFocus9": [{"op": "focus", "control": "server-9"}],
+  "joinFocus10": [{"op": "focus", "control": "server-10"}],
+  "joinFocus11": [{"op": "focus", "control": "server-11"}],
+  "joinFocus12": [{"op": "focus", "control": "server-12"}],
+  "joinFocus13": [{"op": "focus", "control": "server-13"}],
+  "joinFocus14": [{"op": "focus", "control": "server-14"}],
+  "joinFocus15": [{"op": "focus", "control": "server-15"}],
+  "joinFocus16": [{"op": "focus", "control": "server-16"}],
+  "joinFocus17": [{"op": "focus", "control": "server-17"}],
+  "joinFocus18": [{"op": "focus", "control": "server-18"}],
+  "joinFocus19": [{"op": "focus", "control": "server-19"}],
+  "joinFocus20": [{"op": "focus", "control": "server-20"}],
+  "joinFocus21": [{"op": "focus", "control": "server-21"}],
+  "joinFocus22": [{"op": "focus", "control": "server-22"}],
+  "joinFocus23": [{"op": "focus", "control": "server-23"}],
+  "joinFocus24": [{"op": "focus", "control": "server-24"}],
+  "joinFocus25": [{"op": "focus", "control": "server-25"}],
+  "joinFocus26": [{"op": "focus", "control": "server-26"}],
+  "joinFocus27": [{"op": "focus", "control": "server-27"}],
+  "joinFocus28": [{"op": "focus", "control": "server-28"}],
+  "joinFocus29": [{"op": "focus", "control": "server-29"}],
+  "joinFocus30": [{"op": "focus", "control": "server-30"}],
+  "joinFocus31": [{"op": "focus", "control": "server-31"}],
+  "joinFocus32": [{"op": "focus", "control": "server-32"}],
+  "joinFocus33": [{"op": "focus", "control": "server-33"}],
+  "joinFocus34": [{"op": "focus", "control": "server-34"}],
+  "joinFocus35": [{"op": "focus", "control": "server-35"}],
+  "joinFocus36": [{"op": "focus", "control": "server-36"}],
+  "joinFocus37": [{"op": "focus", "control": "server-37"}],
+  "joinFocus38": [{"op": "focus", "control": "server-38"}],
+  "joinFocus39": [{"op": "focus", "control": "server-39"}],
+  "joinFocus40": [{"op": "focus", "control": "server-40"}],
+  "joinFocus41": [{"op": "focus", "control": "server-41"}],
+  "joinFocus42": [{"op": "focus", "control": "server-42"}],
+  "joinFocus43": [{"op": "focus", "control": "server-43"}],
+  "joinFocus44": [{"op": "focus", "control": "server-44"}],
+  "joinFocus45": [{"op": "focus", "control": "server-45"}],
+  "joinFocus46": [{"op": "focus", "control": "server-46"}],
+  "joinFocus47": [{"op": "focus", "control": "server-47"}],
+  "joinFocus48": [{"op": "focus", "control": "server-48"}],
+  "joinFocus49": [{"op": "focus", "control": "server-49"}],
+  "joinFocus50": [{"op": "focus", "control": "server-50"}],
+  "joinFocus51": [{"op": "focus", "control": "server-51"}],
+  "joinFocus52": [{"op": "focus", "control": "server-52"}],
+  "joinFocus53": [{"op": "focus", "control": "server-53"}],
+  "joinFocus54": [{"op": "focus", "control": "server-54"}],
+  "joinFocus55": [{"op": "focus", "control": "server-55"}],
+  "joinFocus56": [{"op": "focus", "control": "server-56"}],
+  "joinFocus57": [{"op": "focus", "control": "server-57"}],
+  "joinFocus58": [{"op": "focus", "control": "server-58"}],
+  "joinFocus59": [{"op": "focus", "control": "server-59"}],
+  "joinFocus60": [{"op": "focus", "control": "server-60"}],
+  "joinFocus61": [{"op": "focus", "control": "server-61"}],
+  "joinFocus62": [{"op": "focus", "control": "server-62"}],
+  "joinFocus63": [{"op": "focus", "control": "server-63"}],
   "serverRow0": [
    {
     "op": "if",
@@ -24348,6 +24413,18 @@
      "none"
     ]
    }
+  },
+  {
+   "id": "prompt-231042-verb.text",
+   "node": "prompt-231042-verb",
+   "property": "text",
+   "value": {"state": "prompt.accept"}
+  },
+  {
+   "id": "prompts-lead.display",
+   "node": "prompts-lead",
+   "property": "display",
+   "value": {"op": "select", "args": [{"op": "==", "args": [{"state": "prompt.accept"}, ""]}, "none", "flex"]}
   },
   {
    "id": "join_back-cap.display",
@@ -101144,7 +101221,8 @@
           "pressed": "join_server.pressed",
           "disabled": "join_server.disabled"
          },
-         "action": "joinServer"
+         "action": "joinServer",
+         "prompt": "#str_231033"
         }
        },
        {

@@ -1,5 +1,7 @@
 # Level-Load Cache
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 learns which source files a map actually uses and can prepare those
 bytes during a later matching load. Worker jobs read or inflate the selected
 source, validate supported container framing and whole-buffer integrity, then

@@ -540,7 +540,9 @@ idCVar r_vkValidation( "r_vkValidation", "0", CVAR_RENDERER | CVAR_BOOL, "enable
 idCVar r_vkSampleLocations( "r_vkSampleLocations", "1", CVAR_RENDERER | CVAR_BOOL, "use lower-left standard MSAA locations when supported; read at Vulkan initialization" );
 idCVar r_vkStartupFailure( "r_vkStartupFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
 		"diagnostic Vulkan startup failure: 0 = off, 1 = window, 2 = surface, 3 = swapchain, 4 = renderer resources", 0, 4 );
-idCVar r_vkDevice( "r_vkDevice", "-1", CVAR_RENDERER | CVAR_INTEGER, "Vulkan physical-device index override, -1 = automatic selection", -1, 15 );
+idCVar r_vkStartupFailureDevice( "r_vkStartupFailureDevice", "-1", CVAR_RENDERER | CVAR_INTEGER,
+		"diagnostic: limit a swapchain or renderer-resources r_vkStartupFailure to the admitted device with this index, -1 = any device", -1, 255 );
+idCVar r_vkDevice( "r_vkDevice", "-1", CVAR_RENDERER | CVAR_INTEGER, "Vulkan physical-device index override, -1 = automatic selection (resumes on the next compatible device if one fails to start)", -1, 255 );
 idCVar r_vkShadowFallbackTest( "r_vkShadowFallbackTest", "0", CVAR_RENDERER | CVAR_BOOL, "diagnostic: make Vulkan shadow maps and stencil ownership unavailable to exercise unshadowed receiver fallback" );
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "request a debug OpenGL context when the platform backend supports it" );
 idCVar r_glDebugOutput( "r_glDebugOutput", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "report OpenGL driver debug messages when a debug context is active" );
@@ -2739,9 +2741,28 @@ captures responsible for their own scissor rects, which they are not.
 idCVar r_screenshotKeepScissor( "r_screenshotKeepScissor", "0", CVAR_RENDERER | CVAR_BOOL,
 		"screenshots re-render with the scissor left as the frame loop set it, so scissor-dependent faults are visible in a capture" );
 
-void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref = NULL ) {
+#ifdef OPENQ4_RENDERER_VK_MODULE
+bool VK_GLStubs_ConsumeReadPixelsFailure( void );
+bool VK_Device_DrawableSize( int &width, int &height );
+#endif
+
+// TakeScreenshot's verdict for the commands that report "Wrote".
+static bool r_screenshotCaptureFailed = false;
+
+/*
+False when any tile could not be read or the window changed size during the
+capture. The buffer is then zero-filled where nothing was read, never left
+holding whatever the allocator returned, and callers must not save it as a
+capture of the frame.
+*/
+bool R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref = NULL ) {
 	// include extra space for OpenGL padding to word boundaries
 	byte	*temp = (byte *)R_StaticAlloc( (glConfig.vidWidth+3) * glConfig.vidHeight * 3 );
+	memset( temp, 0, (glConfig.vidWidth+3) * glConfig.vidHeight * 3 );
+	bool	captured = true;
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	(void)VK_GLStubs_ConsumeReadPixelsFailure();
+#endif
 
 	// OpenGL ES guarantees exactly one glReadPixels format for the default
 	// framebuffer -- GL_RGBA/GL_UNSIGNED_BYTE -- plus an implementation-defined
@@ -2752,6 +2773,7 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 	// RGBA is equally valid on desktop GL, so read RGBA everywhere and pack down
 	// rather than branching per backend.
 	byte	*rgbaTemp = (byte *)R_StaticAlloc( (glConfig.vidWidth+3) * glConfig.vidHeight * 4 );
+	memset( rgbaTemp, 0, (glConfig.vidWidth+3) * glConfig.vidHeight * 4 );
 
 	int	oldWidth = glConfig.vidWidth;
 	int oldHeight = glConfig.vidHeight;
@@ -2822,6 +2844,12 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 			// work is forced to complete first -- which is why ES screenshots
 			// came out uniformly black while the frame on screen was correct.
 			glReadPixels( 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgbaTemp );
+#ifdef OPENQ4_RENDERER_VK_MODULE
+			if ( VK_GLStubs_ConsumeReadPixelsFailure() ) {
+				captured = false;
+				memset( rgbaTemp, 0, (oldWidth+3) * oldHeight * 4 );
+			}
+#endif
 
 			const int rgbaRow = ( w * 4 + 3 ) & ~3;
 			const int rgbRow = ( w * 3 + 3 ) & ~3;
@@ -2857,8 +2885,26 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 	R_StaticFree( temp );
 	R_StaticFree( rgbaTemp );
 
+	// BeginFrame sizes glConfig to the capture (tiledViewport) while it runs, so
+	// the window's size is restored here.
 	glConfig.vidWidth = oldWidth;
 	glConfig.vidHeight = oldHeight;
+#ifdef OPENQ4_RENDERER_VK_MODULE
+	// Vulkan publishes each new drawable size from its swapchain. A resize
+	// during the capture leaves the tiles sized for the old window: keep the
+	// new size rather than restoring a stale one, and fail the capture.
+	int drawableWidth = 0;
+	int drawableHeight = 0;
+	if ( VK_Device_DrawableSize( drawableWidth, drawableHeight )
+			&& ( drawableWidth != oldWidth || drawableHeight != oldHeight ) ) {
+		common->Warning( "screenshot: the window changed from %dx%d to %dx%d during the capture",
+				oldWidth, oldHeight, drawableWidth, drawableHeight );
+		glConfig.vidWidth = drawableWidth;
+		glConfig.vidHeight = drawableHeight;
+		return false;
+	}
+#endif
+	return captured;
 }
 
 
@@ -2884,14 +2930,16 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 	}
 
 	takingScreenshot = true;
+	r_screenshotCaptureFailed = false;
 
 	int	pix = width * height;
 
 	buffer = (byte *)R_StaticAlloc(pix*3 + 18);
 	memset (buffer, 0, 18);
 
+	bool captured = true;
 	if ( blends <= 1 ) {
-		R_ReadTiledPixels( width, height, buffer + 18, ref );
+		captured = R_ReadTiledPixels( width, height, buffer + 18, ref );
 	} else {
 		unsigned short *shortBuffer = (unsigned short *)R_StaticAlloc(pix*2*3);
 		memset (shortBuffer, 0, pix*2*3);
@@ -2900,7 +2948,7 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 		r_jitter.SetBool( true );
 
 		for ( i = 0 ; i < blends ; i++ ) {
-			R_ReadTiledPixels( width, height, buffer + 18, ref );
+			captured = R_ReadTiledPixels( width, height, buffer + 18, ref ) && captured;
 
 			for ( j = 0 ; j < pix*3 ; j++ ) {
 				shortBuffer[j] += buffer[18+j];
@@ -2914,6 +2962,16 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 
 		R_StaticFree( shortBuffer );
 		r_jitter.SetBool( false );
+	}
+
+	if ( !captured ) {
+		// Never write the buffer as a capture of the frame: it is partly or
+		// wholly unread.
+		common->Warning( "TakeScreenshot: the capture failed; %s was not written", fileName );
+		r_screenshotCaptureFailed = true;
+		R_StaticFree( buffer );
+		takingScreenshot = false;
+		return;
 	}
 
 	// fill in the header (this is vertically flipped, which glReadPixels emits)
@@ -3917,6 +3975,9 @@ void R_ScreenShot_f( const idCmdArgs &args ) {
 	console->Close();
 
 	tr.TakeScreenshot( width, height, checkname, blends, NULL );
+	if ( r_screenshotCaptureFailed ) {
+		return;
+	}
 
 	common->Printf( "Wrote %s\n", checkname.c_str() );
 }

@@ -1,5 +1,7 @@
 # Android, GLES and Sigma Touch
 
+> **Development status:** This document describes the current source tree and its evidence, not the contents of the latest available 0.13.2 package. The 0.14.0 release was withdrawn. See [release status](../user/release-status.md).
+
 The Android platform, GLES renderer and Sigma Touch adapter originate in
 [emileb's Android branch](https://github.com/emileb/openQ4/tree/android) and
 [GLES shader variants branch](https://github.com/emileb/openQ4/tree/gles-shader-variants).
@@ -165,7 +167,7 @@ physical-device serials and an already running diagnostic app, preserves existin
 settings, and removes its exact scripts/save slot/captures after collecting them:
 
 ```powershell
-python tools/tests/android_emulator_smoke.py --adb <sdk>/platform-tools/adb.exe --serial emulator-5580 --apk builddir/android-apk-emulator/app/outputs/apk/debug/app-debug.apk --stage .install/android/x86_64 --build-tools <sdk>/build-tools/35.0.0 --certificate .tmp/emulator-debug-cert.pem --assets "E:/SteamLibrary/steamapps/common/Quake 4/q4base" --version 0.14.000 --output .tmp/android-emulator/run-1
+python tools/tests/android_emulator_smoke.py --adb <sdk>/platform-tools/adb.exe --serial emulator-5580 --apk builddir/android-apk-emulator/app/outputs/apk/debug/app-debug.apk --stage .install/android/x86_64 --build-tools <sdk>/build-tools/35.0.0 --certificate .tmp/emulator-debug-cert.pem --assets "E:/SteamLibrary/steamapps/common/Quake 4/q4base" --version <staged-version> --output .tmp/android-emulator/run-1
 ```
 
 An identical installed APK is retained after full SHA-256 verification;

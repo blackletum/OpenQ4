@@ -36,9 +36,9 @@ from __future__ import annotations
 
 import math
 
-from build_retained_screens import (FULL, OLIVE, ORANGE, PROGRESS, U, VALUE, Document, absolute, action_plate, colour, confirmation, group,
-                                    keyword, label, length, linear, number, objectives_scrollbar, page_prompts, path, rgb, solid, stroke,
-                                    text_width, typeface, vector)
+from build_retained_screens import (FULL, OLIVE, ORANGE, PROGRESS, U, VALUE, VERB_JOIN, Document, absolute, action_plate,
+                                    colour, confirmation, group, keyword, label, length, linear, number, objectives_scrollbar,
+                                    page_prompts, path, rgb, solid, stroke, text_width, typeface, vector)
 from retained_create_server import header_band, text_row
 from retained_difficulty import check_fits, primary_plate
 from retained_saves import ERROR, PLACEHOLDER, pager_row, picture_frame, row_plates, row_states, table_text
@@ -687,6 +687,10 @@ def join_game_document() -> dict:
     quiet = {"op": "!", "args": [{"op": "||", "args": [{"state": "joinIpModal.visible"}, {"state": "findModal.visible"}]}]}
     doc.events["onSecondary"] = [{"op": "if", "condition": quiet, "then": [{"op": "action", "action": "joinRefresh"}]}]
     doc.events["onTertiary"] = [{"op": "if", "condition": quiet, "then": [{"op": "action", "action": "joinSortNext"}]}]
+    # A focused row's server keeps the focus through a new order: the session
+    # names the row that now shows it (idSessionLocal::PublishRetainedJoinGame).
+    for row in range(JOIN_ROWS):
+        doc.events[f"joinFocus{row}"] = [{"op": "focus", "control": f"server-{row}"}]
     doc.state.update({
         "join.count": {"type": "number", "initial": 0},
         "join.listed": {"type": "number", "initial": 0},
@@ -755,6 +759,7 @@ def join_game_document() -> dict:
     doc.bind("join-shot.image", "join-shot", "image", {"state": "join.shot"})
     join = primary_plate(doc, "join_server", "#str_200031", *JOIN, action="joinServer", label_box=(43.0, 6.0, 180.0, 25.0), text=23.7,
                          marker=(13.0, 9.5, 18.0))
+    join["control"]["prompt"] = VERB_JOIN
     doc.bind("join_server.enabled", "join_server", "enabled", {"op": ">=", "args": [{"state": "join.selected"}, 0]})
     # The favorite toggle under it, ending where it ends: ADD TO FAVORITES, or
     # REMOVE FAVORITE while the chosen server is one (join.favorite).
@@ -766,6 +771,6 @@ def join_game_document() -> dict:
     doc.bind("join_favorite-label.text", "join_favorite-label", "text",
              {"op": "select", "args": [{"state": "join.favorite"}, FAVORITE_KEYS[1], FAVORITE_KEYS[0]]})
     doc.bind("join_favorite.enabled", "join_favorite", "enabled", {"op": ">=", "args": [{"state": "join.selected"}, 0]})
-    back = page_prompts(doc, "join_back", action="back")
+    back = page_prompts(doc, "join_back", action="back", verbs=(VERB_JOIN,))
     return subpage_document(doc, "join", "#str_200002", "#str_200187", "join_newlist", [*parts, join, favorite, back, detail_card(doc)],
                             [join_ip_modal(doc), find_modal(doc)])

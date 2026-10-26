@@ -8,6 +8,7 @@
 #include "../Game_local.h"
 #include "../Projectile.h"
 #include "BotCombat.h"
+#include "NavMesh.h"
 
 // Points remain slightly inside the collision bounds.  Chest first gives a
 // stable centre-mass aim when the whole player is exposed; head and pelvis are
@@ -34,6 +35,9 @@ static const float BOTCOMBAT_TEAM_SPLASH_TOLERANCE	= 5.0f;
 // With team damage off a blast still pushes: an impact this close to a
 // team-mate's hull is refused for the knockback alone.
 static const float BOTCOMBAT_TEAM_PUSH_RADIUS		= 48.0f;
+// A kick slower than this moves a player but cannot throw one off a walkway;
+// it is the same strong-knock floor a bot's own air recovery reacts to.
+static const float BOTCOMBAT_TEAM_KNOCK_MIN_SPEED	= 150.0f;
 // No stock round's blast, burn or residual radius exceeds the Dark Matter
 // Gun's 768; a round further off than that plus its travel is rejected before
 // its definitions are read.
@@ -50,6 +54,8 @@ struct botCombatShotModel_t {
 	float		 splashDamage;
 	float		 attackerScale;		// RadiusDamage's attackerDamageScale
 	float		 directDamage;		// def_damage on a direct hit
+	float		 power;				// the shooter's powerup scale on the blast
+	float		 teamKnockback;		// the splash's knockback_team, else knockback
 
 	botCombatShotModel_t() :
 		projectileDef( NULL ),
@@ -62,7 +68,9 @@ struct botCombatShotModel_t {
 		splashRadius( 0.0f ),
 		splashDamage( 0.0f ),
 		attackerScale( 0.5f ),
-		directDamage( 0.0f ) {
+		directDamage( 0.0f ),
+		power( 1.0f ),
+		teamKnockback( 0.0f ) {
 	}
 };
 
@@ -187,10 +195,14 @@ static bool BotCombatCurrentShotModel( idPlayer *shooter, botCombatShotModel_t &
 
 	const char *splashName = model.projectileDef->GetString( "def_splash_damage", "" );
 	const idDict *splash = splashName[0] ? gameLocal.FindEntityDefDict( splashName, false ) : NULL;
+	model.power = power;
 	if ( splash ) {
 		model.splashRadius	= Max( 0.0f, splash->GetFloat( "radius", "50" ) );
 		model.splashDamage	= Max( 0.0f, splash->GetFloat( "damage", "20" ) ) * power;
 		model.attackerScale	= Max( 0.0f, splash->GetFloat( "attackerDamageScale", "0.5" ) );
+		// idPlayer::Damage reads knockback_team in team games, falling back to knockback.
+		const int knockback = splash->GetInt( "knockback", "0" );
+		model.teamKnockback	= (float)Max( 0, splash->GetInt( "knockback_team", va( "%d", knockback ) ) );
 	}
 
 	const char *directName = model.projectileDef->GetString( "def_damage", "" );
@@ -475,6 +487,113 @@ static bool BotCombatSplashThreatensTeamMate( idPlayer *shooter, idEntity *splas
 
 /*
 ================
+BotCombatSplashThrowsTeamMate
+
+Team damage on or off, RadiusDamage pushes every exposed hull in a blast and
+idPlayer::Damage applies knockback_team to a team-mate either way.  A rocket
+beside a team-mate on a walkway can throw them into the void: a q4ctf5 bot died
+to a team-mate's rocket that way.  Predict each team-mate's kick as the game
+will apply it - the falloff scale, the fudged multiplayer push direction and
+g_knockback - and refuse a blast that would leave one falling, with no input,
+onto ground that does not hold them.
+================
+*/
+static bool BotCombatSplashThrowsTeamMate( idPlayer *shooter, idEntity *splashIgnore,
+										   const idVec3 &impact, const botCombatShotModel_t &model,
+										   float impactTime ) {
+	if ( !shooter || !gameLocal.IsTeamGame() || model.splashRadius <= 0.0f ||
+		 model.teamKnockback <= 0.0f || !navMesh.IsValid() ) {
+		return false;
+	}
+
+	const float leadTime = Max( 0.0f, impactTime );
+	for ( int i = 0; i < gameLocal.numClients; i++ ) {
+		idPlayer *teamMate = gameLocal.GetClientByNum( i );
+		if ( !BotCombatValidClientPlayer( teamMate ) || teamMate == shooter ||
+			 teamMate->GetInstance() != shooter->GetInstance() ||
+			 !gameLocal.mpGame.CanPlay( teamMate ) || teamMate->spectating ||
+			 teamMate->health <= 0 || !BotCombatSameTeam( shooter, teamMate ) ||
+			 !teamMate->GetPhysics() ) {
+			continue;
+		}
+
+		const idVec3 velocity = teamMate->GetPhysics()->GetLinearVelocity();
+		const idBounds predicted = teamMate->GetPhysics()->GetAbsBounds() + velocity * leadTime;
+		const float distance = predicted.ShortestDistance( impact );
+		if ( distance >= model.splashRadius ||
+			 !BotCombatPredictedBoundsExposed( teamMate, splashIgnore, impact, leadTime ) ) {
+			continue;
+		}
+
+		// RadiusDamage's falloff scale; idPlayer::Damage truncates the scaled knockback.
+		const int knockback = (int)( model.teamKnockback * model.power * ( 1.0f - distance / model.splashRadius ) );
+		if ( knockback <= 0 ) {
+			continue;
+		}
+		const idVec3 origin = teamMate->GetPhysics()->GetOrigin() + velocity * leadTime;
+		idVec3 direction = ( origin + idVec3( 0.0f, 0.0f, 31.875f ) ) - impact;
+		direction.z += 24.0f;
+		if ( direction.Normalize() <= 0.0f ) {
+			continue;
+		}
+		const idVec3 kick = direction * ( g_knockback.GetFloat() * (float)knockback / 200.0f );
+		if ( kick.LengthSqr() < Square( BOTCOMBAT_TEAM_KNOCK_MIN_SPEED ) ) {
+			continue;
+		}
+		if ( !navMesh.AirInputLandingSafe( origin, velocity + kick, vec3_origin, idMath::INFINITY ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+================
+BotCombatPenetratingShotHitsTeamMate
+
+A penetrating hitscan - the multiplayer railgun, "penetrate" 1.0 - passes
+through every actor it strikes until something else stops it
+(idGameLocal::HitScan), so the first entity on the line proves nothing about
+the ones behind it, beyond the aim point included. Trace the weapon's whole
+range the same way and report a team-mate on it: with team damage off the hit
+still pushes them, and a q4ctf5 bot railed through an enemy knocked its
+team-mate 500 units/s.
+================
+*/
+static bool BotCombatPenetratingShotHitsTeamMate( idPlayer *shooter, const idVec3 &shotOrigin,
+												  const idVec3 &shotDirection ) {
+	if ( !shooter || !shooter->weapon || !gameLocal.IsTeamGame() ) {
+		return false;
+	}
+	const char *hitscanName = shooter->weapon->spawnArgs.GetString( "def_hitscan", "" );
+	const idDict *hitscan = hitscanName[0] ? gameLocal.FindEntityDefDict( hitscanName, false ) : NULL;
+	if ( !hitscan || hitscan->GetFloat( "penetrate" ) <= 0.0f ) {
+		return false;
+	}
+
+	const idVec3 end = shotOrigin + shotDirection * hitscan->GetFloat( "range", "40000" );
+	idVec3 start = shotOrigin;
+	idEntity *ignore = shooter;
+	// Each pass leaves one actor behind, so the loop ends after every client.
+	for ( int pass = 0; pass <= MAX_CLIENTS; pass++ ) {
+		trace_t trace;
+		gameLocal.TracePoint( shooter, trace, start, end, MASK_SHOT_BOUNDINGBOX, ignore );
+		idEntity *hit = ( trace.fraction < 1.0f ) ? BotCombatTraceEntity( trace ) : NULL;
+		if ( !hit || !hit->IsType( idActor::GetClassType() ) ) {
+			return false;	// open air, the world or a mover stops the round
+		}
+		if ( hit->IsType( idPlayer::GetClassType() ) &&
+			 BotCombatSameTeam( shooter, static_cast<idPlayer *>( hit ) ) ) {
+			return true;
+		}
+		start = trace.endpos;
+		ignore = hit;
+	}
+	return false;
+}
+
+/*
+================
 BotCombatShotCrossesMovingTeamMate
 
 A point trace only sees where a teammate is now.  Transform each projectile
@@ -732,6 +851,9 @@ bool BotCombatLineOfFireIsSafe( idPlayer *shooter, idPlayer *intendedFoe,
 							 MASK_SHOT_BOUNDINGBOX, shooter );
 		actualImpact = ( trace.fraction < 1.0f ) ? trace.endpos : aimPoint;
 		hit = ( trace.fraction < 1.0f ) ? BotCombatTraceEntity( trace ) : NULL;
+		if ( BotCombatPenetratingShotHitsTeamMate( shooter, shotOrigin, shotDirection ) ) {
+			return false;
+		}
 	}
 
 	if ( impactPoint ) {
@@ -800,6 +922,11 @@ bool BotCombatLineOfFireIsSafe( idPlayer *shooter, idPlayer *intendedFoe,
 					Min( shotModel.splashRadius, BOTCOMBAT_TEAM_PUSH_RADIUS ), impactTime ) ) {
 				return false;
 			}
+		}
+		// Further out the push is weaker but still real, with team damage on or
+		// off: refuse a blast whose kick would throw a team-mate onto nothing.
+		if ( BotCombatSplashThrowsTeamMate( shooter, splashIgnore, actualImpact, shotModel, impactTime ) ) {
+			return false;
 		}
 	} else if ( !projectileShot && splashSafetyRadius > 0.0f ) {
 		// A caller-supplied radius without a projectile model keeps the old

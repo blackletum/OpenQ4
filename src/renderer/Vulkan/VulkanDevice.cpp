@@ -304,7 +304,7 @@ bool VK_Device_InitLoader( void ) {
 
 /*
 ====================
-VK_Device_InstanceExtensionSupported
+VK_Device_FindInstanceExtensions
 
 Vulkan Portability negotiation. VK_KHR_portability_enumeration is a *loader*
 extension: the Khronos loader advertises it and REQUIRES both the extension and
@@ -314,65 +314,23 @@ VK_ERROR_INCOMPATIBLE_DRIVER). A directly loaded libMoltenVK.dylib does NOT
 advertise it, and requesting it there fails with VK_ERROR_EXTENSION_NOT_PRESENT.
 Probing instead of hardcoding keeps one code path correct for both, and is a
 no-op on native Windows/Linux drivers.
+
+The inventory is complete or the start fails: a failed or still-changing list
+must not read as "absent", which would hide a portability ICD.
+
+VK_KHR_portability_subset, the device half, must be enabled whenever the device
+advertises it (VUID-VkDeviceCreateInfo-pProperties-04451), and must NOT be
+requested when it does not -- MoltenVK's advertiseExtensions configuration can
+suppress it. Admission reads it from the same complete device-extension list it
+checks the swapchain extension in (vkDeviceSelection_t::hasPortabilitySubset).
 ====================
 */
-static bool VK_Device_InstanceExtensionSupported( const char *name ) {
-	uint32_t count = 0;
-	if ( vkEnumerateInstanceExtensionProperties( NULL, &count, NULL ) != VK_SUCCESS || count == 0 ) {
-		return false;
+static bool VK_Device_FindInstanceExtensions( const char *layer, const char *const *names, uint32_t count, bool *found ) {
+	const VkResult result = VK_FindInstanceExtensions( vkEnumerateInstanceExtensionProperties, layer, names, count, found );
+	if ( result != VK_SUCCESS && layer == NULL ) {
+		common->Warning( "Vulkan: instance-extension enumeration failed (%d)", (int)result );
 	}
-	if ( count > 512 ) {
-		count = 512;
-	}
-	VkExtensionProperties *properties = (VkExtensionProperties *)Mem_Alloc( count * sizeof( VkExtensionProperties ) );
-	if ( properties == NULL ) {
-		return false;
-	}
-	bool found = false;
-	if ( vkEnumerateInstanceExtensionProperties( NULL, &count, properties ) == VK_SUCCESS ) {
-		for ( uint32_t i = 0; i < count; i++ ) {
-			if ( idStr::Cmp( properties[ i ].extensionName, name ) == 0 ) {
-				found = true;
-				break;
-			}
-		}
-	}
-	Mem_Free( properties );
-	return found;
-}
-
-/*
-====================
-VK_Device_DeviceExtensionSupported
-
-VK_KHR_portability_subset must be enabled whenever the device advertises it
-(VUID-VkDeviceCreateInfo-pProperties-04451), and must NOT be requested when it
-does not -- MoltenVK's advertiseExtensions configuration can suppress it.
-====================
-*/
-static bool VK_Device_DeviceExtensionSupported( VkPhysicalDevice device, const char *name ) {
-	uint32_t count = 0;
-	if ( vkEnumerateDeviceExtensionProperties( device, NULL, &count, NULL ) != VK_SUCCESS || count == 0 ) {
-		return false;
-	}
-	if ( count > 1024 ) {
-		count = 1024;
-	}
-	VkExtensionProperties *properties = (VkExtensionProperties *)Mem_Alloc( count * sizeof( VkExtensionProperties ) );
-	if ( properties == NULL ) {
-		return false;
-	}
-	bool found = false;
-	if ( vkEnumerateDeviceExtensionProperties( device, NULL, &count, properties ) == VK_SUCCESS ) {
-		for ( uint32_t i = 0; i < count; i++ ) {
-			if ( idStr::Cmp( properties[ i ].extensionName, name ) == 0 ) {
-				found = true;
-				break;
-			}
-		}
-	}
-	Mem_Free( properties );
-	return found;
+	return result == VK_SUCCESS;
 }
 
 /*
@@ -489,7 +447,7 @@ static void VK_Device_SelectShadowDepthFormat( void ) {
 
 // Swapchain images r_vkPresentationFailureTest 3 holds, one acquisition fence
 // each. They return to the presentation engine with their swapchain.
-static VkFence vkWithheldImageFences[ 8 ];
+static VkFence vkWithheldImageFences[ VK_MAX_SWAPCHAIN_IMAGES ];
 static uint32_t vkNumWithheldImages = 0;
 
 static void VK_Device_ReleaseWithheldImages( void ) {
@@ -693,20 +651,19 @@ VK_Device_CreateSwapchain
 static bool VK_Device_SelectPresentMode( int requestedInterval, bool strict, VkPresentModeKHR &selected ) {
 	VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 	if ( requestedInterval == 0 || ( strict && requestedInterval == -1 ) ) {
-		uint32_t modeCount = 0;
-		VkResult modeResult = vkGetPhysicalDeviceSurfacePresentModesKHR( vkCtx.physicalDevice, vkCtx.surface, &modeCount, NULL );
+		// The complete list, never a truncated or partial one: a mode beyond a
+		// fixed array must not read as unsupported.
+		uint32_t modes = 0;
+		const VkResult modeResult = VK_QuerySurfacePresentModes( vkGetPhysicalDeviceSurfacePresentModesKHR,
+				vkCtx.physicalDevice, vkCtx.surface, modes );
 		if ( modeResult != VK_SUCCESS ) { R_DisplayPresentationFailed( RDP_RECREATE_FAILED, (int32_t)modeResult ); return false; }
-		if ( modeCount > 16 ) modeCount = 16;
-		VkPresentModeKHR modes[ 16 ];
-		modeResult = vkGetPhysicalDeviceSurfacePresentModesKHR( vkCtx.physicalDevice, vkCtx.surface, &modeCount, modes );
-		if ( modeResult != VK_SUCCESS && modeResult != VK_INCOMPLETE ) { R_DisplayPresentationFailed( RDP_RECREATE_FAILED, (int32_t)modeResult ); return false; }
-		for ( uint32_t i = 0; i < modeCount; i++ ) {
-			if ( requestedInterval == -1 ) {
-				if ( modes[ i ] == VK_PRESENT_MODE_FIFO_RELAXED_KHR ) presentMode = modes[ i ];
-				continue;
-			}
-			if ( modes[ i ] == VK_PRESENT_MODE_IMMEDIATE_KHR ) { presentMode = modes[ i ]; break; }
-			if ( modes[ i ] == VK_PRESENT_MODE_MAILBOX_KHR ) presentMode = modes[ i ];
+		const auto supported = [modes]( VkPresentModeKHR mode ) { return ( modes & ( 1u << (uint32_t)mode ) ) != 0; };
+		if ( requestedInterval == -1 ) {
+			if ( supported( VK_PRESENT_MODE_FIFO_RELAXED_KHR ) ) presentMode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+		} else if ( supported( VK_PRESENT_MODE_IMMEDIATE_KHR ) ) {
+			presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+		} else if ( supported( VK_PRESENT_MODE_MAILBOX_KHR ) ) {
+			presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 		}
 	}
 	if ( strict && requestedInterval != 1 && presentMode == VK_PRESENT_MODE_FIFO_KHR ) {
@@ -795,8 +752,8 @@ static bool VK_Device_CreateSwapchain( void ) {
 	if ( caps.maxImageCount > 0 && imageCount > caps.maxImageCount ) {
 		imageCount = caps.maxImageCount;
 	}
-	if ( imageCount > 8 ) {
-		imageCount = 8;
+	if ( imageCount > VK_MAX_SWAPCHAIN_IMAGES ) {
+		imageCount = VK_MAX_SWAPCHAIN_IMAGES;
 	}
 
 	VkSwapchainCreateInfoKHR sci;
@@ -850,13 +807,14 @@ static bool VK_Device_CreateSwapchain( void ) {
 		VK_Device_DestroySwapchainObjects();
 		return false;
 	}
-	if ( count > 8 ) {
-		// swapchainImages/Views/renderFinishedSemaphores are fixed at 8 and are
-		// indexed by the image index vkAcquireNextImageKHR returns, which can be
-		// any value below the actual image count. An implementation that creates
-		// more than requested would index them out of bounds, so fail closed
-		// rather than clamp the count while the driver still owns more images.
-		common->Warning( "Vulkan: swapchain created %u images, exceeding the supported maximum of 8", count );
+	if ( count > VK_MAX_SWAPCHAIN_IMAGES ) {
+		// swapchainImages/Views/renderFinishedSemaphores are fixed arrays indexed
+		// by the image index vkAcquireNextImageKHR returns, which can be any value
+		// below the actual image count. An implementation that creates more than
+		// requested would index them out of bounds, so fail closed rather than
+		// clamp the count while the driver still owns more images.
+		common->Warning( "Vulkan: swapchain created %u images, exceeding the supported maximum of %u", count,
+				VK_MAX_SWAPCHAIN_IMAGES );
 		VK_Device_DestroySwapchainObjects();
 		return false;
 	}
@@ -1152,6 +1110,16 @@ void VK_Device_WaitIdleForTiming( void ) {
 	}
 }
 
+// The swapchain's extent, the size every recreation publishes to glConfig.
+bool VK_Device_DrawableSize( int &width, int &height ) {
+	if ( !vkCtx.initialized || vkCtx.swapchainExtent.width == 0 || vkCtx.swapchainExtent.height == 0 ) {
+		return false;
+	}
+	width = (int)vkCtx.swapchainExtent.width;
+	height = (int)vkCtx.swapchainExtent.height;
+	return true;
+}
+
 bool VK_Device_SurfaceExtentChanged( void ) {
 	if ( !vkCtx.initialized || vkCtx.surface == VK_NULL_HANDLE ) return false;
 	VkSurfaceCapabilitiesKHR caps;
@@ -1292,18 +1260,32 @@ VK_Device_Init
 */
 bool VK_Device_InjectStartupFailure( int stage ) {
 	extern idCVar r_vkStartupFailure;
+	extern idCVar r_vkStartupFailureDevice;
 	static const char *names[] = { "off", "window", "surface", "swapchain", "renderer resources" };
 	if ( stage <= 0 || stage >= (int)( sizeof( names ) / sizeof( names[ 0 ] ) )
 			|| r_vkStartupFailure.GetInteger() != stage ) {
 		return false;
 	}
+	// A device-specific drill fires only on the admitted device it names, so an
+	// automatic start can be shown to resume on the next compatible adapter.
+	// Window and surface failures precede admission and belong to no device.
+	const int device = r_vkStartupFailureDevice.GetInteger();
+	if ( device >= 0 ) {
+		if ( stage < 3 || vkCtx.physicalDevice == VK_NULL_HANDLE || vkCtx.physicalDeviceIndex != (uint32_t)device ) {
+			return false;
+		}
+		common->Printf( "Vulkan startup failure injected: %s on device %d\n", names[ stage ], device );
+		return true;
+	}
 	common->Printf( "Vulkan startup failure injected: %s\n", names[ stage ] );
 	return true;
 }
 
-bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
+bool VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firstCandidate,
+		vkDeviceAttempt_t &attempt ) {
 	renderDisplayChangeScope_t presentation( RDP_INIT_FAILED );
 	memset( &vkCtx, 0, sizeof( vkCtx ) );
+	memset( &attempt, 0, sizeof( attempt ) );
 	vkWindowServices = windowServices;
 
 	if ( windowServices == NULL || windowServices->CreateVulkanSurface == NULL
@@ -1317,22 +1299,21 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 		return false;
 	}
 
-	// instance extensions: the window system's requirements plus debug utils
-	// when validation is requested
-	const char *extensions[ 24 ];
-	int extensionCount = 0;
-	if ( !windowServices->GetVulkanInstanceExtensions( extensions, 20, &extensionCount ) || extensionCount <= 0 ) {
+	// instance extensions: the window system's complete requirement list, read
+	// at the size it reports, plus debug utils when validation is requested
+	int windowExtensionCount = 0;
+	if ( !windowServices->GetVulkanInstanceExtensions( NULL, 0, &windowExtensionCount ) || windowExtensionCount <= 0 ) {
 		common->Warning( "Vulkan: window system reports no instance extensions" );
 		return false;
 	}
-	if ( extensionCount > 20 ) {
-		common->Warning( "Vulkan: instance extension list truncated (%d)", extensionCount );
-		extensionCount = 20;
-	}
-
-	const bool wantValidation = r_vkValidation.GetBool();
-	if ( wantValidation ) {
-		extensions[ extensionCount++ ] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+	idList<const char *> extensions;
+	extensions.SetNum( windowExtensionCount );
+	int reportedExtensionCount = 0;
+	if ( !windowServices->GetVulkanInstanceExtensions( extensions.Ptr(), windowExtensionCount, &reportedExtensionCount )
+			|| reportedExtensionCount != windowExtensionCount ) {
+		common->Warning( "Vulkan: window-system instance extensions changed while being read (%d, then %d)",
+				windowExtensionCount, reportedExtensionCount );
+		return false;
 	}
 
 	// portability enumeration: required by the Khronos loader before it will
@@ -1340,13 +1321,32 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	// harmless nowhere -- so it is strictly presence-gated. The flag bit is
 	// only ever set together with the extension
 	// (VUID-VkInstanceCreateInfo-flags-06559).
-	const bool portabilityEnumeration =
-			VK_Device_InstanceExtensionSupported( VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME );
-	if ( portabilityEnumeration ) {
-		extensions[ extensionCount++ ] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+	static const char *const optionalInstanceExtensions[] = {
+		VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME, VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+	};
+	bool loaderExtensions[ 2 ] = { false, false };
+	if ( !VK_Device_FindInstanceExtensions( NULL, optionalInstanceExtensions, 2, loaderExtensions ) ) {
+		return false;
 	}
+	const bool portabilityEnumeration = loaderExtensions[ 0 ];
 
 	const char *validationLayer = "VK_LAYER_KHRONOS_validation";
+	const bool wantValidation = r_vkValidation.GetBool();
+	// Debug utils normally comes from the loader. Otherwise the validation layer
+	// provides it, and then only while that layer is enabled, so the retry
+	// without the layer below must not keep requesting it.
+	bool layerDebugUtils = false;
+	if ( wantValidation && !loaderExtensions[ 1 ] ) {
+		const char *debugUtils = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+		VK_Device_FindInstanceExtensions( validationLayer, &debugUtils, 1, &layerDebugUtils );
+	}
+	int debugUtilsIndex = -1;
+	if ( wantValidation && ( loaderExtensions[ 1 ] || layerDebugUtils ) ) {
+		debugUtilsIndex = extensions.Append( VK_EXT_DEBUG_UTILS_EXTENSION_NAME );
+	}
+	if ( portabilityEnumeration ) {
+		extensions.Append( VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME );
+	}
 
 	VkApplicationInfo appInfo;
 	memset( &appInfo, 0, sizeof( appInfo ) );
@@ -1359,8 +1359,8 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	memset( &ici, 0, sizeof( ici ) );
 	ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	ici.pApplicationInfo = &appInfo;
-	ici.enabledExtensionCount = (uint32_t)extensionCount;
-	ici.ppEnabledExtensionNames = extensions;
+	ici.enabledExtensionCount = (uint32_t)extensions.Num();
+	ici.ppEnabledExtensionNames = extensions.Ptr();
 	if ( portabilityEnumeration ) {
 		ici.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 	}
@@ -1374,6 +1374,12 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 		common->Warning( "Vulkan: instance creation with validation failed (%d); retrying without", (int)res );
 		ici.enabledLayerCount = 0;
 		ici.ppEnabledLayerNames = NULL;
+		if ( layerDebugUtils && debugUtilsIndex >= 0 ) {
+			extensions.RemoveIndex( debugUtilsIndex );
+			debugUtilsIndex = -1;
+			ici.enabledExtensionCount = (uint32_t)extensions.Num();
+			ici.ppEnabledExtensionNames = extensions.Ptr();
+		}
 		res = vkCreateInstance( &ici, NULL, &vkCtx.instance );
 	}
 	if ( res != VK_SUCCESS ) {
@@ -1382,7 +1388,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	}
 	volkLoadInstance( vkCtx.instance );
 
-	if ( wantValidation && vkCreateDebugUtilsMessengerEXT != NULL ) {
+	if ( wantValidation && debugUtilsIndex >= 0 && vkCreateDebugUtilsMessengerEXT != NULL ) {
 		VkDebugUtilsMessengerCreateInfoEXT dmci;
 		memset( &dmci, 0, sizeof( dmci ) );
 		dmci.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -1425,6 +1431,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	};
 	vkDeviceSelection_t selected = {};
 	const int forcedDevice = r_vkDevice.GetInteger();
+	attempt.automatic = forcedDevice < 0;
 	res = VK_SelectPhysicalDevice( selectionApi, vkCtx.instance, vkCtx.surface,
 			forcedDevice, selected,
 			[]( uint32_t index, const VkPhysicalDeviceProperties &properties,
@@ -1433,13 +1440,22 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 						index, properties.deviceName, VK_API_VERSION_MAJOR( properties.apiVersion ),
 						VK_API_VERSION_MINOR( properties.apiVersion ), VK_API_VERSION_PATCH( properties.apiVersion ),
 						properties.limits.maxBoundDescriptorSets, reason, (int)result );
-			} );
+			}, NULL, firstCandidate );
 	if ( res != VK_SUCCESS ) {
-		common->Warning( "Vulkan: no compatible physical device (r_vkDevice=%d, result=%d)", forcedDevice, (int)res );
+		if ( firstCandidate > 0 ) {
+			common->Warning( "Vulkan: no further compatible physical device after device %u (result=%d)",
+					firstCandidate - 1, (int)res );
+		} else {
+			common->Warning( "Vulkan: no compatible physical device (r_vkDevice=%d, result=%d)", forcedDevice, (int)res );
+		}
 		VK_Device_Shutdown();
 		return false;
 	}
 	vkCtx.physicalDevice = selected.device;
+	vkCtx.physicalDeviceIndex = selected.index;
+	attempt.admitted = true;
+	attempt.index = selected.index;
+	idStr::Copynz( attempt.deviceName, selected.properties.deviceName, sizeof( attempt.deviceName ) );
 	vkCtx.graphicsQueueFamily = selected.queueFamily;
 	vkCtx.graphicsTimestampValidBits = selected.timestampValidBits;
 	vkCtx.deviceProperties = selected.properties;
@@ -1506,7 +1522,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	uint32_t deviceExtensionCount = 0;
 	deviceExtensions[ deviceExtensionCount++ ] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 	if ( r_vkSampleLocations.GetBool() && vkGetPhysicalDeviceMultisamplePropertiesEXT != NULL
-			&& VK_Device_DeviceExtensionSupported( vkCtx.physicalDevice, VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME ) ) {
+			&& selected.hasSampleLocations ) {
 		VkPhysicalDeviceSampleLocationsPropertiesEXT locations = {};
 		locations.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLE_LOCATIONS_PROPERTIES_EXT;
 		VkPhysicalDeviceProperties2 query = {};
@@ -1540,8 +1556,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 		}
 	}
 
-	vkCtx.portabilitySubset = VK_Device_DeviceExtensionSupported(
-			vkCtx.physicalDevice, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME );
+	vkCtx.portabilitySubset = selected.hasPortabilitySubset;
 	vkCtx.portabilityImageViewFormatSwizzle = true;
 	vkCtx.portabilityMutableComparisonSamplers = true;
 
@@ -1801,6 +1816,20 @@ void VK_Device_Shutdown( void ) {
 		vkDestroyInstance( vkCtx.instance, NULL );
 	}
 	memset( &vkCtx, 0, sizeof( vkCtx ) );
+}
+
+/*
+====================
+VK_Device_AbandonAdapter
+
+Startup's adapter retry. Pipelines a failed adapter compiled are not worth
+keeping, and writing them would replace the one cache file with a blob that
+the adapter about to be tried discards as foreign.
+====================
+*/
+void VK_Device_AbandonAdapter( void ) {
+	vkCtx.pipelineCreationsSincePersist = 0;
+	VK_Device_Shutdown();
 }
 
 /*

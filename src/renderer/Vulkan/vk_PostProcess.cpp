@@ -53,6 +53,7 @@
 #include "../ScenePackets.h"
 #include "../HDRExposureCore.h"
 #include "../ModernGLExecutor.h"
+#include "../TemporalPresentation.h"
 
 #undef snprintf
 #undef vsnprintf
@@ -301,6 +302,13 @@ struct vkHDRExposure_t {
 	unsigned int completedSamples;
 };
 static vkHDRExposure_t vkHDR;
+// The adaptation each scene domain (0 display-referred, 1 linear HDR) last
+// had. The two meter different values, so a change of domain alone resumes
+// the other domain's state instead of restarting at exposure 1, which made
+// every admission flip pop. Any other reset trigger forgets both.
+static hdrExposureState_t vkHDRDomainExposure[ 2 ];
+static bool vkHDRDomainExposureValid[ 2 ];
+static unsigned int vkHDRDomainChanges;
 static idStr vkHDRMapName;
 static int vkPortalSkyFrame = -1;
 static idScreenRect vkPortalSkyViewport;
@@ -346,6 +354,8 @@ void R_RendererVulkanHDRInfo_f( const idCmdArgs &args ) {
 		vkHDR.generation, vkHDR.queuedSamples, vkHDR.completedSamples, vkHDR.adaptation.averageLuminance,
 		vkHDR.adaptation.targetExposure, vkHDR.adaptation.exposure, vkHDR.width, vkHDR.height,
 		(int)r_hdrAutoExposureAsync.GetBool(), (int)vkHDR.skyPreserved, int( vkHDR.sceneLinear ) );
+	common->Printf( "Vulkan HDR domain changes: %u (each resumes that domain's exposure and invalidates temporal history)\n",
+		vkHDRDomainChanges );
 	VK_HDRScene_PrintInfo();
 }
 // why the last scene pass gave up, for the one-time warning
@@ -766,11 +776,28 @@ static void VK_Post_SynchronizeHDRExposure( const viewDef_t *viewDef, bool scene
 		|| viewDef->renderView.viewaxis[ 0 ] * vkHDR.viewForward < 0.70710678f
 		|| idMath::Fabs( viewDef->renderView.fov_x - vkHDR.fovX ) > 1.0f
 		|| idMath::Fabs( viewDef->renderView.fov_y - vkHDR.fovY ) > 1.0f );
-	if ( requested != vkHDR.enabled || width != vkHDR.width || height != vkHDR.height
-			|| sceneFloat != vkHDR.sceneFloat || sceneSamples != vkHDR.sceneSamples || sceneLinear != vkHDR.sceneLinear
+	const bool contextChanged = requested != vkHDR.enabled || width != vkHDR.width || height != vkHDR.height
+			|| sceneFloat != vkHDR.sceneFloat || sceneSamples != vkHDR.sceneSamples
 			|| vkHDR.renderWorld != viewDef->renderWorld || vkHDRMapName != mapName
-			|| vkHDR.videoRestartCount != tr.GetVideoRestartCount() || cameraCut ) {
+			|| vkHDR.videoRestartCount != tr.GetVideoRestartCount() || cameraCut;
+	if ( contextChanged ) {
+		vkHDRDomainExposureValid[ 0 ] = vkHDRDomainExposureValid[ 1 ] = false;
 		VK_Post_ResetHDRExposure();
+	} else if ( sceneLinear != vkHDR.sceneLinear && vkHDR.cameraValid ) {
+		// Same view, other tone curve. Samples in flight were metered in the old
+		// domain (the new generation drops them), and temporal history would
+		// blend the two curves.
+		const int from = vkHDR.sceneLinear ? 1 : 0;
+		const int to = sceneLinear ? 1 : 0;
+		vkHDRDomainExposure[ from ] = vkHDR.adaptation;
+		vkHDRDomainExposureValid[ from ] = vkHDR.adaptation.initialized;
+		VK_Post_ResetHDRExposure();
+		if ( vkHDRDomainExposureValid[ to ] ) {
+			vkHDR.adaptation = vkHDRDomainExposure[ to ];
+		}
+		++vkHDRDomainChanges;
+		R_TemporalPresentation_InvalidateHistory( sceneLinear ? "Vulkan scene entered linear HDR"
+			: "Vulkan scene left linear HDR" );
 	}
 	vkHDR.enabled = requested;
 	vkHDR.sceneFloat = sceneFloat;
@@ -2964,13 +2991,24 @@ static bool VK_Post_TestPreparedHDR( viewDef_t &view ) {
 					++rejected;
 				}
 				r_vkHDRPrepareFailure.SetInteger( 0 );
+				// A change of scene domain alone drops the samples metered in the
+				// old domain, invalidates temporal history and resumes the new
+				// domain's own adaptation when it has one. The size change above
+				// forgot both, so the first change (to display-referred) restarts
+				// and the change back resumes the linear fixtures' exposure.
 				for ( int linear = 0; linear < 2 && passed; ++linear ) {
 					++backEnd.frameCount;
 					passed = VK_GuiExecutor_BeginFrame() && target.MakeCurrent();
 					const unsigned int oldGeneration = vkHDR.generation;
+					const unsigned int oldHistory = R_TemporalPresentation_HistoryGeneration();
+					const bool resumes = vkHDRDomainExposureValid[ linear ];
+					const float resumedExposure = vkHDRDomainExposure[ linear ].exposure;
 					VK_Post_SynchronizeHDRExposure( &view, linear != 0 );
 					VK_PostProcess_ConsumeHDRSample( oldGeneration, backEnd.frameCount, 4.0f );
-					passed = passed && vkHDR.generation != oldGeneration && !vkHDR.haveSample && !vkHDR.adaptation.initialized;
+					passed = passed && vkHDR.generation != oldGeneration && !vkHDR.haveSample
+						&& R_TemporalPresentation_HistoryGeneration() != oldHistory
+						&& resumes == ( linear != 0 ) && vkHDR.adaptation.initialized == resumes
+						&& ( !resumes || vkHDR.adaptation.exposure == resumedExposure );
 					VK_PostProcess_ConsumeHDRSample( vkHDR.generation, backEnd.frameCount, 0.0f );
 					VK_Post_AdaptHDRExposure( view.floatTime );
 					passed = passed && vkHDR.haveSample && vkHDR.adaptation.initialized && vkHDR.adaptation.averageLuminance == 1.0f;
@@ -3064,7 +3102,7 @@ when anything drew, in which case the caller restores its viewport and
 treats _currentRender as stale.
 ====================
 */
-bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
+static bool VK_Post_DrawSceneEffectsInView( const viewDef_t *viewDef ) {
 	if ( viewDef == NULL || viewDef->viewEntitys == NULL || !VK_GuiExecutor_FrameIsOpen() ) {
 		return false;
 	}
@@ -3132,6 +3170,23 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
 		} else if ( vkPostScene.celWorldDepthFrame == backEnd.frameCount ) {
 			VK_Post_WarnOnce( celWarned, "r_celShadingWorld outline" );
 		}
+	}
+	return drew;
+}
+
+bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
+	const bool drew = VK_Post_DrawSceneEffectsInView( viewDef );
+	// Every exit settles a linear scene. One that never reached its output
+	// pass (an early return above) reports "output" instead of staying active
+	// for the GUI and later views of the frame.
+	if ( VK_HDRScene_LinearActive() ) {
+		static bool warned = false;
+		if ( !warned ) {
+			warned = true;
+			common->Warning( "Vulkan: a linear HDR scene ended without its tone-map output (%s)",
+				vkPostFailReason != NULL ? vkPostFailReason : "scene effects stopped early" );
+		}
+		VK_HDRScene_FinishOutput( false );
 	}
 	return drew;
 }

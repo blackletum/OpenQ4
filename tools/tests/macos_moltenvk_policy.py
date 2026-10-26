@@ -67,15 +67,22 @@ def validate_portability_negotiation() -> None:
     # The Khronos loader REQUIRES both the extension and the flag before it will
     # enumerate MoltenVK; a directly loaded libMoltenVK.dylib does not advertise
     # the extension at all and fails instance creation if it is requested. Only a
-    # presence check is correct for both, so the probe must stay.
-    require(source, "VK_Device_InstanceExtensionSupported", context)
+    # presence check is correct for both, so the probe must stay. It reads the
+    # complete instance inventory: a failed list must fail the start rather than
+    # read as "absent" and hide MoltenVK.
+    require(source, "VK_Device_FindInstanceExtensions", context)
     require(source, "VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME", context)
     require(source, "VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR", context)
 
-    init_body = function_body(source, "bool VK_Device_Init( const renderWindowServices_s *windowServices ) {")
+    init_body = function_body(source, "bool VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firstCandidate,")
     require(
         init_body,
-        "const bool portabilityEnumeration =\n\t\t\tVK_Device_InstanceExtensionSupported( VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME );",
+        "if ( !VK_Device_FindInstanceExtensions( NULL, optionalInstanceExtensions, 2, loaderExtensions ) ) {\n\t\treturn false;",
+        "instance-extension inventory failure fails the start",
+    )
+    require(
+        init_body,
+        "const bool portabilityEnumeration = loaderExtensions[ 0 ];",
         "portability enumeration presence gate",
     )
     require(
@@ -86,10 +93,17 @@ def validate_portability_negotiation() -> None:
 
     # VUID-VkDeviceCreateInfo-pProperties-04451: the subset extension must be
     # enabled when advertised, and must not be requested when it is not.
-    require(source, "VK_Device_DeviceExtensionSupported", context)
+    # Admission reads it from the same complete device-extension list in which
+    # it finds the swapchain extension.
+    selection_source = read("src/renderer/Vulkan/VulkanDeviceSelection.cpp")
+    require(
+        selection_source,
+        "if ( std::strcmp( extension.extensionName, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME ) == 0 ) { candidate.hasPortabilitySubset = true; }",
+        "portability subset recorded during admission",
+    )
     require(
         init_body,
-        "vkCtx.portabilitySubset = VK_Device_DeviceExtensionSupported(\n\t\t\tvkCtx.physicalDevice, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME );",
+        "vkCtx.portabilitySubset = selected.hasPortabilitySubset;",
         "portability subset device-extension probe",
     )
     require(init_body, "deviceExtensions[ deviceExtensionCount++ ] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;", context)

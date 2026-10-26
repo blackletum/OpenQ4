@@ -716,6 +716,7 @@ idThread::Execute
 ================
 */
 bool idThread::Execute( void ) {
+	gameLocal.NotePresentationGameplay( "idThread::Execute" );
 	idThread	*oldThread;
 	bool		done;
 

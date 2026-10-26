@@ -1,5 +1,7 @@
 # Shadow Mapping and Transparency Shadowing Guide
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 This guide covers openQ4's user-facing shadow-map settings, including projected-light shadow maps, experimental point-light shadow maps, cascaded shadow maps (CSM), alpha-tested transparency shadows, and the current experimental translucent-shadow path.
 
 ## Quick Start

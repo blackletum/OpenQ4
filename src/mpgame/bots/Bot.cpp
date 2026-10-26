@@ -4196,6 +4196,8 @@ void rvBot::TryDodgeJump( idPlayer *self, const idVec3 &direction, usercmd_t &cm
 // samples just inside the volume rather than exactly on the floor plane.
 const float BOT_LIQUID_LOOKAHEAD	= 56.0f;
 const float BOT_LIQUID_PROBE_LIFT	= 2.0f;
+// A route corner this far below a swimming bot is under it, not beside it: dive for it.
+const float BOT_LIQUID_DIVE_DEPTH	= 16.0f;
 
 /*
 ================
@@ -4261,7 +4263,22 @@ void rvBot::UpdateLiquidMovement( idPlayer *self, usercmd_t &cmd ) {
 		return;
 	}
 
-	// Water: surface before the air runs out, then swim along the top rather than porpoising.
+	// Water: follow a route that leads under the surface while there is air to spare. The navmesh
+	// keeps a pool's floor (water is crossable), so a route can drop onto it; surfacing
+	// unconditionally left the bot treading water above that corner until the stuck check gave up
+	// (the liquid lab's pools gave 20 stuck reports in 82 seconds). Half the reservoir is six
+	// seconds of stock air, far more than any swim back up takes.
+	if ( swimming && pathCorner >= 0 && pathCorner < path.Num() ) {
+		const idVec3 &corner = path[ pathCorner ].origin;
+		if ( corner.z < self->GetPhysics()->GetOrigin().z - BOT_LIQUID_DIVE_DEPTH &&
+			 ( gameLocal.LiquidContentsAtPoint( corner + idVec3( 0.0f, 0.0f, BOT_LIQUID_PROBE_LIFT ), self ) & CONTENTS_WATER ) &&
+			 self->GetAirTics() > pm_airTics.GetInteger() / 2 ) {
+			cmd.upmove = -127;
+			return;
+		}
+	}
+
+	// Otherwise surface before the air runs out, then swim along the top rather than porpoising.
 	if ( LiquidAtEye() ) {
 		cmd.upmove = 127;
 	}

@@ -43,6 +43,9 @@ public:
 	~idSoundOggStream();
 	bool Open( const char* filename );
 	bool Seek( unsigned int frame );
+	// For a stream without length metadata: the length and last positioned page its
+	// sample's envelope pass found (SoundVorbisStream::SetCountedLength).
+	bool SetCountedLength( unsigned int frames, unsigned int pageStart, unsigned int pageEnd, unsigned int granule );
 	int Read( short* pcm, int frames );
 	int Channels() const;
 	int Rate() const;
@@ -127,6 +130,16 @@ public:
 	}
 	// Drops the CPU copy of an uploaded sample, keeping the buffer sizes.
 	void			ReleaseCpuPayload();
+	// CPU PCM retained beside a complete OpenAL copy: restored for a reader, or kept
+	// with s_releaseSamplePayload 0.
+	bool			HasCpuCopy() const
+	{
+		return !payloadReleased && openalBuffer != 0 && pendingDecode == NULL &&
+			buffers.Num() == 1 && buffers[0].buffer != NULL;
+	}
+	// Memory pressure: frees that copy even when a reader restored it; the next
+	// reader restores it again. Returns the bytes freed.
+	int				ReleaseCpuCopy();
 	// Reloads a released payload. Needed before any path that reads the PCM
 	// bytes rather than just their sizes. Returns false if it cannot be had.
 	bool			EnsureCpuPayload();
@@ -221,6 +234,8 @@ protected:
 	bool			FinishOggDecode( const idStr& name, unsigned int decodedFrames );
 	bool			FinishOggLoad( int channels, int sampleRate, unsigned int frames );
 	bool			LoadOggStream( const idStr& filename );
+	// LoadOggStream for a level load: the envelope pass runs on a job worker.
+	bool			BeginOggStreamEnvelope( const idStr& filename, idFile* file, int channels, int rate, unsigned int frames, idSoundSampleDecode** asyncDecode );
 	void			CancelDecode();
 	bool			LoadRoQ( const idStr& name );
 	bool			LoadAmplitude( const idStr& name );
@@ -251,6 +266,12 @@ protected:
 
 	idStr			name;
 	idStr			streamName;
+	// A stream without length metadata: its envelope pass counted the length, and
+	// each voice's decoder seeks with it and the last page that carries a position.
+	bool			streamCountedLength;
+	unsigned int	streamPageStart;
+	unsigned int	streamPageEnd;
+	unsigned int	streamPageGranule;
 
 	ID_TIME_T		timestamp;
 	bool			loaded;

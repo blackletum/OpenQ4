@@ -33,6 +33,9 @@ public:
 
 	void					SetOrigin		( const idVec3& origin );
 	void					SetAxis			( const idMat3& axis );
+
+	virtual void			UpdatePresentationPose	( void );
+	virtual void			RestoreAuthoritativePresentationPose( void );
 protected:
 	renderEntity_t			renderEntity;
 	int						entityDefHandle;
@@ -48,6 +51,17 @@ protected:
 	bool					mHasBounced;
 
 	idInterpolate<float>	scale;
+
+	// openQ4: draw-only presentation pose, like idEntity's. Never saved.
+	int						presentationPoseTime;
+	bool					presentationPoseCanInterpolate;
+	bool					presentationPosePushed;
+	idVec3					presentationPrevOrigin;
+	idMat3					presentationPrevAxis;
+	idVec3					presentationCurOrigin;
+	idMat3					presentationCurAxis;
+
+	void					SamplePresentationPose	( void );
 	
 private:
 	

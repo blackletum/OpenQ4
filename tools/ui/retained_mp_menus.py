@@ -441,14 +441,15 @@ def padlock(ident: str, tint: list) -> dict:
 
 
 def action_plate(doc: Document, ident: str, key: str, width: float, top: float, event: str, steps: list, *,
-                 primary: bool = False) -> dict:
+                 primary: bool = False, menu_button: bool = False) -> dict:
     """An action the game offers: an in-game plate whose label, availability
     and reason the game publishes (`key`.shown, .available, .label, .reason
     and .detail). An unavailable action stays in place, dimmed, with a lock
     after its label and its reason in the error color on the plate; choosing
     it shakes the plate for 300 ms and pulses the reason, and nothing else
     happens. An available one runs `steps`, which ask the game, and the game
-    checks the action again."""
+    checks the action again. With `menu_button` the row ends with the
+    controller's Menu button, which runs the action too (section 13.5)."""
     for name, kind in (("shown", "boolean"), ("available", "boolean"), ("label", "string"), ("reason", "string"), ("detail", "string")):
         doc.state[f"{key}.{name}"] = {"type": kind, "initial": False if kind == "boolean" else ""}
     plate = in_game_plate(doc, ident, PLACEHOLDER, 0, 0, width=width, primary=primary, event=event)
@@ -463,9 +464,18 @@ def action_plate(doc: Document, ident: str, key: str, width: float, top: float, 
     lock = padlock(f"{ident}-lock", rgb(ERROR))
     unavailable = {"op": "!", "args": [{"state": f"{key}.available"}]}
     doc.bind(f"{ident}-lock.display", f"{ident}-lock", "display", {"op": "select", "args": [unavailable, "block", "none"]})
+    row_children = [label_node, lock]
+    if menu_button:
+        # The glyph keeps the row's end for a controller; the keyboard has no
+        # key for it, so it shows none there.
+        row_children += [group(f"{ident}-menu-gap", {"position": keyword("relative"), "display": keyword("block"),
+                                                     "flex-grow": number(1), "height": length(1)}),
+                         group(f"{ident}-menu", {"position": keyword("relative"), "display": keyword("block"), "width": length(PROMPT_H),
+                                                 "height": length(PROMPT_H), "flex-shrink": number(0), "margin-left": length(8)},
+                               b.device_glyphs(doc, f"{ident}-menu", "menu", [1, 1, 1, 0.85], PROMPT_H))]
     row = group(f"{ident}-row", {**absolute(left=26, top=0, width=width - 46, height=45), "display": keyword("flex"),
                                  "flex-direction": keyword("row"), "align-items": keyword("center"), "pointer-events": keyword("none")},
-                [label_node, lock])
+                row_children)
     plate["children"].append(row)
     # The plate dims with its label; the reason beside it keeps its color.
     plate["properties"]["opacity"] = number(1)
@@ -563,16 +573,17 @@ def team_page(doc: Document, index: int, ident: str, width: float, height: float
 
 # The lists: the player's own team (or Marines while spectating, or everyone
 # outside team modes), the other team, then the spectators, each as many rows
-# as a server can hold (si_maxPlayers is at most 16). The game fills them in
+# as the engine's connection table can hold (MAX_CLIENTS is 32). The game fills them in
 # this order (RETAINED_PLAYER_LISTS and RETAINED_PLAYER_ROWS in the game) and
 # says which band color each list takes: Marine, Strogg, spectators or the
 # deathmatch olive.
 PLAYER_LISTS = (("a", (0, 1, 3)), ("b", (0, 1)), ("s", (2,)))
-PLAYER_ROWS = 16
+PLAYER_ROWS = 32
 BAND_TINTS = (MP_MARINE, MP_STROGG, MP_SPECTATOR, MP_NEUTRAL)
 LIST_W = 380.0                 # the lists' column; the statistics take the rest
 LIST_HEAD_H, LIST_BAND_H, LIST_GAP = 16.0, 22.0, 6.0
-ROW_MIN, ROW_MAX = 14.0, 24.0  # a row's pitch, shrinking with the entries (section 14.14)
+ROW_MAX = 24.0                # fixed readable pitch; long rosters scroll (section 14.14)
+ROSTER_GUTTER = 36.0          # the shared authored scrollbar's target, outside the rows
 ROW_FACE = 14.0
 NAME_KEY, SCORE_KEY, PING_KEY = "#str_200242", "#str_200198", "#str_200037"
 KILLS_KEY, DEATHS_KEY, ACCURACY_KEY, AWARDS_KEY = "#str_200201", "#str_200202", "#str_200203", "#str_200204"
@@ -649,6 +660,12 @@ def team_band(ident: str, width: float, height: float, tint: str, cut: float = 8
     ])
 
 
+def player_action(doc: Document, verb: str) -> None:
+    """Capture the selected connection in each queued Session request."""
+    doc.actions[verb] = {"operation": "session.menu", "arguments": {
+        "command": verb, "client": {"state": "card.client"}, "identity": {"state": "card.identity"}}}
+
+
 def player_row(doc: Document, prefix: str, kind: str, row: int, width: float, columns: dict,
                interactive: bool = True) -> tuple[dict, str]:
     """One row of a list, the scoreboard's row (section 14.14): a band at
@@ -659,7 +676,8 @@ def player_row(doc: Document, prefix: str, kind: str, row: int, width: float, co
     ident = f"{prefix}-{kind}-{row}"
     key = f"mp.players.{kind}{row}"
     doc.state.update({
-        f"{key}.client": {"type": "number", "initial": -1}, f"{key}.name": {"type": "string", "initial": ""},
+        f"{key}.client": {"type": "number", "initial": -1}, f"{key}.identity": {"type": "string", "initial": ""},
+        f"{key}.name": {"type": "string", "initial": ""},
         f"{key}.score": {"type": "string", "initial": ""}, f"{key}.ping": {"type": "string", "initial": ""},
         f"{key}.friend": {"type": "boolean", "initial": False}, f"{key}.muted": {"type": "boolean", "initial": False},
         f"{key}.local": {"type": "boolean", "initial": False},
@@ -707,7 +725,7 @@ def player_row(doc: Document, prefix: str, kind: str, row: int, width: float, co
                                          "flex-direction": keyword("row"), "align-items": keyword("center"), "pointer-events": keyword("none")},
                     [marker, spacer, speaker, friend, name, score, ping])
     props = {"position": keyword("relative"), "display": keyword("none"), "width": length(width), "height": length(ROW_MAX),
-             "min-height": length(ROW_MIN), "flex-shrink": number(1)}
+             "flex-shrink": number(0)}
     if interactive:
         ids = doc.states(ident, {
             "default": [(f"{ident}-focus", "opacity", number(0)), (f"{ident}-name", "color", colour([1, 1, 1, 0.85]))],
@@ -717,10 +735,12 @@ def player_row(doc: Document, prefix: str, kind: str, row: int, width: float, co
             "disabled": [(f"{ident}-focus", "opacity", number(0)), (f"{ident}-name", "color", colour([1, 1, 1, 0.85]))],
         })
         event = f"{prefix}_{kind}{row}"
-        doc.events[event] = [{"op": "setState", "values": {"card.client": {"state": f"{key}.client"}}},
+        doc.events[event] = [{"op": "setState", "values": {"card.client": {"state": f"{key}.client"},
+                                                          "card.identity": {"state": f"{key}.identity"}}},
                              {"op": "action", "action": "mpSelectPlayer"}]
         node = group(ident, props, [band, chosen, focus, content],
-                     control={"role": "button", "label": PLACEHOLDER, "event": event, "states": ids})
+                     control={"role": "button", "label": PLACEHOLDER, "event": event, "states": ids,
+                              "context": {"state": f"{key}.identity"}})
     else:
         node = group(ident, props, [band, content])
     doc.bind(f"{ident}.display", ident, "display",
@@ -728,18 +748,52 @@ def player_row(doc: Document, prefix: str, kind: str, row: int, width: float, co
     return node, ident
 
 
+def roster_frame(doc: Document, prefix: str, width: float, height: float, headings: dict, children: list,
+                 key: str = "#str_231002") -> tuple[dict, str]:
+    """Fixed column headings above a bounded roster viewport. The scrollbar
+    reuses the production list artwork and semantic navigation, including
+    focus reveal, Home/End, paging and view-state restoration."""
+    body_top = LIST_HEAD_H
+    body_height = height - body_top
+    column = group(f"{prefix}-column", {"position": keyword("relative"), "display": keyword("flex"),
+                                      "flex-direction": keyword("column")}, children)
+    viewport = group(f"{prefix}-viewport", {**absolute(left=0, top=body_top, width=width - ROSTER_GUTTER, height=body_height),
+                                           "overflow": keyword("auto")}, [column])
+    bar = f"{prefix}-scroll"
+    scrollbar = b.objectives_scrollbar(doc, bar, f"{prefix}-viewport", OLIVE, ORANGE,
+                                      width - ROSTER_GUTTER, body_top, body_height, line_step=ROW_MAX, key=key)
+    return group(f"{prefix}-lists", absolute(left=0, top=0, width=width, height=height),
+                 [headings, viewport, scrollbar]), bar
+
+
+def roster_focus(prefix: str, height: float, tab: str) -> list:
+    """Read-only lists focus their bar only when the authored rows overflow.
+    A short roster leaves navigation on the tab instead of an inactive bar."""
+    total = 0
+    for kind, _tints in PLAYER_LISTS:
+        count = {"state": f"mp.players.{kind}.count"}
+        shown = {"op": ">", "args": [count, 0]} if kind == "s" else {"state": f"mp.players.{kind}.shown"}
+        band = {"op": "select", "args": [shown, LIST_BAND_H + (0 if kind == "a" else LIST_GAP), 0]}
+        rows = {"op": "*", "args": [count, ROW_MAX]}
+        total = {"op": "+", "args": [total, {"op": "+", "args": [band, rows]}]}
+    return [{"op": "focus", "control": f"tab-{tab}"},
+            {"op": "if", "condition": {"op": ">", "args": [total, height - LIST_HEAD_H]},
+             "then": [{"op": "focus", "control": f"{prefix}-scroll"}]}]
+
+
 def player_lists(doc: Document, prefix: str, width: float, height: float, interactive: bool = True) -> tuple[dict, list, list]:
     """The team lists (section 14.18 with the scoreboard's rows, section
     14.14): headings once above them, then each list's band in its team's
     color with its title and score over its rows; the spectators' band shows
-    only while there are spectators. The lists are one flex column: each row
-    is 24 dp and shrinks with the others, down to 14 dp, to share what the
-    bands leave, so sixteen players and three bands fit; rows past that are
-    clipped. Returns the lists, their controls and the steps that focus the
+    only while there are spectators. Rows keep their 24 dp pitch in a scrolling
+    column under fixed headings. Returns the lists, their controls and the steps that focus the
     player whose statistics show (or the first row). Without `interactive`
-    the rows are not controls and the page's tab keeps the focus."""
+    the rows are not controls and the scrollbar takes focus when it can scroll."""
+    outer_width = width
+    width -= ROSTER_GUTTER
     if interactive:
-        doc.state.update({"card.client": {"type": "number", "initial": -1}, "mp.stat.client": {"type": "number", "initial": -1}})
+        doc.state.update({"card.client": {"type": "number", "initial": -1}, "mp.stat.client": {"type": "number", "initial": -1},
+                          "card.identity": {"type": "string", "initial": ""}, "mp.stat.identity": {"type": "string", "initial": ""}})
     columns = list_columns(width)
     heading = {**typeface("lowpixel", 11, LIST_HEAD_H, [1, 1, 1, 0.4]), "white-space": keyword("nowrap")}
     name_left = columns["marker"] + columns["speaker"] + columns["friend"] + 2
@@ -756,10 +810,7 @@ def player_lists(doc: Document, prefix: str, width: float, height: float, intera
     ])
     shown = {kind: ({"state": f"mp.players.{kind}.shown"} if kind != "s" else {"op": ">", "args": [{"state": "mp.players.s.count"}, 0]})
              for kind, _tints in PLAYER_LISTS}
-    full = LIST_HEAD_H + len(PLAYER_LISTS) * LIST_BAND_H + (len(PLAYER_LISTS) - 1) * LIST_GAP + PLAYER_ROWS * ROW_MIN
-    if full > height:
-        raise SystemExit(f"sixteen players and three bands need {full:g} dp, past the lists' {height:g} dp")
-    children, controls = [headings], []
+    children, controls = [], []
     for kind, tints in PLAYER_LISTS:
         doc.state.update({
             f"mp.players.{kind}.shown": {"type": "boolean", "initial": False}, f"mp.players.{kind}.title": {"type": "string", "initial": ""},
@@ -789,13 +840,13 @@ def player_lists(doc: Document, prefix: str, width: float, height: float, intera
             children.append(node)
             if interactive:
                 controls.append(control)
-    lists = group(f"{prefix}-lists", {**absolute(left=0, top=0, width=width, height=height), "display": keyword("flex"),
-                                      "flex-direction": keyword("column"), "overflow": keyword("hidden")}, children)
+    lists, bar = roster_frame(doc, prefix, outer_width, height, headings, children)
+    controls.append(bar)
     # The first row of the first list with players, unless the player whose
     # statistics show has a row: a later focus step overrides an earlier one.
     focus = [{"op": "focus", "control": f"tab-{prefix}"}]
     if not interactive:
-        return lists, controls, focus
+        return lists, controls, roster_focus(prefix, height, prefix)
     for kind, _tints in reversed(PLAYER_LISTS):
         focus.append({"op": "if", "condition": {"op": ">", "args": [{"state": f"mp.players.{kind}.count"}, 0]},
                       "then": [{"op": "focus", "control": f"{prefix}-{kind}-0"}]})
@@ -806,18 +857,18 @@ def player_lists(doc: Document, prefix: str, width: float, height: float, intera
                 {"op": "<", "args": [row, {"state": f"mp.players.{kind}.count"}]},
                 {"op": "==", "args": [{"state": f"{key}.client"}, {"state": "mp.stat.client"}]}]},
                 "then": [{"op": "focus", "control": f"{prefix}-{kind}-{row}"}]})
-    doc.session("mpSelectPlayer", "mpSelectPlayer")
+    player_action(doc, "mpSelectPlayer")
     return lists, controls, focus
 
 
 def welcome_players_page(doc: Document, index: int, ident: str, width: float, height: float) -> tuple[dict, list]:
     """The Welcome card's Players page (section 14.18): the team lists with
-    the speaker and friend symbols, score and ping, spectators below; nothing
-    to choose, so its tab keeps the focus."""
+    the speaker and friend symbols, score and ping, spectators below; its
+    scrollbar takes navigation when the roster exceeds the viewport."""
     page_width = width - 2 * INSET
     page_height = height - PAGE_TOP - PROMPT_BOTTOM - PROMPT_H - 16
-    lists, _rows, focus = player_lists(doc, ident, page_width, page_height, interactive=False)
-    return page_group(doc, index, ident, width, height, [lists], []), focus
+    lists, controls, focus = player_lists(doc, ident, page_width, page_height, interactive=False)
+    return page_group(doc, index, ident, width, height, [lists], controls), focus
 
 
 def check_stat_labels(width: float) -> None:
@@ -913,9 +964,12 @@ def player_stats(doc: Document, left: float, width: float, height: float, plates
     plates = []
     for index, (verb, key) in enumerate((("mpMute", "mp.mute"), ("mpFriend", "mp.friend"))):
         ident = f"players-{key.split('.')[1]}"
-        steps = [{"op": "setState", "values": {"card.client": {"state": "mp.stat.client"}}}, {"op": "action", "action": verb}]
-        plates.append(action_plate(doc, ident, key, width, STAT_PLATES_TOP + SLOT_PITCH * index, f"players_{key.split('.')[1]}", steps))
-        doc.session(verb, verb)
+        steps = [{"op": "setState", "values": {"card.client": {"state": "mp.stat.client"},
+                                              "card.identity": {"state": "mp.stat.identity"}}}, {"op": "action", "action": verb}]
+        holder = action_plate(doc, ident, key, width, STAT_PLATES_TOP + SLOT_PITCH * index, f"players_{key.split('.')[1]}", steps)
+        holder["children"][0]["control"]["context"] = {"state": "mp.stat.identity"}
+        plates.append(holder)
+        player_action(doc, verb)
     if STAT_PLATES_TOP + SLOT_PITCH + 58 > height:
         raise SystemExit("the Players page's Mute and Friend leave the page")
     stats = group("players-stats", absolute(left=left, top=0, width=width, height=height), [*children, *plates])
@@ -1199,7 +1253,7 @@ VOTE_ROWS = (
     ("shuffle", "mpVoteShuffle", "#str_201044", ("toggle",)),
     ("restart", "mpVoteRestart", "#str_200208", ("toggle",)),
     ("buying", "mpVoteBuying", "#str_222000", ("toggle",)),
-    ("kick", "mpVoteKick", "#str_200207", ("choice", 16)),
+    ("kick", "mpVoteKick", "#str_200207", ("choice", PLAYER_ROWS)),
 )
 VOTE_RUNNING, VOTE_CALL, VOTE_NONE_RUNNING = "#str_231043", "#str_231044", "#str_231047"
 VOTE_LOCKED, VOTE_NO_ONE = "#str_231052", "#str_231053"
@@ -2141,6 +2195,30 @@ def match_action_row(doc: Document, name: str, accessible: str, width: float, va
     return row, ident
 
 
+# The triggers' glyphs at the trailing end of an inner strip (section 13.5):
+# the triggers step its sections, and the strip shows which buttons do, for
+# a controller only, since no key steps them.
+TRIGGER_W, TRIGGER_GAP = 22.0, 4.0
+
+
+def section_triggers(doc: Document, ident: str, keys: tuple, page_width: float) -> dict:
+    """The left and right triggers' glyphs at the strip's trailing end, a
+    legend shown only while prompt.glyphs names a controller family. The
+    strip's sections (`keys`, each in a 10 dp padded slot 4 dp apart) must
+    end before them in every shipped language; generation fails otherwise."""
+    room = page_width - 2 * TRIGGER_W - TRIGGER_GAP - 8
+    for language in b.LANGUAGES:
+        used = sum(20 + 4 + b.text_width("lowpixel", b.engine_text(key)[language], 16) for key in keys)
+        if used > room:
+            raise SystemExit(f"{ident}'s sections in {language} take {used:.0f} dp, past the triggers at {room:.0f} dp")
+    glyphs = [group(f"{ident}-{side}", {"position": keyword("relative"), "display": keyword("block"), "width": length(TRIGGER_W),
+                                       "height": length(PROMPT_H), **({"margin-left": length(TRIGGER_GAP)} if side == "rt" else {})},
+                    b.device_glyphs(doc, f"{ident}-{side}", position, [1, 1, 1, 0.85], PROMPT_H, TRIGGER_W))
+              for side, position in (("lt", "left-trigger"), ("rt", "right-trigger"))]
+    return group(ident, {**absolute(right=0, top=(MATCH_STRIP_H - PROMPT_H) / 2, height=PROMPT_H), "display": keyword("flex"),
+                         "flex-direction": keyword("row"), "pointer-events": keyword("none")}, glyphs)
+
+
 def match_tab(doc: Document, position: int, section: str, key: str) -> tuple[dict, str]:
     """One of the inner strip's sections: its name, orange with focus, over a
     bar while it is the section shown."""
@@ -2607,7 +2685,8 @@ def match_page(doc: Document, index: int, ident: str, width: float, height: floa
         tabs.append(tab_node)
         controls.append(tab_id)
     strip = group("match-strip", {**absolute(left=0, top=0, width=page_width, height=MATCH_STRIP_H), "display": keyword("flex"),
-                                  "flex-direction": keyword("row"), "align-items": keyword("center")}, tabs)
+                                  "flex-direction": keyword("row"), "align-items": keyword("center")},
+                  [*tabs, section_triggers(doc, "match-triggers", MATCH_SECTION_KEYS, page_width)])
     rule = vector("match-strip-rule", absolute(left=0, top=MATCH_STRIP_H, width=page_width, height=1), [
         path("rule", [(0, 0), ({"fraction": 1}, 0), ({"fraction": 1}, 1), (0, 1)], fill=solid(rgb(OLIVE, 0.5)))])
     section_top = MATCH_STRIP_H + MATCH_STRIP_GAP
@@ -2888,6 +2967,17 @@ def card_motion(doc: Document, tabs: list, focus: list) -> None:
                                  "then": [{"op": "setState", "values": {"card.released": False}},
                                           {"op": "playTimeline", "timeline": "unrelease"}]}]
     doc.events["onBack"] = [{"op": "action", "action": "mpClose"}]
+    # The Menu button (section 13.5) presses the Admin page's Apply while its
+    # Server section has changes to apply; otherwise it closes the card, as
+    # Back does. Cards without an Admin page leave the button Back.
+    admin = next((index for index, (ident, _key, _window) in enumerate(tabs) if ident == "admin"), None)
+    if admin is not None:
+        from retained_mp_admin import APPLY, SECTIONS
+        doc.events["onMenuButton"] = [{"op": "if", "condition": {"op": "&&", "args": [
+            {"op": "==", "args": [{"state": "card.tab"}, admin]},
+            {"op": "&&", "args": [{"op": "==", "args": [{"state": "card.admin_section"}, SECTIONS.index("server")]},
+                                  {"state": f"mp.admin.{APPLY[0]}.available"}]}]},
+            "then": [{"op": "call", "event": "admin_apply"}], "else": [{"op": "action", "action": "mpClose"}]}]
 
 
 WELCOME_BUILDERS = {"join": join_page, "server": server_page, "players": welcome_players_page, "settings": welcome_settings_page}

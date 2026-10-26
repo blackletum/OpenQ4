@@ -211,6 +211,15 @@ int main() {
     target.spectating = false;
     CHECK(cycle() && gameLocal.followPlayer == 1 && observer.instance == 9);
     CHECK(cycle() && gameLocal.followPlayer == 0 && observer.instance == 7);
+    // Previous walks the same eligible slots backwards: from free flight it
+    // starts after the last slot, and it wraps past slot 0.
+    auto back = []() { return gameLocal.SetDemoFollowClient(DEMO_FOLLOW_PREV); };
+    CHECK(gameLocal.SetDemoFollowClient(DEMO_FOLLOW_FREE));
+    CHECK(back() && gameLocal.followPlayer == 1 && observer.instance == 9);
+    CHECK(back() && gameLocal.followPlayer == 0 && observer.instance == 7);
+    CHECK(back() && gameLocal.followPlayer == 1);
+    CHECK(!gameLocal.SetDemoFollowClient(DEMO_FOLLOW_PREV - 1));
+    CHECK(gameLocal.followPlayer == 1);
     CHECK(gameLocal.SetDemoFollowClient(DEMO_FOLLOW_FREE));
     CHECK(gameLocal.followPlayer == -1 && observer.spectator == ENTITYNUM_NONE);
     CHECK(cycle() && gameLocal.followPlayer == 0);

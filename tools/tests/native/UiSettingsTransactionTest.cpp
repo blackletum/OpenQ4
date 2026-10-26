@@ -170,6 +170,71 @@ void ValidationAndBudgets() {
 	Check(budget.Phase() == SettingsPhase::Closed && budget.Owner() == 0,"invalid initial snapshot never acquires ownership");
 }
 
+void ExternalRefresh() {
+	FakeHost host; SettingsTransaction transaction(host);
+	Expect(transaction.Refresh(7),SettingsCode::NotOpen,"closed session cannot refresh");
+	Expect(transaction.Refresh(0),SettingsCode::Invalid,"zero owner cannot refresh");
+	Check(host.reads == 0,"closed refresh performs no host read");
+	Begin(host,transaction);
+	host.live["brightness"] = 1.25; host.live["label"] = std::string("External");
+	const auto reads = host.reads;
+	Expect(transaction.Refresh(8),SettingsCode::Busy,"foreign owner cannot refresh");
+	Check(host.reads == reads && transaction.Baseline() == Initial(),"foreign refresh preserves original snapshot");
+	Expect(transaction.Refresh(7),SettingsCode::Ok,"clean session refreshes external settings");
+	Check(transaction.Baseline() == host.live && transaction.Draft() == host.live &&
+		!transaction.Dirty() && transaction.Owner() == 7 && host.writes.empty(),"refresh adopts exact complete snapshot without writes");
+	Expect(transaction.Edit(7,{{"gamma",1.3}}),SettingsCode::Ok,"draft after refresh");
+	const auto baseline = transaction.Baseline(), draft = transaction.Draft();
+	host.live["volume"] = 0.75;
+	Expect(transaction.Refresh(7),SettingsCode::Conflict,"dirty session reports external conflict");
+	Check(transaction.Baseline() == baseline && transaction.Draft() == draft &&
+		transaction.LastResult().code == SettingsCode::Ok,"observation preserves dirty snapshots and prior operation result");
+	Expect(transaction.Apply(7,1),SettingsCode::Conflict,"Apply still rejects conflicting host");
+	Expect(transaction.Refresh(7),SettingsCode::Conflict,"repeated conflict remains observable");
+	Check(transaction.LastResult().code == SettingsCode::Conflict,"refresh cannot clear failed Apply");
+	Expect(transaction.Revert(7),SettingsCode::Ok,"explicit discard clears draft");
+	Expect(transaction.Refresh(7),SettingsCode::Ok,"discarded session rebases to external settings");
+	Check(transaction.Draft() == host.live && !transaction.Dirty(),"discard and refresh agree with actual settings");
+	Expect(transaction.Edit(7,{{"gamma",99.0}}),SettingsCode::Invalid,"invalid edit records failure");
+	host.live["brightness"] = 42.0; // Custom live value outside normal editor range.
+	Expect(transaction.Refresh(7),SettingsCode::Ok,"custom live value can be observed without editor normalization");
+	Check(transaction.Draft() == host.live && transaction.LastResult().code == SettingsCode::Invalid &&
+		host.writes.empty(),"refresh preserves custom value and failure status");
+	const auto stable = transaction.Baseline();
+	for (int failure = 0; failure < 5; ++failure) {
+		host.readHook = [&](StateValues& values,std::string& error) {
+			values = host.live;
+			if (failure == 0) { error="unavailable"; return false; }
+			if (failure == 1) throw std::runtime_error("read failed");
+			if (failure == 2) values.erase("volume");
+			if (failure == 3) values["shadows"] = 1.0;
+			if (failure == 4) values["brightness"] = std::numeric_limits<double>::quiet_NaN();
+			return true;
+		};
+		Expect(transaction.Refresh(7),SettingsCode::Invalid,"failed or malformed external read rejected");
+		Check(transaction.Baseline() == stable && transaction.Draft() == stable,"failed refresh leaves both snapshots intact");
+	}
+	host.readHook = {}; host.live = Initial();
+	Expect(transaction.Refresh(7),SettingsCode::Ok,"read recovery adopts fresh settings");
+	host.callback = [&](const char*) {
+		Expect(transaction.Refresh(7),SettingsCode::Busy,"refresh reentry rejected");
+		Expect(transaction.Cancel(7),SettingsCode::Busy,"read callback cannot close owner");
+	};
+	Expect(transaction.Refresh(7),SettingsCode::Ok,"read remains guarded against reentry");
+	host.callback = {};
+	SettingsAttempt attempt;
+	Expect(transaction.Edit(7,{{"mode",1.0}}),SettingsCode::Ok,"draft display change");
+	Expect(transaction.PrepareApply(7,2,attempt),SettingsCode::Ok,"prepare display change");
+	const auto pendingReads = host.reads;
+	Expect(transaction.Refresh(7),SettingsCode::Busy,"queued effect cannot refresh");
+	Check(host.reads == pendingReads && transaction.Request() == attempt.request,"queued refresh does not read or change request identity");
+	Expect(transaction.ExecuteApply(7,attempt.request),SettingsCode::Ok,"execute display change");
+	Expect(transaction.CompleteApply(7,attempt.request,3),SettingsCode::Ok,"confirm display change");
+	host.live["volume"] = 0.9;
+	Expect(transaction.Refresh(7),SettingsCode::Busy,"unconfirmed host cannot become baseline");
+	Check(transaction.Baseline() == Initial() && transaction.Draft().at("mode") == StateValue(1.0),"confirmation retains original recovery data");
+}
+
 void ApplyAndConflicts() {
 	FakeHost host; SettingsTransaction transaction(host); Begin(host,transaction);
 	Expect(transaction.Apply(7,1),SettingsCode::Ok,"unchanged apply succeeds");
@@ -380,6 +445,7 @@ void ReentrancyAndIndependentInstances() {
 		const auto baseline = transaction.Baseline(), draft = transaction.Draft(), applied = transaction.LastApplied();
 		const auto result = transaction.LastResult(); const double deadline = transaction.Deadline();
 		Expect(transaction.Begin(9),SettingsCode::Busy,"reentrant begin blocked");
+		Expect(transaction.Refresh(7),SettingsCode::Busy,"reentrant refresh blocked");
 		Expect(transaction.Edit(7,{}),SettingsCode::Busy,"reentrant edit blocked");
 		Expect(transaction.Defaults(7),SettingsCode::Busy,"reentrant defaults blocked");
 		Expect(transaction.Cancel(7),SettingsCode::Busy,"reentrant cancel blocked");
@@ -724,6 +790,7 @@ void CoupledDrafts() {
 int main() {
 	OwnershipAndDrafts();
 	ValidationAndBudgets();
+	ExternalRefresh();
 	ApplyAndConflicts();
 	ConfirmationAndTime();
 	PartialWritesAndReadback();

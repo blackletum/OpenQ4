@@ -982,6 +982,10 @@ private:
 	uint32_t		nextClientMatchRequestId;
 	uint32_t		nextTrustedLocalMatchRequestId;
 	mpProposalId_t	nextMatchProposalId;
+	// The newest passed proposal executed in each scope.  Proposal ids only grow
+	// within a session, so a record at or below it ran already and only its
+	// acknowledgement is retried: a ballot never executes twice.
+	mpProposalId_t	lastExecutedMatchProposalId[ MP_PROPOSAL_SCOPE_COUNT ];
 	uint64_t		nextMatchSessionId;
 	bool			matchRefereeCredentialInitialized;
 	bool			matchRefereeCredentialIsReal;
@@ -1252,9 +1256,12 @@ private:
 	// opens or the list's players change. The page shows the statistics of
 	// retainedStatClient.
 	static const int RETAINED_PLAYER_LISTS = 3;
-	static const int RETAINED_PLAYER_ROWS = 16;
+	static const int RETAINED_PLAYER_ROWS = 32;
+	static_assert( RETAINED_PLAYER_ROWS == MAX_CLIENTS, "retained rosters cover every client slot" );
 	idList<int>		retainedPlayerOrder[ RETAINED_PLAYER_LISTS ];
 	int				retainedStatClient;
+	idStr			retainedStatIdentity;
+	idStr			RetainedPlayerIdentity( int client ) const;
 	void			RetainedPlayerLists( idList<int> lists[ RETAINED_PLAYER_LISTS ], int colors[ RETAINED_PLAYER_LISTS ] );
 	bool			RetainedListed( int client );
 	void			PublishRetainedPlayers( idUserInterface *card, bool &changed );

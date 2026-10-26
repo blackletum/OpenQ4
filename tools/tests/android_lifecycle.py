@@ -14,11 +14,20 @@ from filesystem_case_segments import function_body
 
 ROOT = Path(__file__).resolve().parents[2]
 SUPPORT = r'''
+// Use host standard library declarations, then select the engine branch.
+// Apple's libc++ reads Android headers under __ANDROID__.
+#if defined(__ANDROID__)
+#undef __ANDROID__
+#define TEST_ANDROID 1
+#endif
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if defined(TEST_ANDROID)
+#define __ANDROID__ 1
+#endif
 #define SDLCALL
 #define USE_SDL3 1
 static void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
@@ -51,6 +60,8 @@ static std::vector<std::string> actions;
 static bool Posix_IsMainThread(){return engineThread;}
 static int Sys_Milliseconds(){return 100;}
 static void S_SetDevicePaused(bool paused){devicePaused=paused;if(!paused)++resumes;actions.push_back(paused?"pause":"resume");}
+static int trims=0;
+static void S_TrimMemory(const char* reason){require(!std::strcmp(reason,"os low-memory"),"wrong trim reason");require(engineThread,"audio trimmed off the main thread");++trims;}
 struct {bool activeApp=true,movingWindow=false;} win32;
 namespace openq4 {static void NativeInputBeforeWindowChange(){}}
 struct Key {bool down=false;};static Key keyStorage[MAX_KEYS];static Key* keys=keyStorage;
@@ -155,6 +166,11 @@ int main(){try {
     sessionValue.HandleAppResume(false);require(!menus && !resumes && !s_sdlAppInBackground,"desktop acquired Android resume behavior");
     require(touchReleases==0,"desktop invoked Android touch controls");
 #endif
+    // A low-memory notice from any thread trims audio once, on the main thread.
+    reset();trims=0;engineThread=false;send(SDL_EVENT_LOW_MEMORY);
+    require(!trims,"low-memory watch trimmed audio before the main thread ran");
+    engineThread=true;SDL3_ProcessPendingLifecycleEvents(105);require(trims==1,"pending low-memory notice did not trim audio");
+    SDL3_ProcessPendingLifecycleEvents(106);require(trims==1,"one low-memory notice trimmed audio twice");
     reset();keys=nullptr;idKeyInput::ClearStates();require(!usercmdClears,"uninitialized input touched usercmd state");
     keys=keyStorage;idKeyInput::ClearStates();require(inputReleases==2 && usercmdClears==1,"live input clearing changed");
     keys=nullptr;idKeyInput::ClearStates();

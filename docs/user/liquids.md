@@ -1,5 +1,7 @@
 # Liquids
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 has water, slime and lava that behave the way they do in the older Quake games: you wade,
 you swim, you drown, and lava and slime hurt. Retail Quake 4 has none of this — everything that
 looks like water in the stock maps is decoration with a `trigger_hurt` floating over it where it is

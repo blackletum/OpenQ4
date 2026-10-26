@@ -230,6 +230,10 @@ void idAsyncClient::Clear( void ) {
 	clientState = CS_DISCONNECTED;
 	clientPrediction = 0;
 	clientPredictTime = 0;
+	memset( connectCandidates, 0, sizeof( connectCandidates ) );
+	connectCandidateCount = 0;
+	connectCandidateIndex = 0;
+	connectChallengesSent = 0;
 	serverId = 0;
 	serverChallenge = 0;
 	serverMessageSequence = 0;
@@ -376,6 +380,13 @@ void idAsyncClient::ConnectToServer( const netadr_t adr ) {
 	// clear the client state
 	Clear();
 
+	// A numeric address, a server-list entry or a reconnect is one candidate;
+	// ConnectToServer( const char * ) installs a host name's others afterwards.
+	connectCandidates[0] = adr;
+	connectCandidateCount = 1;
+	connectCandidateIndex = 0;
+	connectChallengesSent = 0;
+
 	// Keep the legacy 15-bit wire field but remove the predictable clock seed.
 	if ( !AsyncClient_SecureConnectionId( clientId ) ) {
 		common->Warning( "OS secure random unavailable; connection attempt cancelled" );
@@ -412,7 +423,8 @@ idAsyncClient::ConnectToServer
 */
 void idAsyncClient::ConnectToServer( const char *address ) {
 	int serverNum;
-	netadr_t adr;
+	netadr_t candidates[MAX_CONNECT_CANDIDATES];
+	int candidateCount = 0;
 
 	if ( idStr::IsNumeric( address ) ) {
 		serverNum = atoi( address );
@@ -420,20 +432,37 @@ void idAsyncClient::ConnectToServer( const char *address ) {
 			session->MessageBox( MSG_OK, va( common->GetLanguageDict()->GetString( "#str_06733" ), serverNum ), common->GetLanguageDict()->GetString( "#str_06735" ), true );
 			return;
 		}
-		adr = serverList[ serverNum ].adr;
+		candidates[0] = serverList[ serverNum ].adr;
+		candidateCount = 1;
 	} else {
-		if ( !Sys_StringToNetAdr( address, &adr, true ) ) {
+		// A host name can carry several A and AAAA records. The first is the one
+		// Sys_StringToNetAdr always chose; the others are tried in turn if it
+		// never answers (SetupConnection).
+		candidateCount = Sys_StringToNetAdrCandidates( address, candidates, MAX_CONNECT_CANDIDATES, true );
+		if ( candidateCount <= 0 ) {
 			session->MessageBox( MSG_OK, va( common->GetLanguageDict()->GetString( "#str_06734" ), address ), common->GetLanguageDict()->GetString( "#str_06735" ), true );
 			return;
 		}
 	}
-	if ( !adr.port ) {
-		adr.port = PORT_SERVER;
+	for ( int i = 0; i < candidateCount; i++ ) {
+		if ( !candidates[ i ].port ) {
+			candidates[ i ].port = PORT_SERVER;
+		}
 	}
 
-	common->Printf( "\"%s\" resolved to %s\n", address, Sys_NetAdrToString( adr ) );
+	common->Printf( "\"%s\" resolved to %s\n", address, Sys_NetAdrToString( candidates[ 0 ] ) );
+	for ( int i = 1; i < candidateCount; i++ ) {
+		common->Printf( "  alternative address %d of %d: %s\n", i + 1, candidateCount, Sys_NetAdrToString( candidates[ i ] ) );
+	}
 
-	ConnectToServer( adr );
+	ConnectToServer( candidates[ 0 ] );
+	if ( !active || clientState != CS_CHALLENGING ) {
+		return;
+	}
+	for ( int i = 1; i < candidateCount; i++ ) {
+		connectCandidates[ i ] = candidates[ i ];
+	}
+	connectCandidateCount = candidateCount;
 }
 
 /*
@@ -1413,7 +1442,9 @@ void idAsyncClient::ProcessUnreliableServerMessage( const idBitMsg &msg ) {
 
 			// if the snapshot is newer than the clients current game time
 			const int maximumPredictionMsec = AsyncClient_MaxPredictionMsec();
-			if ( gameTime < snapshotGameTime || gameTime > snapshotGameTime + maximumPredictionMsec ) {
+			const int predictedGameTime = gameTime;
+			const bool predictionResynced = gameTime < snapshotGameTime || gameTime > snapshotGameTime + maximumPredictionMsec;
+			if ( predictionResynced ) {
 				gameFrame = snapshotGameFrame;
 				gameTime = snapshotGameTime;
 				gameTimeResidual = idMath::ClampInt( -maximumPredictionMsec, maximumPredictionMsec, gameTimeResidual );
@@ -1421,12 +1452,19 @@ void idAsyncClient::ProcessUnreliableServerMessage( const idBitMsg &msg ) {
 			}
 
 			// adjust the client prediction time based on the snapshot time
+			// openQ4: the original wrote each one-unit step as ( 1 - ( INTSIGNBITSET( x ) << 1 ) ),
+			// which is unsigned: 1 or 4294967295, a -1 only once 32-bit arithmetic wraps it back.
+			// Widened to 64 bits below, 4294967295 stayed 4294967295, so every time this client was
+			// behind its target the catch-up was slammed to -maximumPredictionMsec - full slowdown
+			// instead of speeding up - and it ended one frame behind the server with every command
+			// late.  Step with signed values instead.
 			const int configuredPredictionMsec = AsyncClient_ConfiguredPredictionMsec( gameFrame );
-			clientPrediction -= ( 1 - ( INTSIGNBITSET( aheadOfServer - configuredPredictionMsec ) << 1 ) );
+			clientPrediction += ( aheadOfServer < configuredPredictionMsec ) ? 1 : -1;
 			clientPrediction = idMath::ClampInt( configuredPredictionMsec, maximumPredictionMsec, clientPrediction );
 			delta = gameTime - ( snapshotGameTime + clientPrediction );
+			const int deltaStep = ( delta < 0 ) ? -1 : 1;
 			const std::int64_t adjustedPredictTime = static_cast<std::int64_t>( clientPredictTime ) -
-				( delta / PREDICTION_FAST_ADJUST ) - ( 1 - ( INTSIGNBITSET( delta ) << 1 ) );
+				( delta / PREDICTION_FAST_ADJUST ) - deltaStep;
 			clientPredictTime = adjustedPredictTime < -maximumPredictionMsec ? -maximumPredictionMsec :
 				( adjustedPredictTime > maximumPredictionMsec ? maximumPredictionMsec :
 					static_cast<int>( adjustedPredictTime ) );
@@ -1434,7 +1472,14 @@ void idAsyncClient::ProcessUnreliableServerMessage( const idBitMsg &msg ) {
 			lastSnapshotTime = clientTime;
 
 			if ( idAsyncNetwork::verbose.GetInteger() == 2 ) {
-				common->Printf( "received snapshot, gameInitId = %d, gameFrame = %d, gameTime = %d\n", gameInitId, gameFrame, gameTime );
+				// openQ4: with the prediction controller's state, so a lead that does not follow
+				// its target can be read from the log: the time this client had predicted to,
+				// whether the snapshot forced a resync, the server's view of how early this
+				// client's commands arrive, and the target and catch-up the controller now holds.
+				common->Printf( "received snapshot, gameInitId = %d, gameFrame = %d, gameTime = %d, snapshotGameTime = %d, "
+					"predictedGameTime = %d%s, aheadOfServer = %d, clientPrediction = %d, clientPredictTime = %d, gameTimeResidual = %d\n",
+					gameInitId, gameFrame, gameTime, snapshotGameTime, predictedGameTime, predictionResynced ? " (resync)" : "",
+					aheadOfServer, clientPrediction, clientPredictTime, gameTimeResidual );
 			}
 
 			if ( numDuplicatedUsercmds && ( idAsyncNetwork::verbose.GetInteger() == 2 ) ) {
@@ -2439,6 +2484,25 @@ void idAsyncClient::SetupConnection( void ) {
 	}
 
 	if ( clientState == CS_CHALLENGING ) {
+		// A host name's next address gets its turn once this one has let
+		// CONNECT_CHALLENGES_PER_CANDIDATE challenges go unanswered. The first
+		// answer wins, wherever it comes from (ProcessChallengeResponseMessage).
+		idNetworkEndpoint::connectFailover_t failover;
+		failover.count = connectCandidateCount;
+		failover.index = connectCandidateIndex;
+		failover.sent = connectChallengesSent;
+		if ( idNetworkEndpoint::FailoverBeforeChallenge( failover ) ) {
+			common->Printf( "no answer from %s after %d challenges; trying %s (address %d of %d)\n",
+				Sys_NetAdrToString( serverAddress ), idNetworkEndpoint::CONNECT_CHALLENGES_PER_CANDIDATE,
+				Sys_NetAdrToString( connectCandidates[ failover.index ] ), failover.index + 1, failover.count );
+			serverAddress = connectCandidates[ failover.index ];
+			if ( guiNetMenu != NULL ) {
+				guiNetMenu->SetStateString( "status", va( common->GetLanguageDict()->GetString( "#str_06749" ), Sys_NetAdrToString( serverAddress ) ) );
+			}
+		}
+		connectCandidateIndex = failover.index;
+		connectChallengesSent = failover.sent;
+
 		common->Printf( "sending challenge to %s\n", Sys_NetAdrToString( serverAddress ) );
 		msg.Init( msgBuf, sizeof( msgBuf ) );
 		msg.WriteShort( CONNECTIONLESS_MESSAGE_ID );

@@ -382,22 +382,16 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 				VK_API_VERSION_MAJOR( loaderVersion ), VK_API_VERSION_MINOR( loaderVersion ), VK_API_VERSION_PATCH( loaderVersion ) );
 	}
 
-	// 2. layers / instance extensions
+	// 2. layers / instance extensions: complete inventories through the shared
+	// admission library. A failed or still-changing list is reported, never
+	// read as an empty or truncated one.
 	bool validationRequested = VK_CVarGetBool( "r_vkValidation" );
 	bool validationAvailable = false;
 	{
-		uint32_t layerCount = 0;
-		vkEnumerateInstanceLayerProperties( &layerCount, NULL );
-		if ( layerCount > 64 ) {
-			layerCount = 64;
-		}
-		VkLayerProperties layers[ 64 ];
-		vkEnumerateInstanceLayerProperties( &layerCount, layers );
-		for ( uint32_t i = 0; i < layerCount; i++ ) {
-			if ( strcmp( layers[ i ].layerName, "VK_LAYER_KHRONOS_validation" ) == 0 ) {
-				validationAvailable = true;
-				break;
-			}
+		const char *validationLayer = "VK_LAYER_KHRONOS_validation";
+		result = VK_FindInstanceLayers( vkEnumerateInstanceLayerProperties, &validationLayer, 1, &validationAvailable );
+		if ( result != VK_SUCCESS && ( validationRequested || verbose ) ) {
+			VK_Warning( "Vulkan bring-up: instance-layer enumeration failed (%s); validation is unavailable", VK_ResultName( result ) );
 		}
 	}
 	if ( validationRequested && !validationAvailable ) {
@@ -410,28 +404,28 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 	bool hasDebugUtils = false;
 	bool hasPortabilityEnumeration = false;
 	{
-		uint32_t extensionCount = 0;
-		vkEnumerateInstanceExtensionProperties( NULL, &extensionCount, NULL );
-		if ( extensionCount > 256 ) {
-			extensionCount = 256;
-		}
-		static VkExtensionProperties extensions[ 256 ];
-		vkEnumerateInstanceExtensionProperties( NULL, &extensionCount, extensions );
-		for ( uint32_t i = 0; i < extensionCount; i++ ) {
-			const char *name = extensions[ i ].extensionName;
-			if ( strcmp( name, VK_KHR_SURFACE_EXTENSION_NAME ) == 0 ) {
-				hasSurfaceExtension = true;
-			} else if ( strcmp( name, "VK_KHR_win32_surface" ) == 0
-					|| strcmp( name, "VK_KHR_xlib_surface" ) == 0
-					|| strcmp( name, "VK_KHR_xcb_surface" ) == 0
-					|| strcmp( name, "VK_KHR_wayland_surface" ) == 0
-					|| strcmp( name, "VK_EXT_metal_surface" ) == 0 ) {
-				hasPlatformSurfaceExtension = true;
-			} else if ( strcmp( name, VK_EXT_DEBUG_UTILS_EXTENSION_NAME ) == 0 ) {
-				hasDebugUtils = true;
-			} else if ( strcmp( name, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME ) == 0 ) {
-				hasPortabilityEnumeration = true;
+		static const char *const names[] = {
+			VK_KHR_SURFACE_EXTENSION_NAME, VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+			VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME, "VK_KHR_win32_surface", "VK_KHR_xlib_surface",
+			"VK_KHR_xcb_surface", "VK_KHR_wayland_surface", "VK_EXT_metal_surface"
+		};
+		const uint32_t nameCount = (uint32_t)( sizeof( names ) / sizeof( names[ 0 ] ) );
+		bool found[ sizeof( names ) / sizeof( names[ 0 ] ) ] = {};
+		result = VK_FindInstanceExtensions( vkEnumerateInstanceExtensionProperties, NULL, names, nameCount, found );
+		if ( result != VK_SUCCESS ) {
+			// The renderer refuses to start on the same failure, so the gate
+			// must not report a usable Vulkan from an unread inventory.
+			VK_Printf( "Vulkan bring-up: instance-extension enumeration failed (%s)\n", VK_ResultName( result ) );
+			if ( outSummary != NULL ) {
+				snprintf( outSummary, summaryLength, "instance-extension enumeration failed: %s", VK_ResultName( result ) );
 			}
+			return false;
+		}
+		hasSurfaceExtension = found[ 0 ];
+		hasDebugUtils = found[ 1 ];
+		hasPortabilityEnumeration = found[ 2 ];
+		for ( uint32_t i = 3; i < nameCount; i++ ) {
+			hasPlatformSurfaceExtension = hasPlatformSurfaceExtension || found[ i ];
 		}
 	}
 	if ( verbose ) {

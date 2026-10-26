@@ -61,7 +61,7 @@ struct idKeyInput {
     static void ClearStates() { std::memset(held,0,sizeof(held)); }
 };
 namespace idMath { int Abs(int x) { return std::abs(x); } int ClampChar(int x) { return std::clamp(x,-128,127); } }
-constexpr int UB_NONE=0, UB_WEAPONWHEEL=8, UB_QUICKCHAT=9, UB_IMPULSE0=20, UB_IMPULSE14=UB_IMPULSE0+14, UB_IMPULSE15=UB_IMPULSE0+15,
+constexpr int UB_NONE=0, UB_ATTACK=1, UB_WEAPONWHEEL=8, UB_QUICKCHAT=9, UB_IMPULSE0=20, UB_IMPULSE14=UB_IMPULSE0+14, UB_IMPULSE15=UB_IMPULSE0+15,
     UB_IMPULSE127=147, UB_MAX_BUTTONS=160, UCF_IMPULSE_SEQUENCE=1;
 constexpr int AXIS_SIDE=0, AXIS_FORWARD=1, AXIS_UP=2, AXIS_ROLL=3, AXIS_YAW=4, AXIS_PITCH=5, MAX_JOYSTICK_AXIS=6;
 int physicalAxes[MAX_JOYSTICK_AXIS]={};
@@ -70,6 +70,7 @@ int Sys_PollJoystickInputEvents() { return MAX_JOYSTICK_AXIS; }
 bool Sys_ReturnJoystickInputEvent(int i, int& axis, int& value) { axis=i; value=physicalAxes[i]; return true; }
 void Sys_EndJoystickInputEvents() {}
 bool IsWeaponSelectionImpulse(int) { return false; }
+int latencyFlashArms=0; void Usercmd_ArmLatencyFlash() { ++latencyFlashArms; }
 struct idUsercmdGenLocal {
     int buttonState[UB_MAX_BUTTONS]={};
     bool keyState[K_LAST_KEY]={}, directButtonState[UB_MAX_BUTTONS]={};
@@ -259,6 +260,12 @@ int main() {
     usercmd.scoreboardScrolls=false; usercmd.SetButtonAction(UB_IMPULSE14,true); usercmd.SetButtonAction(UB_IMPULSE14,false);
     assert(usercmd.scrolled==-1 && usercmd.cmd.impulse==14 && usercmd.cmd.flags==1);
     usercmd.Clear(); usercmd.cmd.impulse=0; usercmd.cmd.flags=0;
+    // com_latencyFlash arms on the attack press edge only: a second input
+    // holding the button, or its release, is not a new press.
+    latencyFlashArms=0; usercmd.SetButtonAction(UB_ATTACK,true); usercmd.SetButtonAction(UB_ATTACK,true);
+    usercmd.SetButtonAction(UB_ATTACK,false); usercmd.SetButtonAction(UB_ATTACK,false); assert(latencyFlashArms==1);
+    usercmd.SetButtonAction(UB_ATTACK,true); usercmd.SetButtonAction(UB_ATTACK,false); assert(latencyFlashArms==2);
+    usercmd.Clear();
     // Exercise the production engine transport/clock dispatcher against a
     // counted runtime sink. The native retained suite separately checks that
     // sink's real layout, hit testing, feedback and action behavior.

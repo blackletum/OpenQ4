@@ -49,6 +49,7 @@ enum demoState_t {
 
 // Negative targets accepted by SetDemoFollowClient during offline playback.
 enum demoFollowTarget_t {
+	DEMO_FOLLOW_PREV = -3,
 	DEMO_FOLLOW_NEXT = -2,
 	DEMO_FOLLOW_FREE = -1
 };
@@ -381,7 +382,8 @@ public:
 	// Get the currently followed client in demo playback
 	virtual int					GetDemoFollowClient( void ) = 0;
 	// A numbered client restores a saved camera, including during world reset.
-	// DEMO_FOLLOW_NEXT selects a currently eligible player; DEMO_FOLLOW_FREE exits follow.
+	// DEMO_FOLLOW_NEXT and DEMO_FOLLOW_PREV select the next or previous currently
+	// eligible player; DEMO_FOLLOW_FREE exits follow.
 	virtual bool				SetDemoFollowClient( int clientNum ) = 0;
 
 	// Build a bot's userCmd
@@ -719,7 +721,9 @@ extern rvGameLog *				gameLog;
 // 52: idGame::Draw receives the single-player menu pause state so an unchanged
 //     scene can be reused while HUD and menu presentation continue.
 // 53: bounded unreliable voice and engine-owned capture/playback interfaces.
-const int GAME_API_VERSION		= 53;
+// 54: gameImport_t carries the engine's idUsercmdGen so the draw pass can
+//     sample late-look input (in_presentationView).
+const int GAME_API_VERSION		= 54;
 
 struct gameImport_t {
 
@@ -752,6 +756,7 @@ struct gameImport_t {
 // RAVEN END
 
 	idVRSystem *				vrSystem;				// tracked head/controller poses (never NULL)
+	idUsercmdGen *				usercmdGen;				// late-look input sampling (draw pass only)
 };
 
 struct gameExport_t {

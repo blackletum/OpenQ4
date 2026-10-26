@@ -1,5 +1,7 @@
 # Stage-one baseline evidence
 
+> **Development status:** This document describes the current source tree and its evidence, not the contents of the latest available 0.13.2 package. The 0.14.0 release was withdrawn. See [release status](../user/release-status.md).
+
 18 October 2026; starting source `8c1a49ca7a033e163e271ef3787a4a9ba73f7479`.
 Completed implementation and final tested source:
 `7674acef91c2653e8c6153ae11e7b158c05e52ff`, rebased onto `80060ccd8`.
@@ -34,7 +36,7 @@ mean every renderer, optional feature or current package is qualified.
 | PC OpenXR GL, VR off by default | Implemented opt-in; Vulkan/EGL/Quest recovery is not active implementation | XR workstream, [recovery review](platform-recovery-review.md), VR-01/VR-02/VR-06 |
 | MP prediction / lag compensation | `src/mpgame/gamesys/SysCvar.cpp`: both `0`; enhanced modes remain optional | Multiplayer workstream, MP-01/MP-07; corrected [player guide](../user/multiplayer-networking.md) |
 | Pure assets, dual-stack network, rcon2 | Existing bounded implementations; proprietary game DLL and retail protocol 2.85 interoperability intentionally unsupported | Network/security workstream, capability matrix, MP-08 / REL-01 |
-| Retained interface | `ui_retained 1` in `Session_menu.cpp`; stock fallback remains `0`. Published 0.14.000 notes describe that release's earlier default | UI workstream, [register](ui/product-requirements.md), UI-01 through UI-11 |
+| Retained interface | `ui_retained 1` in `Session_menu.cpp`; stock fallback remains `0`. Withdrawn 0.14.000 notes describe that historical build's earlier default | UI workstream, [register](ui/product-requirements.md), UI-01 through UI-11 |
 | TAA / GPU skinning / dynamic resolution | `r_temporalAA 2`; GPU skinning and dynamic resolution remain opt-in. VR/crop/nearest exclusions remain | Rendering workstream, [temporal contract](temporal-presentation.md), REN-04/REN-05 |
 | Authored PBR and shared classic domains | Native authored PBR default-on does not promote shared classic domains; `r_rendererShared*` domains remain `0`; aggregate modern-lighting proven domains remains zero | Rendering workstream, capability matrix, REN-01/REN-02 |
 | Room reverb / audio distance | `s_useEAXReverb 1`; `DOOM_TO_METERS` and `METERS_TO_DOOM` both `1.0f`. The old metre-conversion diagnosis is withdrawn | Audio workstream, [audio contract](audio-modernization.md), AUD-01 through AUD-03 |

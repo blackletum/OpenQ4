@@ -1,6 +1,22 @@
-# Baseline refinements after 0.14.000
+# Baseline refinements (unreleased)
+
+> **Unreleased development notes.** 0.13.2 is the latest available release; 0.14.0 was withdrawn. These changes are not a new download. See [release status](../../user/release-status.md).
 
 ## Highlights
+
+- **Smoother cutscenes, cameras and third person on high-refresh screens.**
+  Cutscene and security cameras, third person and the death camera now move
+  between the game's 60 Hz ticks together with the world they show. Authored
+  camera cuts still cut cleanly.
+- **Ragdolls and flying debris stay smooth.** Falling bodies, shell casings,
+  barrel fragments and their smoke trails move smoothly above 60 FPS, and your
+  weapon's muzzle-flash light and flashlight stay on the gun while you turn.
+- **Smoother spectating.** While you spectate a multiplayer match, the players
+  you watch move smoothly above 60 FPS, including in third person and the death
+  camera. While you play, other players keep the timing that hit detection uses.
+- **Optional low-latency look.** Set `in_presentationView 1` to turn the view
+  with your mouse, gyro, look keys or stick on every drawn frame instead of up
+  to a tick later. Aiming, hit detection and the network are unchanged.
 
 - Command-line multiplayer connections now reach the server reliably when a
   long launch command requires the game to switch from single player.
@@ -10,11 +26,19 @@
   keep a bounded presentation phase.
 - OpenXR smooth turning now measures elapsed host time without rounding each
   frame to whole milliseconds.
+- `com_latencyFlash 1` draws a white bar on the first frame after you press
+  fire, so latency testers such as NVIDIA LDAT or OSLTT can measure
+  click-to-photon delay.
 - The multiplayer guide correctly identifies enhanced prediction and hitscan
   lag compensation as opt-in settings.
 
 ## Upgrade notes
 
+- The engine and the SP/MP game modules must come from the same build (game
+  API 54); a mismatched module refuses to load.
+- Low-latency look is off by default. It steps aside, leaving the view exactly as
+  before, while mouse smoothing or filtering is on, in menus and wheels,
+  vehicles, cutscenes, third person, VR and demo playback.
 - Replace the complete package, including the engine, matching SP/MP modules,
   renderers and bundled openQ4 data. Save formats, network timestamps,
   authoritative gameplay timing and existing controls are unchanged.
@@ -23,6 +47,56 @@
   gaps remain tracked in the development roadmap.
 
 ## Change log
+
+- Settings > Game Options > Controller now offers **Prompt Style**, to pick the
+  button symbols menus and the HUD show when a remapper hides your controller,
+  and **Swap Confirm and Back**, to choose which face button confirms in menus.
+  Both were console-only before; existing choices are kept.
+- The controller triggers, and Page Up, Page Down, Home and End on the keyboard,
+  now move through long menu lists such as Load Game a page at a time, and the
+  triggers adjust a selected slider in larger steps.
+- In Join Game, the server you have highlighted stays highlighted while the list
+  re-sorts or refreshes, instead of the highlight landing on another server.
+- The controller's Menu button now returns straight to the game from the pause
+  menu's Save, Load and Restart Level pages.
+- On a multiplayer server's Admin page, the Menu button applies your server
+  changes; with a dialog or list open, it closes that first.
+- With a controller, the Match and Admin pages of the multiplayer menu show
+  your triggers beside their sections, which the triggers step through.
+- The loading screen's load time uses your language's decimal mark and unit,
+  and the Demos page's headings and buttons are in capitals like the other
+  pages'.
+
+- Continue on the title screen and the Load Game page now show each save's
+  difficulty and total play time, and the pause menu adds your total play time
+  beside the time in the current mission. Objectives you completed on a map
+  stay listed after loading a save. Saves made with earlier versions show no
+  difficulty or play time; play time starts counting with a new game.
+
+- Menu prompt bars now say what Enter or the confirm button will do: LOAD on
+  the save you have chosen, DELETE, SAVE, PLAY or JOIN, in every supported
+  language. The prompt disappears when nothing you have selected can be used.
+
+- After Kane's stroggification, the pause menu's quit and exit questions and
+  the Save and Load pages' delete and overwrite questions match the Strogg
+  menus around them, their text translating from Strogg runes as they open.
+
+- Save and Load Game now offer date, name and location sorting, manual-save and
+  autosave filters, and Refresh List. Your selection follows the same save as the
+  list changes, and refreshing preserves a name you are typing.
+
+- Multiplayer friend and mute marks now clear when another player takes over
+  a vacated slot. The Players menu returns to your statistics if the selected
+  player leaves, and pending menu actions cannot follow their replacement.
+
+- Multiplayer player lists now scroll at a readable row height, with column
+  headings kept in view. Crowded rosters remain reachable in Welcome, Players
+  and the match summary, and kick-vote choices no longer stop after 16 entries.
+
+- The opt-in SYSTEM page now follows performance presets and settings changed
+  from the console while it is open. Unfinished edits are preserved with a
+  conflict message, and queued controls cannot overwrite newly changed values
+  or select an option that has become unavailable.
 
 - Fresh profiles keep Quake 4's stock crosshair hit feedback. Optional hit
   markers remain available in Game settings, and existing saved choices are kept.

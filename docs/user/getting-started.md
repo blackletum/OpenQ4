@@ -1,5 +1,7 @@
 # Getting Started with openQ4
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 This guide is for players who want to install openQ4 and start playing as quickly as possible.
 
 ## What You Need
@@ -92,8 +94,9 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 
 ### macOS
 
-- macOS support is a preview. Current packages are for Apple Silicon/arm64 Macs on macOS 11 or later. Players have run them on macOS 26, including the single-player campaign and multiplayer with sound, but nothing older than the current macOS has been tested. Intel Mac and universal2 packages are not published yet, and Rosetta is not a supported release target.
-- Release runs with Apple Developer ID signing and notarization credentials publish signed/notarized OpenGL and Metal bridge DMGs. Those credentials are not set up yet, so current releases publish clearly labeled `-unsigned.tar.gz` archives instead.
+- **Signed macOS download:** Schnapple provides a [signed and notarized openQ4 build through Mac Source Ports](https://www.macsourceports.com/game/quake4), packaged as Universal 2 for Apple Silicon and Intel Macs on macOS 11 or later. Visit the page for the download and installation instructions; your own Quake 4 game data is still required.
+- Our GitHub macOS packages remain a preview for Apple Silicon/arm64 Macs on macOS 11 or later. Players have run them on macOS 26, including the single-player campaign and multiplayer with sound, but nothing older than the current macOS has been tested. Our GitHub releases do not yet publish Intel Mac or universal2 packages, and Rosetta is not a supported release target. The package notes below describe those GitHub builds.
+- GitHub release runs with Apple Developer ID signing and notarization credentials publish signed/notarized OpenGL and Metal bridge DMGs. Those credentials are not set up yet, so our current GitHub releases publish clearly labeled `-unsigned.tar.gz` archives instead.
 - The Metal bridge package still uses openQ4's OpenGL renderer path; it is not a native Metal renderer.
 - Both macOS packages also carry openQ4's experimental Vulkan renderer. Apple ships no Vulkan driver, so on macOS it runs on top of MoltenVK, a Vulkan-on-Metal translation layer bundled inside the package. It is a translation layer, not a Metal renderer.
 - macOS packages bundle OpenAL Soft for audio; no Homebrew or separate audio install is required. Its LGPL notice and corresponding source archive are included inside `openQ4.app/Contents/Resources/licenses/openal-soft/`.
@@ -109,6 +112,13 @@ openQ4 needs the installed game's `q4base/` data. It does not read a GOG setup
 `.exe` or its `.bin` files directly. You can copy the complete `q4base/` folder
 from your own Windows installation, or extract a supported offline installer on
 the Mac using [innoextract](https://constexpr.org/innoextract/).
+
+For a graphical option, [Mac Source Ports Extractor](https://www.macsourceports.com/utility/extractor/)
+opens and extracts supported GOG installers without Terminal. Keep the `.exe`
+and its matching `.bin` files together, then extract the installer into a new
+folder. A player [confirmed this route for Quake 4](https://github.com/themuffinator/openQ4/issues/185#issuecomment-6253641976);
+the exact installer filename was not recorded, so this is not a guarantee for
+every installer version. The same `q4base/` placement instructions below apply.
 
 If you use Homebrew, its [innoextract package](https://formulae.brew.sh/formula/innoextract)
 can be installed with `brew install innoextract`. Keep the setup `.exe` and all

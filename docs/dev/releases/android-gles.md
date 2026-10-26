@@ -1,5 +1,7 @@
 # Android/GLES — integration and release notes
 
+> **Unreleased development notes.** 0.13.2 has no Android APK; the 0.14.0 release was withdrawn. See [release status](../../user/release-status.md).
+
 ## Highlights
 
 - **Experimental Android and OpenGL ES 3.0 support**, based on **[Emile Belanger (emileb)](https://github.com/emileb)'s original Android port and GLES renderer**. His contribution includes the SigmaTouch bridge, specialized material shaders, stencil shadows, ETC2/EAC texture compression, and mobile memory/loading improvements.

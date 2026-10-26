@@ -732,15 +732,23 @@ const std::map<std::string,std::size_t>& UI_SettingsStateSchema() {
 bool UI_SettingsRead(std::uint64_t owner, StateValues& values) {
     auto& service = Settings();
     if (!owner || !service.owners.contains(owner)) return false;
-    const auto& transaction = service.transaction;
+    auto& transaction = service.transaction;
     const bool own = transaction.Owner() == owner;
     auto phase = own ? transaction.Phase() : SettingsPhase::Closed;
     if (own && service.display.Stage()==SettingsDisplayStage::Recovery) phase=SettingsPhase::RecoveryRequired;
+    // Readback also precedes queued-control dispatch. Refresh before publishing
+    // so changed values invalidate old proposals and preserve local Number text
+    // through the runtime's existing conflict handling. Never rebase recovery.
+    SettingsResult refresh;
+    if (own && phase == SettingsPhase::Editing && !service.display.Active() &&
+        !service.device.StartupActive() && !service.device.RecoveryActive() && !service.closing && !service.abandon)
+        refresh = transaction.Refresh(owner);
     const bool dirty = own && transaction.Dirty();
     const auto result = service.results.find(owner);
-    const auto code = result == service.results.end() ? SettingsCode::Ok : result->second.code;
+    const auto code = refresh.code != SettingsCode::Ok ? refresh.code :
+        result == service.results.end() ? SettingsCode::Ok : result->second.code;
     bool invalidDraft = false, mixed = false;
-    const bool canApply = own && phase == SettingsPhase::Editing && dirty && !service.display.Active() &&
+    const bool canApply = own && phase == SettingsPhase::Editing && dirty && refresh.code == SettingsCode::Ok && !service.display.Active() &&
         Supported(service,owner,&invalidDraft,&mixed);
     StateValues candidate{{"settings.open",own},{"settings.dirty",dirty},
         {"settings.busy",(transaction.Owner() != 0 && !own) || (own && service.display.Active()) || service.device.StartupActive()},

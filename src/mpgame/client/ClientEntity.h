@@ -22,6 +22,10 @@ public:
 	virtual void		Think				( void );
 	virtual void		UpdatePresentationTransform	( int presentationTime );
 	virtual bool		HasPresentationAnimation	( int, int ) const { return false; }
+	// unbound client entities that move under their own physics (debris, brass,
+	// gibs) are drawn between tics from gameLocal.presentationClientEntities
+	virtual void		UpdatePresentationPose		( void ) {}
+	virtual void		RestoreAuthoritativePresentationPose( void ) {}
 	virtual idPhysics*	GetPhysics			( void ) const;
 	virtual bool		Collide				( const trace_t &collision, const idVec3 &velocity );
 
@@ -70,6 +74,7 @@ public:
 
 	idLinkList<rvClientEntity>	spawnNode;
 	idLinkList<rvClientEntity>	bindNode;
+	idLinkList<rvClientEntity>	presentationNode;	// draw-only; never saved
 
 	idDict						spawnArgs;
 

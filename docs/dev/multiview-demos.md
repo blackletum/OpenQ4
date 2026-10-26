@@ -227,6 +227,19 @@ multiplayer indices. This is part of the format boundary: checksums prove that
 bytes are unchanged, while structural validation proves they are safe and
 coherent enough to decode.
 
+The network-state start state is game-owned: each client record carries a
+`POWERUP_MAX`-bit powerup mask. That width grew from 16 to 18 bits when The
+Awakening's powerups were added (27 September 2026, without a schema bump), and
+the engine validator, which assumed 16, refused every later recording with two
+or more players ("invalid MVD multiplayer start-state client 4": client 1
+misread two bits early). The engine now accepts the width that parses as
+exactly the recorded player list (`MVD_StartStateMatchesPlayers`), and
+`idMultiplayerGame::ClientReadStartState` probes 18 then 16 bits before reading
+(`MP_StartStatePowerupBits`), so both generations of recordings play.
+`tools/tests/mvd_start_state_contract.py` executes both production checks for
+one to six players at each width, plus malformed start states, with
+single-reversal controls.
+
 Recorded map-state cvars are also treated as untrusted input. Only names
 currently registered with `CVAR_NETWORKSYNC` may be restored; an arbitrary
 recorded dictionary entry cannot set a local renderer, filesystem, console, or
@@ -279,16 +292,42 @@ The format-neutral console commands are:
 | `demoSeek <seconds>` | Seek to an absolute time from the demo start. |
 | `demoSkip <seconds>` | Seek by a signed relative interval. |
 | `demoStep` | Pause and advance one frame. |
-| `demoFollow` | Follow the next player when the active backend is MVD. |
+| `demoFollow [next\|prev\|free\|<slot>\|<name>]` | Follow the next or previous eligible player, a recorded client slot, or a player by name when the active backend is MVD. No argument keeps "next". |
 | `demoFreeRoam` | Enter free camera when the active backend is MVD. |
 | `demoStop` | Stop the active demo. |
 
 The MVD-specific interface remains available:
 
-- `recordMVD [name]`, `stopMVD`, `playMVD <name>`, and `mvdInfo <name>`;
+- `recordMVD [name]`, `stopMVD`, `playMVD <name>`, `mvdInfo <name>` and
+  `mvdRecover <name.mvd.part>`;
 - `mvdPause [0|1]`, `mvdSeek <seconds>`, `mvdSkip <seconds>`, and
   `mvdSpeed <0.05-16>`;
-- `mvdStep [frames]`, `mvdFollowNext`, and `mvdFreeRoam`.
+- `mvdStep [frames]`, `mvdFollow [next|prev|free|<slot>|<name>]`,
+  `mvdFollowNext`, `mvdFollowPrev` and `mvdFreeRoam`;
+- `mvdStatus`, which also reports an active recording
+  (`MVD_RECORDING path= staged= bytes= elapsed= snapshots= reliable= records=`)
+  and the last recording result (`MVD_LAST_RESULT state= reason= final= partial=`).
+
+`DEMO_FOLLOW_PREV` walks the same eligibility test as `DEMO_FOLLOW_NEXT`
+backwards (`idGameLocal::SetDemoFollowClient`). A direct slot or name first
+requires the slot to hold a recorded player (`GetUserInfo`); the game's existing
+camera revalidation still releases a target the recording does not allow. Name
+lookup is an exact colour/case-insensitive match, else the single containing
+name; several containing names are reported as ambiguous. The overlay names the
+followed player and falls back to its slot number.
+
+`mvdRecover` salvages an interrupted recording. It requires an idle recorder,
+copies the source header and every complete, checksum-valid record up to the
+first truncated or corrupt one into a staged stream, discards any stale index or
+end record from a failed finalize, rebuilds the timeline index exactly as
+`CaptureServerFrame` would, appends the end record `StopRecording` would have
+written at that point and publishes `<stem>_recovered.mvd` (or the next free
+numbered name). The source is never modified, no existing demo is overwritten,
+a stream without a complete snapshot is refused, and a failed recovery removes
+its staged output. `tools/tests/mvd_recovery_contract.py` executes the
+production reader, writer and `Recover` at every cut point of a synthetic
+recording plus corrupt, stale-index and damaged-header cases, with
+single-reversal controls.
 
 Attack still switches to the next active player and jump leaves follow mode
 for free flight. Quake 4-compatible aliases are `recordNetDemo`,
@@ -316,7 +355,7 @@ Relevant MVD cvars are:
 | Retail Quake 4 render `.demo` | No | No | No | Recorded camera only in the original engine | Detected as legacy; the byte-oriented retail stream needs a separate decoder. |
 | Retail Quake 4 `.netdemo` | No | No | No | Depends on original client/server recording | `NDMO` metadata is shown, but retail packet protocols are not decoded. |
 | openQ4 `.cdemo` | Best effort | No | No | Simulation-defined | Unversioned developer artifact; safe only with the matching engine/game build. |
-| `.mvd.part`, `.part`, or `.ucmd` | No | No | No | None | Shown as incomplete rather than a healthy recording. |
+| `.mvd.part`, `.part`, or `.ucmd` | No | No | No | None | Shown as incomplete rather than a healthy recording; `mvdRecover` publishes the complete prefix of a `.mvd.part` as a new demo. |
 
 Render-demo wrapper compatibility includes the current `openQ4 RDEMO` and
 historical `OpenQ4 RDEMO` spellings. `Quake4 RDEMO` is ambiguous: early
@@ -377,8 +416,11 @@ from unfinished work instead of treating every historical bullet as outstanding.
 - Server-side list, retention, quota, and download policy.
 - Structured markers for match transitions, timeouts, scores, and admin notes.
 - A recovery command that scans a `.part`, verifies complete records, writes a
-  recovery end marker to a new file, and never modifies the source.
+  recovery end marker to a new file, and never modifies the source. Implemented
+  23 October 2026 as `mvdRecover` (see the operator interface above).
 - Console/Rcon status reporting and explicit reason codes for automatic stops.
+  `mvdStatus` now reports the active recording and the last result's state,
+  reason and paths; automatic-stop reason codes were already in the result ABI.
 
 ### Phase 3: competitive playback UX — foundation complete
 

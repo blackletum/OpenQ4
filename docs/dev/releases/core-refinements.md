@@ -1,5 +1,7 @@
 # Core runtime refinements — pending release notes
 
+> **Unreleased development notes.** 0.13.2 is the latest available release; 0.14.0 was withdrawn. These changes are not a new download. See [release status](../../user/release-status.md).
+
 ## Highlights
 
 - **More reliable AI tactical searches.** Nearby areas are considered in the

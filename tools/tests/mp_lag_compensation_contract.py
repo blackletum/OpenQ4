@@ -23,6 +23,11 @@ Three agreements are pinned here.
     away from, or onto the previous occupant of a recycled client slot, aims a shot at a place
     nobody could have been.
 
+  * THE REWIND AND THE CLIENT'S REMOTE EXTRAPOLATION MUST NOT STACK.  A client in
+    net_mpPredictMode 1 draws remote players forward of its last snapshot; it advertises that
+    budget (net_mpRemoteExtrapolation) and the server takes it off the rewind, bounded by the lead
+    the server already trusts.  tools/tests/mp_lag_compensation_state.py executes the result.
+
 The multiplayer tree is the only one that matters here: src/game is game_sp and never runs
 multiplayer.  Its copy of this code is dead, and is checked only for defaults that would read as a
 disagreement between the forks.
@@ -87,7 +92,7 @@ def validate_estimator() -> None:
     game_local = read(GAME_LIBS_ROOT, "src/mpgame/Game_local.cpp")
     estimator = function_body(
         game_local,
-        "bool idGameLocal::ComputeMPLagCompensationRewind(",
+        "void idGameLocal::EstimateMPLagCompensation(",
         "MP lag compensation estimator",
     )
     label = "MP lag compensation estimator"
@@ -105,19 +110,78 @@ def validate_estimator() -> None:
     require(estimator, "99999", label)
     require(estimator, "idMath::ClampInt( 0, 1000, reported )", label)
     require(estimator, "net_mpLagCompSlackMS", label)
-    require(estimator, "RemoteExtrapolationMS()", label)
-    require(estimator, "net_mpLagCompMaxMS", label)
+    require(estimator, "RemoteExtrapolationMS( clientNum, reported )", label)
+    require(estimator, "Min( claim, ceiling ) - estimate.extrapolationMS", label)
+
+    rewinder = function_body(
+        game_local,
+        "bool idGameLocal::ComputeMPLagCompensationRewind(",
+        "MP lag compensation rewind",
+    )
+    require(rewinder, "EstimateMPLagCompensation( clientNum, used );", "MP lag compensation rewind")
+    require(rewinder, "used.poseAgeMS + net_mpLagCompBiasMS.GetInteger()", "MP lag compensation rewind")
+    require(rewinder, "net_mpLagCompMaxMS", "MP lag compensation rewind")
+    reject(rewinder, "rewindEstimateMS = time - shooter->usercmd.gameTime", "MP lag compensation rewind")
 
     # Lag compensation and client-side remote extrapolation correct the same error from opposite
     # ends.  Applying both at full strength inverts the shooter's lead rather than removing it, so
-    # the coupling has to stay visible in the code.
+    # whatever the shooter advertises it extrapolates comes off the rewind - bounded by the lead the
+    # server already trusts, so the advertisement can only ever shorten a rewind.
     coupling = function_body(
         game_local,
         "int idGameLocal::RemoteExtrapolationMS(",
         "remote extrapolation coupling",
     )
-    require(coupling, "return 0;", "remote extrapolation coupling")
-    require(game_local, "net_mpPredictMode", "remote extrapolation coupling rationale")
+    require(coupling, "Min( leadMS, AdvertisedRemoteExtrapolationTics( clientNum ) * GetMSec() )", "remote extrapolation coupling")
+    advertised = function_body(
+        game_local,
+        "int idGameLocal::AdvertisedRemoteExtrapolationTics(",
+        "advertised remote extrapolation",
+    )
+    require(
+        advertised,
+        'idNumericString::ParseUnsignedBounded( userInfo[ clientNum ].GetString( "net_mpRemoteExtrapolation", "0" ), 64, tics )',
+        "advertised remote extrapolation is bounded client-authored text",
+    )
+
+    # The client keeps its advertisement equal to what it simulates, from game init and every frame.
+    update = function_body(
+        game_local,
+        "void idGameLocal::UpdateAdvertisedRemoteExtrapolation(",
+        "advertised remote extrapolation update",
+    )
+    require(update, "net_mpPredictMode.GetBool()", "advertised remote extrapolation update")
+    require(update, "net_mpPredictMaxFrames.GetInteger()", "advertised remote extrapolation update")
+    init = function_body(game_local, "void idGameLocal::Init( void )", "MP game init")
+    require(init, "UpdateAdvertisedRemoteExtrapolation();", "MP game init advertises before connecting")
+    network = read(GAME_LIBS_ROOT, "src/mpgame/Game_network.cpp")
+    client_run = function_body(network, "void idGameLocal::ClientRun( void )", "MP client frame")
+    require(client_run, "UpdateAdvertisedRemoteExtrapolation();", "MP client frame keeps the advertisement current")
+
+    mp_cvar = read(GAME_LIBS_ROOT, "src/mpgame/gamesys/SysCvar.cpp")
+    advert_line = next(line for line in mp_cvar.splitlines() if "idCVar net_mpRemoteExtrapolation(" in line)
+    require(advert_line, "CVAR_USERINFO | CVAR_ROM", "advertised extrapolation cvar")
+    # The prediction cvars themselves must not be user info: a server echoes user info back into
+    # the client's cvars, and must never be able to force per-frame cost onto a client.
+    for name in ("idCVar net_mpPredictMode(", "idCVar net_mpPredictMaxFrames("):
+        line = next(line for line in mp_cvar.splitlines() if name in line)
+        reject(line, "CVAR_USERINFO", f"{name} stays client-local")
+
+    commands = read(GAME_LIBS_ROOT, "src/mpgame/gamesys/SysCmds.cpp")
+    require(commands, 'cmdSystem->AddCommand( "lagCompStatus", Cmd_LagCompStatus_f', "lag compensation status command")
+    status = function_body(commands, "static void Cmd_LagCompStatus_f(", "lag compensation status command")
+    require(status, "gameLocal.EstimateMPLagCompensation( clientNum, estimate );", "lag compensation status command")
+
+    player = read(GAME_LIBS_ROOT, "src/mpgame/Player.cpp")
+    require(player, "gameLocal.lastChainReplayTics - remoteChainResimulatedTics", "client-side displayed pose age")
+    # The budget counter is reset by PredictionErrorDecay on every presented frame, so the
+    # diagnostic needs its own per-chain count, reset only when the snapshot is read.
+    require(player, "remoteChainResimulatedTics++;", "client-side displayed pose age")
+    require(network, "lastChainReplayTics = clientReplayTics;", "client replay chain accounting")
+
+    state = ROOT / "tools/tests/mp_lag_compensation_state.py"
+    if not state.is_file():
+        raise AssertionError("the executable lag compensation state fixture is missing")
 
 
 def validate_hit_is_resolved_in_the_present() -> None:

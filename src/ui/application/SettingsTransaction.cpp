@@ -136,6 +136,36 @@ SettingsResult SettingsTransaction::Begin(std::uint64_t requestedOwner) {
 	return Result(SettingsCode::Ok);
 }
 
+SettingsResult SettingsTransaction::Refresh(std::uint64_t requestedOwner) {
+	if (busy) return RejectReentry();
+	Operation operation(busy);
+	// Do not use Access/Result here: polling must not erase an action's error.
+	if (!requestedOwner) return {SettingsCode::Invalid,"A settings owner must be nonzero"};
+	if (phase == SettingsPhase::Closed) return {SettingsCode::NotOpen,"No settings session is open"};
+	if (requestedOwner != owner) return {SettingsCode::Busy,"Another view owns the settings session"};
+	if (phase != SettingsPhase::Editing || AsyncPending())
+		return {SettingsCode::Busy,"Settings are awaiting confirmation or recovery"};
+	StateValues current; std::string error;
+	if (!Read(current,error)) {
+		if (error.size() > 2048) error.resize(2048);
+		return {SettingsCode::Invalid,std::move(error)};
+	}
+	if (SettingsValuesEqual(current,baseline)) return {};
+	if (Dirty()) return {SettingsCode::Conflict,"Settings changed outside this session; discard or reopen before applying"};
+	// Live custom values need not meet the editor's ranges. As in Begin, retain
+	// their exact typed values. Prepare both maps and the return value before
+	// publishing so allocation failure cannot leave half a refreshed snapshot.
+	StateValues refreshedDraft = current;
+	struct Publish {
+		StateValues& baseline; StateValues& draft; StateValues& current; StateValues& refreshed;
+		int exceptions = std::uncaught_exceptions();
+		~Publish() noexcept {
+			if (std::uncaught_exceptions() == exceptions) { baseline.swap(current); draft.swap(refreshed); }
+		}
+	} publish{baseline,draft,current,refreshedDraft};
+	return {};
+}
+
 SettingsResult SettingsTransaction::RejectReentry() {
  if(generatedReentry)*generatedReentry=true;
  return Reentrant();

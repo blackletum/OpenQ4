@@ -725,6 +725,51 @@ game header (ETC2 capability field and clear alpha). The clear command now
 forwards its alpha argument. Engine and both renderer modules must be updated
 together. The game scene-format integration requires the rebuilt game modules.
 
+## Domain changes, settling and admission counts (23 October 2026, VK-05)
+
+Complete-scene admission decides per view, and a view's content can flip the
+decision from one frame to the next. Three consequences of a flip are now
+handled explicitly:
+
+- **Exposure.** Linear radiance and display-referred values meter differently,
+  so each domain keeps its own adaptation. A change of domain alone drops the
+  samples in flight (a new generation), saves the old domain's state and
+  resumes the new domain's state when it has one, instead of restarting at
+  exposure 1 on every flip. A stale saved state still snaps to its first new
+  sample, as any adaptation older than a second does. Any other reset trigger
+  (size, format, samples, world or map, restart, camera cut) forgets both.
+- **Temporal history.** A domain change invalidates temporal history, so TAA
+  never blends frames tone-mapped by two different curves.
+- **Late failures.** A view admitted to the linear scene that never reaches its
+  tone-map output, because a scene-effects step returned early, is now settled
+  as `output` and warns once. Before, it stayed linear for the GUI and later
+  views of the frame. A combine failure returns to the view's own target and
+  releases the prepared output, instead of leaving the accumulation bound for the
+  rest of the frame. The view is still abandoned, and the warning now prints
+  once.
+
+`rendererVulkanHDRInfo` adds the number of domain changes, the main view's
+outcome (previously the reported reason was whichever 3D view ran last) and a
+count of every admission outcome since the render world changed. Outcomes are
+the decline reasons above, plus `accumulating`, `complete` and `output`; the
+table is bounded and overflow is counted.
+
+On stock airdefense1 with the laboratory linear scene requested, the counts
+show why nothing is admitted: 181 main views declined for `ambient-stage` and
+181 subviews for `subview`, with no domain change. Before, the single reported
+reason belonged to whichever of the two views ran last.
+
+The prepared-post self-test asserts the new contract: the first domain change
+after a reset restarts adaptation, the change back resumes the saved linear
+exposure, and both drop old samples and invalidate history. All Vulkan HDR,
+render-target and temporal GPU self-tests pass with validation enabled and no
+validation messages.
+
+Two survey suggestions were not taken. Admitting classic ambient blends other
+than replace or add would scale the PBR attachment too: a classic modulate decal
+over a PBR pixel writes zero into it under the same blend state. Admitting the
+cel world ink needs a linear-scene fixture first. Both stay declined.
+
 ## Remaining acceptance
 
 - Extend the bounded HDR scene path to the explicitly declined material,

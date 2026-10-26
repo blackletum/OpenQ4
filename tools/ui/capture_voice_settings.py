@@ -3,7 +3,9 @@
 
 SDL's explicitly selected dummy input supplies silence, never a physical mic.
 OpenAL renders local-test playback to a private WAV. Semantic GUI commands
-exercise the real settings adapter without host keyboard or mouse input.
+exercise the real settings adapter without host keyboard or mouse input. A
+simulated output loss during the local test checks that voice playback stops
+with the output and resumes when it returns.
 """
 import argparse
 import json
@@ -46,6 +48,9 @@ def main():
              *probe('OFF'), 'screenshot "screenshots/voice-off.tga"',
              *toggle('voice-capture'), *probe('READY'), 'screenshot "screenshots/voice-ready.tga"',
              *toggle('voice-test'), 'waitMsec 800', *probe('TEST'), 'screenshot "screenshots/voice-test.tga"',
+             # A lost output stops voice playback with every other source; the test carries on.
+             *probe('BEFORE_OUTAGE'), 's_testDeviceInterruption 1000', 'waitMsec 500', *probe('OUTAGE'),
+             'waitMsec 1500', *probe('RETURNED'),
              'openq4_retainedGui event tab_settings', 'waitMsec 400', *probe('LEFT'),
              'openq4_retainedGui event tab_voice', 'waitMsec 300', *toggle('voice-test'),
              'set s_voiceChatCapture 0', 'waitMsec 400', *probe('REVOKED'),
@@ -65,11 +70,20 @@ def main():
         status = re.search(r'^VOICE_STATUS (.*)', section, re.M)
         if status:
             phases[name] = {key: int(value) for key, value in re.findall(r'(\w+)=(\d+)', status[1])}
+            phases[name]['playing_sources'] = len(re.findall(r'^VOICE_PLAYBACK client=-?\d+ generation=\d+ playing=1 ', section, re.M))
     checks = {
         'complete': result['complete'] and result['returncode'] == 0 and not result['errors'],
         'no_automatic_capture': phases.get('OFF', {}).get('capture_opens') == 0,
         'consent_does_not_record': phases.get('READY', {}).get('capture_opens') == 0 and phases.get('READY', {}).get('status') == 2,
         'dummy_callback_and_playback': phases.get('TEST', {}).get('recording') == 1 and phases['TEST']['captured'] > 10 and phases['TEST']['played'] > 10,
+        # During the outage frames are dropped, none played; afterwards playback resumes.
+        # (The dummy input delivers frames in bursts, so a source is often idle between
+        # them; playing_sources is reported, the frame counters are the check.)
+        'output_loss_stops_playback': 'played' in phases.get('OUTAGE', {}) and
+            phases['OUTAGE']['played'] == phases.get('BEFORE_OUTAGE', {}).get('played') and
+            phases['OUTAGE'].get('playback_drops', 0) > phases.get('BEFORE_OUTAGE', {}).get('playback_drops', 0),
+        'playback_resumes_after_output_loss': phases.get('RETURNED', {}).get('played', 0) > phases.get('OUTAGE', {}).get('played', 0) and
+            phases.get('RETURNED', {}).get('recording') == 1,
         'only_dummy_input': 'VOICE_CAPTURE_DRIVER dummy' in log and re.search(r'VOICE_CAPTURE_DRIVER (?!dummy)', log) is None,
         'test_stops_on_tab_exit': phases.get('LEFT', {}).get('recording') == 0 and phases.get('LEFT', {}).get('status') == 2,
         'consent_revocation_closes': phases.get('REVOKED', {}).get('recording') == 0 and phases.get('REVOKED', {}).get('status') == 1,

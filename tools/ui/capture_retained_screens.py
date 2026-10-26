@@ -99,6 +99,23 @@ SCENARIOS = {
             f'screenshot "screenshots/mpcard-prompts-{name}.tga"')],
         'set in_swapConfirmBack 0', *prompt_style(0),
     ]),
+    # The triggers' glyphs at the trailing end of the Match and Admin pages'
+    # section strips: none for the keyboard, then each controller family's,
+    # and the triggers stepping the Match page's sections.
+    'mpcard-triggers': ('mp:mp/q4dm1', [
+        'openq4_assertMenuActivation 4000 game', 'waitMsec 2500', 'ui_retainedStatus',
+        'openq4_retainedGui event tab_match', 'waitMsec 800',
+        *[step for style, name in PROMPT_STYLES for step in (
+            *prompt_style(style), 'waitMsec 500',
+            'openq4_retainedGui inspect "match-triggers"',
+            *([] if name == 'keyboard' else [f'openq4_retainedGui inspect "match-triggers-lt-{name}"',
+                                             f'openq4_retainedGui inspect "match-triggers-rt-{name}"']),
+            f'screenshot "screenshots/mpcard-triggers-{name}.tga"')],
+        *prompt_style(1), 'openq4_retainedGui event onSectionNext', 'waitMsec 500',
+        'screenshot "screenshots/mpcard-triggers-next.tga"',
+        'openq4_retainedGui event tab_admin', 'waitMsec 800', 'openq4_retainedGui inspect "admin-triggers-rt-xbox"',
+        'screenshot "screenshots/mpcard-triggers-admin.tga"', *prompt_style(0),
+    ]),
     # The Escape card's Admin page on a listen server, whose host is the
     # admin: the players (two bots), a bot chosen and kicked, View ban list,
     # the Server section with a frag limit drafted and applied, and the
@@ -127,6 +144,35 @@ SCENARIOS = {
         'openq4_retainedGui number begin "admin-command"', 'openq4_retainedGui number input "admin-command" "serverInfo"',
         'openq4_retainedGui number commit "admin-command"', 'waitMsec 1000', 'openq4_retainedGui inspect "admin-console-0"',
         'openq4_retainedGui inspect "admin-console-11"', 'screenshot "screenshots/mpadmin-console.tga"',
+    ]),
+    # The Menu button on the Admin page (section 13.5): with a frag limit
+    # drafted on the Server section it presses Apply changes, which applies it
+    # and closes the card; reopened on the Players section it closes the card.
+    'mpadmin-menu': ('mp:mp/q4dm1', [
+        'openq4_assertMenuActivation 4000 game', 'waitMsec 2500', 'si_fragLimit', 'ui_retainedStatus',
+        'openq4_retainedGui event tab_admin', 'waitMsec 600',
+        'openq4_retainedGui event admin_section_server', 'waitMsec 400', 'openq4_retainedGui focus "admin-row-fraglimit"',
+        *[step for _ in range(3) for step in ('openq4_retainedGui menu right 1', 'openq4_retainedGui menu right 0', 'waitMsec 150')],
+        'waitMsec 400', 'openq4_retainedGui inspect "admin-row-fraglimit-value"', 'openq4_retainedGui inspect "admin-apply"',
+        'screenshot "screenshots/mpadmin-menu-pending.tga"',
+        'openq4_retainedGui event onMenuButton', 'waitMsec 2000', 'si_fragLimit', 'ui_retainedStatus',
+        'screenshot "screenshots/mpadmin-menu-applied.tga"',
+        'openq4_assertMenuActivation 4000 game', 'waitMsec 1500', 'openq4_retainedGui event tab_admin', 'waitMsec 400',
+        'openq4_retainedGui event admin_section_players', 'waitMsec 400', 'openq4_retainedGui inspect "admin-apply"',
+        'openq4_retainedGui event onMenuButton', 'waitMsec 1200', 'ui_retainedStatus', 'screenshot "screenshots/mpadmin-menu-closed.tga"',
+    ]),
+    # The Menu button's glyph at the end of the Admin page's Apply changes
+    # plate, with a frag limit drafted: none for the keyboard, then each
+    # controller family's.
+    'mpadmin-menu-glyph': ('mp:mp/q4dm1', [
+        'openq4_assertMenuActivation 4000 game', 'waitMsec 2500', 'openq4_retainedGui event tab_admin', 'waitMsec 600',
+        'openq4_retainedGui event admin_section_server', 'waitMsec 400', 'openq4_retainedGui focus "admin-row-fraglimit"',
+        'openq4_retainedGui menu right 1', 'openq4_retainedGui menu right 0', 'waitMsec 600',
+        *[step for style, name in PROMPT_STYLES for step in (
+            *prompt_style(style), 'waitMsec 500', 'openq4_retainedGui inspect "admin-apply-menu"',
+            *([] if name == 'keyboard' else [f'openq4_retainedGui inspect "admin-apply-menu-{name}"']),
+            f'screenshot "screenshots/mpadmin-menu-glyph-{name}.tga"')],
+        *prompt_style(0),
     ]),
     # The Admin page from a client of a dedicated server (SCENARIO_SERVERS):
     # the password first; a wrong one is refused, the server's own makes the
@@ -195,6 +241,112 @@ SCENARIOS = {
         'openq4_retainedGui focus nav_resume', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
         'waitMsec 100', 'ui_retainedStatus', 'screenshot "screenshots/pause-strogg-releasing.tga"',
         'waitMsec 700', 'ui_retainedStatus', 'screenshot "screenshots/pause-strogg-resumed.tga"',
+    ]),
+    # The prompt bar names what Accept does (section 13.4): on LOAD GAME's
+    # page LOAD on the chosen save, SELECT on another and DELETE on DELETE
+    # GAME; on SAVE GAME's page SELECT on a save, then SAVE once it is chosen.
+    'prompt-verbs': ('game/airdefense1', [
+        'waitMsec 1000', 'saveGame "Alpha"', 'waitMsec 1500', 'saveGame "Bravo"', 'waitMsec 1500',
+        'openq4_assertMenuActivation 10000', 'waitMsec 1800', 'ui_retainedStatus',
+        'openq4_retainedGui focus nav_loadgame', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 1100', 'ui_retainedStatus', 'openq4_retainedGui report',
+        'openq4_retainedGui focus "row-0"', 'waitMsec 300', 'openq4_retainedGui report', 'screenshot "screenshots/prompt-load-chosen.tga"',
+        'openq4_retainedGui focus "row-1"', 'waitMsec 300', 'openq4_retainedGui report', 'screenshot "screenshots/prompt-load-other.tga"',
+        'openq4_retainedGui focus load_delete', 'waitMsec 300', 'openq4_retainedGui report', 'screenshot "screenshots/prompt-load-delete.tga"',
+        'openq4_retainedGui focus load_back', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0', 'waitMsec 1300',
+        'openq4_retainedGui focus nav_savegame', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 1100', 'ui_retainedStatus',
+        'openq4_retainedGui focus "row-1"', 'waitMsec 300', 'openq4_retainedGui report', 'screenshot "screenshots/prompt-save-other.tga"',
+        'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0', 'waitMsec 400',
+        'openq4_retainedGui report', 'screenshot "screenshots/prompt-save-chosen.tga"',
+        'openq4_retainedGui focus save_back', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0', 'waitMsec 1300',
+        'openq4_retainedGui focus nav_resume', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 800', 'ui_retainedStatus', 'screenshot "screenshots/prompt-resumed.tga"',
+    ]),
+    # A save names the run's difficulty and play time: a new game on
+    # airdefense1 completes its first objective, saves and loads that save
+    # (the completed objective survives), then leaves for airdefense2, whose
+    # pause adds the run's total to the mission time; a save there names both
+    # in CONTINUE's detail and on the Load Game page. The scenario runs on
+    # through the load and the level change, so it clears its own re-run.
+    'save-details': ('game/airdefense1', [
+        'set g_autoExecAfterMapLoad ""',
+        'trigger objectiveIntro', 'waitMsec 500', 'trigger objectiveMedic', 'waitMsec 500', 'trigger completeObjectiveIntro',
+        'waitMsec 4000', 'saveGame "Bunker"', 'waitMsec 1500', 'loadGame "Bunker"', 'waitMsec 4000',
+        'openq4_assertMenuActivation 10000', 'waitMsec 1500', 'ui_retainedStatus', 'screenshot "screenshots/details-pause-loaded.tga"',
+        'openq4_retainedGui focus nav_resume', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0', 'waitMsec 800',
+        'trigger target_endlevel_2', 'waitMsec 25000',
+        'openq4_assertMenuActivation 10000', 'waitMsec 1500', 'ui_retainedStatus', 'screenshot "screenshots/details-pause-next.tga"',
+        'openq4_retainedGui focus nav_resume', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0', 'waitMsec 800',
+        'saveGame "Trenches"', 'waitMsec 1500', 'disconnect', 'waitMsec 4000', 'ui_retainedStatus', 'openq4_retainedGui report',
+        'screenshot "screenshots/details-title.tga"',
+        'openq4_retainedGui focus nav_loadgame', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 1300', 'ui_retainedStatus', 'openq4_retainedGui report', 'screenshot "screenshots/details-load.tga"',
+        'openq4_retainedGui focus "row-2"', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0', 'waitMsec 400',
+        'openq4_retainedGui report', 'screenshot "screenshots/details-load-older.tga"',
+    ]),
+    # The triggers page lists (section 13.5): twenty saves, then Load Game from
+    # the title, focus paging a visible page down twice, to the list's end and
+    # back to its start, as PageDown, End and Home (the triggers' inputs) do.
+    'list-paging': ('game/airdefense1', ['waitMsec 1000'] + [command for index in range(20) for command in (
+        f'saveGame page{index:02d}', 'waitMsec 150')] + [
+        'disconnect', 'waitMsec 6000', 'openq4_retainedGui focus nav_loadgame', 'openq4_retainedGui menu accept 1',
+        'openq4_retainedGui menu accept 0', 'waitMsec 2500', 'openq4_retainedGui focus "row-0"', 'waitMsec 400',
+        'screenshot "screenshots/paging-start.tga"',
+        'openq4_retainedGui menu pageDown 1', 'openq4_retainedGui menu pageDown 0', 'waitMsec 500', 'openq4_retainedGui report',
+        'screenshot "screenshots/paging-down.tga"',
+        'openq4_retainedGui menu pageDown 1', 'openq4_retainedGui menu pageDown 0', 'waitMsec 500', 'openq4_retainedGui report',
+        'screenshot "screenshots/paging-down2.tga"',
+        'openq4_retainedGui menu end 1', 'openq4_retainedGui menu end 0', 'waitMsec 500', 'openq4_retainedGui report',
+        'screenshot "screenshots/paging-end.tga"',
+        'openq4_retainedGui menu home 1', 'openq4_retainedGui menu home 0', 'waitMsec 500', 'openq4_retainedGui report',
+        'screenshot "screenshots/paging-home.tga"',
+    ]),
+    # The Menu button closes the menus and resumes play from the pause's pages
+    # (section 13.5): the Load and then the Save Game page, each left by their
+    # onMenuButton, which the controller's Menu button runs.
+    'menu-resume': ('game/airdefense1', [
+        'waitMsec 1000', 'saveGame "Menu"', 'waitMsec 1500', 'openq4_assertMenuActivation 10000', 'waitMsec 1800',
+        'openq4_retainedGui focus nav_loadgame', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 1300', 'ui_retainedStatus', 'screenshot "screenshots/menu-load.tga"',
+        'openq4_retainedGui event onMenuButton', 'waitMsec 900', 'ui_retainedStatus', 'screenshot "screenshots/menu-load-resumed.tga"',
+        'openq4_assertMenuActivation 10000', 'waitMsec 1800',
+        'openq4_retainedGui focus nav_savegame', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 1300', 'ui_retainedStatus', 'screenshot "screenshots/menu-save.tga"',
+        'openq4_retainedGui event onMenuButton', 'waitMsec 900', 'ui_retainedStatus', 'screenshot "screenshots/menu-save-resumed.tga"',
+    ]),
+    # Settings > Game Options > Controller's Prompt Style and Swap Confirm and
+    # Back rows in the classic in-game menu (SCENARIO_CVARS turns the retained
+    # screens off): scrolled to them, their values driven from the console,
+    # then the page's last step, which the two rows lengthened.
+    'settings-controller': ('game/airdefense1', [
+        'openq4_assertMenuActivation 10000', 'waitMsec 1500', 'GuiEvent fromMp_toGameoptions', 'waitMsec 2000',
+        'openq4_guiSet gui::gui_set_game_scroll 33', 'waitMsec 1000', 'screenshot "screenshots/settings-controller.tga"',
+        'set in_promptStyle 2', 'set in_swapConfirmBack 2', 'waitMsec 800', 'in_promptStyle', 'in_swapConfirmBack',
+        'screenshot "screenshots/settings-controller-set.tga"', 'set in_promptStyle 0', 'set in_swapConfirmBack 0',
+        'openq4_guiSet gui::gui_set_game_scroll 75', 'waitMsec 1000', 'screenshot "screenshots/settings-controller-end.tga"',
+    ]),
+    # The Strogg pause's confirmations ask in its family: each label arrives
+    # in runes as the dialog's contents show and translates. QUIT TO MENU is
+    # taken mid-translation and settled, with YES focused, then EXIT, and SAVE
+    # GAME with an existing save's name asks to overwrite it; NO keeps it.
+    'confirm-strogg': ('game/recomp', [
+        'waitMsec 1000', 'saveGame "Strogg door"', 'waitMsec 1500',
+        'openq4_assertMenuActivation 10000', 'waitMsec 1800', 'ui_retainedStatus',
+        'openq4_retainedGui event quitModalShow', 'waitMsec 260', 'screenshot "screenshots/confirm-strogg-quit-runes.tga"',
+        'waitMsec 700', 'openq4_retainedGui report', 'screenshot "screenshots/confirm-strogg-quit.tga"',
+        'openq4_retainedGui focus quitModal_yes', 'waitMsec 300', 'screenshot "screenshots/confirm-strogg-quit-yes.tga"',
+        'openq4_retainedGui event quitModalHide', 'waitMsec 700',
+        'openq4_retainedGui event exitModalShow', 'waitMsec 1000', 'screenshot "screenshots/confirm-strogg-exit.tga"',
+        'openq4_retainedGui event exitModalHide', 'waitMsec 700',
+        'openq4_retainedGui focus nav_savegame', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 1100', 'ui_retainedStatus', 'openq4_retainedGui focus "save-name"', 'openq4_retainedGui number begin "save-name"',
+        'openq4_retainedGui number input "save-name" "Strogg door"', 'openq4_retainedGui number commit "save-name"',
+        'waitMsec 1000', 'openq4_retainedGui report', 'screenshot "screenshots/confirm-strogg-overwrite.tga"',
+        'openq4_retainedGui focus overwriteModal_no', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 700', 'openq4_retainedGui focus save_back', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 1300', 'openq4_retainedGui focus nav_resume', 'openq4_retainedGui menu accept 1', 'openq4_retainedGui menu accept 0',
+        'waitMsec 800', 'ui_retainedStatus', 'screenshot "screenshots/confirm-strogg-resumed.tga"',
     ]),
     # The Strogg pause's pages: SAVE GAME, LOAD GAME and RESTART LEVEL hand
     # off to the Strogg family's pages as the Marine pause's do to theirs. A
@@ -322,6 +474,22 @@ SCENARIOS = {
         'waitMsec 1500', 'openq4_system report', 'openq4_retainedGui report', 'ui_retainedStatus',
         'screenshot "screenshots/system-optin.tga"',
         'openq4_system back', 'waitMsec 1000', 'openq4_system report',
+    ]),
+    # Opted into, the Menu button on the SYSTEM page (section 13.5): with the
+    # brightness drafted it applies the change; with another drafted, Back asks
+    # to discard and Menu there continues editing, as Back does.
+    'system-menu-apply': (None, [
+        'waitMsec 4000', 'openq4_guiAction main_b_settings', 'waitMsec 1500', 'openq4_guiAction set_b_system',
+        'waitMsec 1500', 'openq4_system report', 'r_brightness',
+        'openq4_retainedGui focus settings_brightness', 'openq4_retainedGui menu right 1', 'openq4_retainedGui menu right 0',
+        'waitMsec 600', 'openq4_retainedGui report', 'screenshot "screenshots/system-menu-pending.tga"',
+        'openq4_retainedGui event onMenuButton', 'waitMsec 1500', 'openq4_retainedGui report', 'r_brightness',
+        'screenshot "screenshots/system-menu-applied.tga"',
+        'openq4_retainedGui focus settings_brightness', 'openq4_retainedGui menu right 1', 'openq4_retainedGui menu right 0',
+        'waitMsec 600', 'openq4_system back', 'waitMsec 1000', 'openq4_retainedGui report',
+        'screenshot "screenshots/system-menu-discard.tga"',
+        'openq4_retainedGui event onMenuButton', 'waitMsec 1000', 'openq4_retainedGui report', 'openq4_system report',
+        'screenshot "screenshots/system-menu-editing.tga"',
     ]),
     # Opted into, the multiplayer menu's SYSTEM route (the event the game sends
     # through "main fromMp_toSystem") opens the retained page over the main
@@ -980,12 +1148,13 @@ SCENARIO_FILES = {'arenafail': {
         'openq4_retainedGui menu accept 0', 'waitMsec 900', 'ui_arenaProgress', 'openq4_retainedGui report',
         'screenshot "screenshots/arenafail-browser.tga"'],
 }}
-SCENARIO_CVARS = {'mpcard-prompts': {'ui_retainedMultiplayer': '1'},
+SCENARIO_CVARS = {'mpcard-prompts': {'ui_retainedMultiplayer': '1'}, 'mpcard-triggers': {'ui_retainedMultiplayer': '1'},
+                  'settings-controller': {'ui_retained': '0'},
                   'mpadmin': {'bot_minPlayers': '3'}, 'mpadminremote': {'net_ip': '127.0.0.1', 'ui_autoJoin': '1', 'ui_spectate': 'Play'},
                   # An Arena match is a local multiplayer game, where the menu probe is a cheat.
                   'arenapause': {'net_allowCheats': '1'}, 'system-optin': {'ui_retainedSystem': '1'}, 'fallback-system': {'ui_retainedSystem': '1'},
                   'system-mp-route': {'ui_retainedSystem': '1'}, 'fallback-system-mp': {'ui_retainedSystem': '1'},
-                  'system-mp-game': {'ui_retainedSystem': '1'},
+                  'system-mp-game': {'ui_retainedSystem': '1'}, 'system-menu-apply': {'ui_retainedSystem': '1'},
                   'fallback-loading': {'developer': '1'}, 'subpage-reduced': {'ui_retainedReducedMotion': '1'},
                   'arenafail': {'net_port': str(SCENARIO_PORTS['arenafail']), 'net_ip': '127.0.0.1'},
                   'multiplayer': {'net_allowCheats': '1'},

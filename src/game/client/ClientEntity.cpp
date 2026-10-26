@@ -57,6 +57,7 @@ void rvClientEntity::Spawn( void ) {
 
 	spawnNode.SetOwner( this );
 	bindNode.SetOwner( this );
+	presentationNode.SetOwner( this );
 
 	origin = spawnArgs.GetVector( "origin", "0 0 0" );
 	axis = spawnArgs.GetMatrix( "axis", "1 0 0 0 1 0 0 0 1" );

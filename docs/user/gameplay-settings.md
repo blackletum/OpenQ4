@@ -1,5 +1,7 @@
 # Gameplay Settings and Runtime Toggles
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 This guide covers a small set of gameplay and audio cvars that are useful for testing, accessibility, and personal preference.
 
 The auto-skip cinematics, corpse cleanup, and corpse sink controls are also available in the in-game menu at `Settings -> Game Options`.
@@ -55,6 +57,9 @@ Choose **Turbo Mode** on the single-player New Game page. The choice applies whe
 you start the new game; selecting Off starts a normal campaign even after a turbo
 game or a multiplayer session. Turbo increases movement speeds and removes weapon
 reloads, including the shotgun pump after each shot. Shots still use ammunition.
+Doors, platforms and elevators you operate move faster too. Machinery that the
+level's own scripts choreograph, such as the lift your squad rides in Hangar
+Perimeter, keeps its normal speed so those scenes stay in step.
 
 The console setting is `g_turboMode` (`0` off, `1` on). Enabling it during a reload
 cancels that reload; disabling it restores normal magazine and reload behavior.
@@ -220,7 +225,12 @@ Notes:
 - `s_openALHRTF` chooses headphone HRTF: `0` automatic (default), `1` off, `2` on. Earlier builds
   could not turn it off on headphones; `1` now does.
 - Unplugging a headset or switching the default device keeps the sound going, including music
-  and looping ambience, and keeps your speaker and HRTF choices.
+  and looping ambience, and keeps your speaker and HRTF choices. Dialogue and other sounds that
+  were playing pick up where the scene is when audio returns, instead of being cut off, and a
+  line paused in a menu continues from where it stopped.
+- Changing `s_numberOfSpeakers`, `s_openALHRTF` or `s_outputLimiter` applies to the open device
+  in place: sounds keep playing without reloading, and a line that is playing moves to or from
+  the centre speaker at its current point.
 
 ## Audio Quality
 
@@ -373,16 +383,19 @@ caption at the current point in the line.
 | `ui_subtitleSpeakers` | `1` | `0`–`1` | Show an available speaker name or the radio label |
 
 All four settings are saved. Text comes from your installed game's lip-sync
-declarations, with the normal language fallback. Coverage is incomplete: a
+declarations, with the normal language fallback. The Steam release installs
+these transcripts in English only, and The Awakening's are written in English,
+so other menu languages show English captions. Coverage is incomplete: a
 missing transcript stays blank, and a scene description is never substituted.
 Player voice chat and sound effects are not transcribed. Large captions can
 overlap Awakening title cards in portrait windows.
 
 ## Gameplay Status Bar
 
-The modern UI is the default (`ui_retained 1`). Select classic with
+Current source builds default to the modern UI (`ui_retained 1`). Select classic with
 `seta ui_retained 0`, or modern with `seta ui_retained 1`.
-Saved preferences from earlier versions are preserved.
+Saved preferences from earlier versions are preserved. For released-package
+defaults, see [Modern and Classic Screens](client-settings.md#modern-and-classic-screens).
 
 The modern UI (`ui_retained 1`) shows a centered ammo, health and armor
 bar, with Marine and Strogg artwork matching the campaign. Multiplayer shows

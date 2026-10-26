@@ -2759,6 +2759,17 @@ void idPlayer::Restore( idRestoreGame *savefile ) {
 	}
 
 	inventory.Restore( savefile );
+	// openQ4: the objectives completed on this map, which the inventory does
+	// not save: CompleteObjective keeps their titles among spawnArgs.
+	for ( int done = 0; ; done++ ) {
+		const idKeyValue *title = spawnArgs.FindKey( va( "openq4_objectiveDone%d", done ) );
+		if ( title == NULL ) {
+			break;
+		}
+		idObjectiveInfo completed;
+		completed.title = title->GetValue();
+		inventory.completedObjectives.Append( completed );
+	}
 
 	assert( !weapon );
 
@@ -3399,6 +3410,13 @@ void idPlayer::SavePersistantInfo( void ) {
 	inventory.GetPersistantData( playerInfo );
 	playerInfo.SetInt( "health", health );
 	playerInfo.SetInt( "current_weapon", currentWeapon );
+	// openQ4: the run's play time and difficulty, which every save header
+	// carries to the menus. A run whose play time is unknown stays unknown.
+	const int played = PlaySeconds();
+	if ( played >= 0 ) {
+		playerInfo.SetInt( "openq4_playSeconds", played );
+	}
+	playerInfo.SetInt( "openq4_skill", g_skill.GetInteger() );
 }
 
 /*
@@ -3412,14 +3430,41 @@ void idPlayer::RestorePersistantInfo( void ) {
  	if ( gameLocal.isMultiplayer ) {
  		gameLocal.persistentPlayerInfo[entityNumber].Clear();
  	}
- 
-	spawnArgs.Copy( gameLocal.persistentPlayerInfo[entityNumber] );
+
+	// openQ4: the run's play time as the player first entered this map. A
+	// player who enters again (playerModel) keeps it, since the persistent
+	// info may hold a later save's snapshot by then; a new game starts at zero.
+	const idDict &persistent = gameLocal.persistentPlayerInfo[entityNumber];
+	const idStr arrived = spawnArgs.GetString( "openq4_playSeconds" );
+	spawnArgs.Copy( persistent );
+	if ( arrived.Length() > 0 ) {
+		spawnArgs.Set( "openq4_playSeconds", arrived );
+	} else if ( !gameLocal.isMultiplayer && persistent.GetNumKeyVals() == 0 ) {
+		spawnArgs.SetInt( "openq4_playSeconds", 0 );
+	}
 
 	inventory.RestoreInventory( this, spawnArgs );
  	health = spawnArgs.GetInt( "health", "100" );
  	if ( !gameLocal.isClient ) {
  		idealWeapon = spawnArgs.GetInt( "current_weapon", "0" );
  	}
+}
+
+/*
+===============
+idPlayer::PlaySeconds
+
+openQ4: the run's play time in seconds, from the first map of a new game:
+the time the persistent info carried into this map plus the time in it.
+-1 when a save from an earlier build began the run, as it records none.
+===============
+*/
+int idPlayer::PlaySeconds( void ) const {
+	const idKeyValue *carried = spawnArgs.FindKey( "openq4_playSeconds" );
+	if ( carried == NULL ) {
+		return -1;
+	}
+	return Max( 0, atoi( carried->GetValue() ) ) + gameLocal.time / 1000;
 }
 
 /*
@@ -6023,7 +6068,9 @@ void idPlayer::CompleteObjective( const char *title ) {
 	int c = inventory.objectiveNames.Num();
 	for ( int i = 0;  i < c; i++ ) {
 		if ( idStr::Icmp(inventory.objectiveNames[i].title, title) == 0 ) {
-			// openQ4: the retained pause screen lists it as completed.
+			// openQ4: the retained pause screen lists it as completed, and a
+			// save keeps its title among spawnArgs (idPlayer::Restore).
+			spawnArgs.Set( va( "openq4_objectiveDone%d", inventory.completedObjectives.Num() ), inventory.objectiveNames[i].title );
 			inventory.completedObjectives.Append( inventory.objectiveNames[i] );
 			inventory.objectiveNames.RemoveIndex( i );
 			break;
@@ -12912,6 +12959,19 @@ void idPlayer::ResetPresentationViewState( void ) {
 	presentationCurViewOrigin = firstPersonViewOrigin;
 	presentationCurViewAxis = firstPersonViewAxis;
 	presentationCurFov = 0.0f;
+	presentationPrevLookAngles.Zero();
+	presentationCurLookAngles.Zero();
+	presentationPrevCmdAngles.Zero();
+	presentationCurCmdAngles.Zero();
+	presentationLookCoupled = false;
+	presentationLookActive = false;
+	presentationLookCorrection.Zero();
+	presentationLookInputYaw = 0.0f;
+	presentationAltViewTime = -1;
+	presentationAltViewKind = PRESENTATION_ALT_VIEW_NONE;
+	presentationAltViewSource = -1;
+	presentationAltViewCanInterpolate = false;
+	presentationAltViewDrawn = false;
 }
 
 /*
@@ -12926,6 +12986,8 @@ void idPlayer::UpdatePresentationViewState( void ) {
 	const idVec3 simViewOrigin = firstPersonViewOrigin;
 	const idMat3 simViewAxis = firstPersonViewAxis;
 	const float simFov = CalcFov( true );
+	const idAngles simLookAngles = viewAngles;
+	const idAngles simCmdAngles( SHORT2ANGLE( usercmd.angles[0] ), SHORT2ANGLE( usercmd.angles[1] ), SHORT2ANGLE( usercmd.angles[2] ) );
 
 	if ( presentationViewTime < 0 ) {
 		presentationViewTime = gameLocal.time;
@@ -12936,6 +12998,11 @@ void idPlayer::UpdatePresentationViewState( void ) {
 		presentationCurViewOrigin = simViewOrigin;
 		presentationCurViewAxis = simViewAxis;
 		presentationCurFov = simFov;
+		presentationPrevLookAngles = simLookAngles;
+		presentationCurLookAngles = simLookAngles;
+		presentationPrevCmdAngles = simCmdAngles;
+		presentationCurCmdAngles = simCmdAngles;
+		presentationLookCoupled = false;
 		return;
 	}
 
@@ -12946,14 +13013,20 @@ void idPlayer::UpdatePresentationViewState( void ) {
 		const bool continuousView =
 			originDelta.LengthSqr() <= Square( 32.0f ) &&
 			angleDelta.Length() <= 90.0f;
+		presentationLookCoupled = presentationLookCoupled && openq4::PresentationLookCoupled(
+			presentationCurLookAngles.yaw, simLookAngles.yaw, presentationCurCmdAngles.yaw, simCmdAngles.yaw );
 		presentationCurViewOrigin = simViewOrigin;
 		presentationCurViewAxis = simViewAxis;
 		presentationCurFov = simFov;
+		presentationCurLookAngles = simLookAngles;
+		presentationCurCmdAngles = simCmdAngles;
 		if ( !continuousView ) {
 			presentationCanInterpolate = false;
 			presentationPrevViewOrigin = presentationCurViewOrigin;
 			presentationPrevViewAxis = presentationCurViewAxis;
 			presentationPrevFov = presentationCurFov;
+			presentationPrevLookAngles = presentationCurLookAngles;
+			presentationPrevCmdAngles = presentationCurCmdAngles;
 		}
 		return;
 	}
@@ -12968,12 +13041,18 @@ void idPlayer::UpdatePresentationViewState( void ) {
 		originDelta.LengthSqr() <= Square( 32.0f ) &&
 		angleDelta.Length() <= 90.0f;
 
+	presentationLookCoupled = openq4::PresentationLookCoupled(
+		presentationCurLookAngles.yaw, simLookAngles.yaw, presentationCurCmdAngles.yaw, simCmdAngles.yaw );
 	presentationPrevViewOrigin = presentationCurViewOrigin;
 	presentationPrevViewAxis = presentationCurViewAxis;
 	presentationPrevFov = presentationCurFov;
+	presentationPrevLookAngles = presentationCurLookAngles;
+	presentationPrevCmdAngles = presentationCurCmdAngles;
 	presentationCurViewOrigin = simViewOrigin;
 	presentationCurViewAxis = simViewAxis;
 	presentationCurFov = simFov;
+	presentationCurLookAngles = simLookAngles;
+	presentationCurCmdAngles = simCmdAngles;
 	presentationViewTime = gameLocal.time;
 	presentationCanInterpolate =
 		gameLocal.GetMHz() == common->GetUserCmdHz() &&
@@ -12984,6 +13063,8 @@ void idPlayer::UpdatePresentationViewState( void ) {
 		presentationPrevViewOrigin = presentationCurViewOrigin;
 		presentationPrevViewAxis = presentationCurViewAxis;
 		presentationPrevFov = presentationCurFov;
+		presentationPrevLookAngles = presentationCurLookAngles;
+		presentationPrevCmdAngles = presentationCurCmdAngles;
 	}
 }
 
@@ -13001,6 +13082,97 @@ void idPlayer::GetPresentationViewPos( idVec3 &origin, idMat3 &axis ) const {
 		origin.Lerp( presentationPrevViewOrigin, presentationCurViewOrigin, fraction );
 		axis = gameLocal.InterpolatePresentationAxis( presentationPrevViewAxis, presentationCurViewAxis, fraction );
 	}
+	ApplyPresentationLookToView( origin, axis );
+}
+
+/*
+===============
+idPlayer::UpdatePresentationLook
+
+Late look. Interpolation draws the eye between the last two authoritative
+views, a deliberate tick behind, and mouse motion waits for the next usercmd
+on top of that. Freeze, once per prepared draw, how far the drawn eye may turn
+past the interpolated view: to the current authoritative view plus input the
+game has not applied yet. Only the drawn camera and what is held in front of
+it (the view weapon and its effects and lights) turn; the authoritative view,
+traces, firing direction, prediction and network commands are untouched.
+===============
+*/
+void idPlayer::UpdatePresentationLook( void ) {
+	presentationLookActive = false;
+	presentationLookCorrection.Zero();
+	presentationLookInputYaw = 0.0f;
+	if ( !gameLocal.IsPresentationSceneActive() || !presentationLookCoupled || !AllowsPresentationLook() ) {
+		return;
+	}
+
+	float inputYaw = 0.0f;
+	float inputPitch = 0.0f;
+	if ( usercmdGen == NULL || !usercmdGen->GetPresentationViewAngles( inputYaw, inputPitch ) ) {
+		return;
+	}
+	presentationLookInputYaw = inputYaw;
+
+	openq4::PresentationLookSample sample;
+	sample.previousYaw = presentationPrevLookAngles.yaw;
+	sample.previousPitch = presentationPrevLookAngles.pitch;
+	sample.currentYaw = presentationCurLookAngles.yaw;
+	sample.currentPitch = presentationCurLookAngles.pitch;
+	sample.appliedYaw = presentationCurCmdAngles.yaw;
+	sample.appliedPitch = presentationCurCmdAngles.pitch;
+	sample.inputYaw = inputYaw;
+	sample.inputPitch = inputPitch;
+	sample.fraction = GetPresentationViewBlendFraction();
+	sample.minPitch = noclip ? -89.0f : pm_minviewpitch.GetFloat();
+	sample.maxPitch = noclip ? 89.0f : pm_maxviewpitch.GetFloat();
+	const openq4::PresentationLookCorrection correction = openq4::ComputePresentationLook( sample );
+	if ( !correction.valid ) {
+		return;
+	}
+	presentationLookCorrection.Set( correction.pitch, correction.yaw, 0.0f );
+	presentationLookActive = true;
+}
+
+/*
+===============
+idPlayer::ApplyPresentationLookToView
+
+Turn a drawn eye by the frozen late-look correction. The view offsets (bob,
+kick, shake) are already in the axis and keep their angles; the eye pivots
+about the neck exactly as GetViewPos places it (g_viewNodalX/Z).
+===============
+*/
+void idPlayer::ApplyPresentationLookToView( idVec3 &origin, idMat3 &axis ) const {
+	if ( !presentationLookActive || !gameLocal.IsPresentationSceneActive() ) {
+		return;
+	}
+	const idMat3 gravityAxis = physicsObj.GetGravityAxis();
+	idAngles angles = ( axis * gravityAxis.Transpose() ).ToAngles();
+	angles.yaw += presentationLookCorrection.yaw;
+	angles.pitch += presentationLookCorrection.pitch;
+	const idMat3 drawnAxis = angles.ToMat3() * gravityAxis;
+	origin += ( drawnAxis[0] - axis[0] ) * g_viewNodalX.GetFloat() + ( drawnAxis[2] - axis[2] ) * g_viewNodalZ.GetFloat();
+	axis = drawnAxis;
+}
+
+/*
+===============
+idPlayer::ApplyPresentationLookToEyeAttachment
+
+Carry a pose held rigidly in front of an undrawn eye (the view weapon) to the
+same place in front of that eye once late look has turned it.
+===============
+*/
+void idPlayer::ApplyPresentationLookToEyeAttachment( const idVec3 &eyeOrigin, const idMat3 &eyeAxis, idVec3 &origin, idMat3 &axis ) const {
+	if ( !presentationLookActive || !gameLocal.IsPresentationSceneActive() ) {
+		return;
+	}
+	idVec3 drawnEyeOrigin = eyeOrigin;
+	idMat3 drawnEyeAxis = eyeAxis;
+	ApplyPresentationLookToView( drawnEyeOrigin, drawnEyeAxis );
+	const idMat3 worldToEye = eyeAxis.Transpose();
+	origin = drawnEyeOrigin + ( ( origin - eyeOrigin ) * worldToEye ) * drawnEyeAxis;
+	axis = axis * worldToEye * drawnEyeAxis;
 }
 
 /*
@@ -13071,6 +13243,10 @@ per tic.
 ===============
 */
 bool idPlayer::IsPresentationViewInterpolated( void ) const {
+	// a camera, third-person or death view drawn between its tic samples
+	if ( presentationAltViewDrawn ) {
+		return true;
+	}
 	if ( !CanInterpolatePresentationView() ) {
 		return false;
 	}
@@ -13095,6 +13271,152 @@ float idPlayer::GetPresentationFov( void ) {
 		return presentationCurFov;
 	}
 	return idMath::Lerp( presentationPrevFov, presentationCurFov, GetPresentationViewBlendFraction() );
+}
+
+/*
+===============
+idPlayer::PresentAlternateView
+
+Cinematic and private cameras, third person and the death camera used to put
+the whole scene back on the 60 Hz tic. Sample each such view once per tic,
+exactly as the authoritative path built it (camera frame commands, cuts and
+third-person traces stay there), and draw it between its last two samples on
+the scene's presentation clock. An authored cut (renderView forceUpdate), a
+different camera or view kind, a skipped tic or a jump larger than the motion
+already in flight starts again from the current view instead of blending.
+===============
+*/
+void idPlayer::PresentAlternateView( int kind, const idEntity *source ) {
+	presentationAltViewDrawn = false;
+	if ( kind == PRESENTATION_ALT_VIEW_NONE || renderView == NULL ) {
+		presentationAltViewTime = -1;
+		presentationAltViewKind = PRESENTATION_ALT_VIEW_NONE;
+		presentationAltViewSource = -1;
+		presentationAltViewCanInterpolate = false;
+		return;
+	}
+
+	const int sourceId = source != NULL ? gameLocal.GetSpawnId( source ) : -1;
+	const idVec3 simOrigin = renderView->vieworg;
+	const idMat3 simAxis = renderView->viewaxis;
+	const float simFovX = renderView->fov_x;
+	const float simFovY = renderView->fov_y;
+	const bool sameView = presentationAltViewTime >= 0 && kind == presentationAltViewKind && sourceId == presentationAltViewSource;
+
+	if ( sameView && presentationAltViewTime == gameLocal.time ) {
+		// several calls per tic (think, then every draw) describe the same view;
+		// any difference is a change of view inside the tic
+		if ( simOrigin != presentationCurAltOrigin || simAxis != presentationCurAltAxis ) {
+			presentationAltViewCanInterpolate = false;
+			presentationPrevAltOrigin = presentationCurAltOrigin = simOrigin;
+			presentationPrevAltAxis = presentationCurAltAxis = simAxis;
+			presentationPrevAltFovX = presentationCurAltFovX = simFovX;
+			presentationPrevAltFovY = presentationCurAltFovY = simFovY;
+		}
+	} else if ( !sameView ) {
+		presentationAltViewTime = gameLocal.time;
+		presentationAltViewKind = kind;
+		presentationAltViewSource = sourceId;
+		presentationAltViewCanInterpolate = false;
+		presentationPrevAltOrigin = presentationCurAltOrigin = simOrigin;
+		presentationPrevAltAxis = presentationCurAltAxis = simAxis;
+		presentationPrevAltFovX = presentationCurAltFovX = simFovX;
+		presentationPrevAltFovY = presentationCurAltFovY = simFovY;
+	} else {
+		const int deltaTime = gameLocal.time - presentationAltViewTime;
+		const int maxSequentialDelta = static_cast<int>( idMath::Ceil( common->GetUserCmdMsecFloat() ) );
+		const bool sequentialFrame = deltaTime > 0 && deltaTime <= maxSequentialDelta;
+		const idVec3 lastStep = presentationCurAltOrigin - presentationPrevAltOrigin;
+		const idVec3 originDelta = simOrigin - presentationCurAltOrigin;
+		idAngles angleDelta = simAxis.ToAngles() - presentationCurAltAxis.ToAngles();
+		angleDelta.Normalize180();
+		const float maxStep = 32.0f + lastStep.Length() * 4.0f;
+		const bool continuousView =
+			!renderView->forceUpdate &&
+			originDelta.LengthSqr() <= Square( maxStep ) &&
+			angleDelta.Length() <= 90.0f;
+
+		presentationPrevAltOrigin = presentationCurAltOrigin;
+		presentationPrevAltAxis = presentationCurAltAxis;
+		presentationPrevAltFovX = presentationCurAltFovX;
+		presentationPrevAltFovY = presentationCurAltFovY;
+		presentationCurAltOrigin = simOrigin;
+		presentationCurAltAxis = simAxis;
+		presentationCurAltFovX = simFovX;
+		presentationCurAltFovY = simFovY;
+		presentationAltViewTime = gameLocal.time;
+		presentationAltViewCanInterpolate =
+			g_presentationInterpolation.GetBool() &&
+			gameLocal.GetMHz() == common->GetUserCmdHz() &&
+			sequentialFrame &&
+			continuousView;
+		if ( !presentationAltViewCanInterpolate ) {
+			presentationPrevAltOrigin = presentationCurAltOrigin;
+			presentationPrevAltAxis = presentationCurAltAxis;
+			presentationPrevAltFovX = presentationCurAltFovX;
+			presentationPrevAltFovY = presentationCurAltFovY;
+		}
+	}
+
+	// Third person rides the same carriers as the eye; a carrier that cannot be
+	// drawn interpolated keeps this view on its clock as well. Third person and
+	// the death camera also follow this player's own body, so a body held on
+	// the tic (a remote player followed in multiplayer) holds the view with it.
+	const idEntity *carrier = ( kind == PRESENTATION_ALT_VIEW_CAMERA || kind == PRESENTATION_ALT_VIEW_PRIVATE_CAMERA ) ? NULL : GetPresentationCarrier();
+	const bool followsBody = kind == PRESENTATION_ALT_VIEW_THIRD_PERSON || kind == PRESENTATION_ALT_VIEW_DEATH;
+	if ( !presentationAltViewCanInterpolate || !gameLocal.IsPresentationSceneActive() ||
+		 gameLocal.GetDemoState() != DEMO_NONE || gameLocal.IsTimeDemo() ||
+		 ( followsBody && !AllowsPresentationInterpolation() ) ||
+		 ( carrier != NULL && carrier->PresentationPoseMoved() && !carrier->CanInterpolatePresentationPose() ) ) {
+		return;
+	}
+
+	const float fraction = gameLocal.GetPresentationInterpolationFraction();
+	renderView->vieworg.Lerp( presentationPrevAltOrigin, presentationCurAltOrigin, fraction );
+	renderView->viewaxis = gameLocal.InterpolatePresentationAxis( presentationPrevAltAxis, presentationCurAltAxis, fraction );
+	renderView->fov_x = idMath::Lerp( presentationPrevAltFovX, presentationCurAltFovX, fraction );
+	renderView->fov_y = idMath::Lerp( presentationPrevAltFovY, presentationCurAltFovY, fraction );
+	presentationAltViewDrawn = true;
+}
+
+/*
+===============
+idPlayer::GetPresentationLookDiagnostic
+===============
+*/
+bool idPlayer::GetPresentationLookDiagnostic( float &inputYaw, float &correctionYaw ) const {
+	inputYaw = presentationLookInputYaw;
+	correctionYaw = presentationLookActive ? presentationLookCorrection.yaw : 0.0f;
+	return presentationLookActive;
+}
+
+/*
+===============
+idPlayer::AllowsPresentationLook
+
+Late look applies only where usercmd angles drive the drawn first-person eye.
+Views that hold, script or replace the angles keep the authoritative view; the
+coupling check in UpdatePresentationViewState catches any mode not named here.
+Vehicles and their joint-bound eyes stay on the interpolated view.
+===============
+*/
+bool idPlayer::AllowsPresentationLook( void ) const {
+	if ( gameLocal.GetLocalPlayer() != this || health <= 0 || weaponWheelActive || IsInVehicle() ) {
+		return false;
+	}
+	if ( !noclip && ( gameLocal.inCinematic || privateCameraView != NULL || gameLocal.GetCamera() != NULL ) ) {
+		return false;
+	}
+	if ( influenceActive >= INFLUENCE_LEVEL2 || !centerView.IsDone( gameLocal.time ) || viewSweepActive ) {
+		return false;
+	}
+	if ( pm_thirdPerson.GetBool() || pm_thirdPersonDeath.GetBool() || pm_modelView.GetInteger() == 1 ) {
+		return false;
+	}
+	if ( g_stopTime.GetBool() || gameLocal.GetDemoState() != DEMO_NONE || gameLocal.IsTimeDemo() ) {
+		return false;
+	}
+	return vrSystem == NULL || !vrSystem->IsActive();
 }
 
 /*
@@ -13185,6 +13507,9 @@ void idPlayer::CalculateRenderView( void ) {
 	}
 	memset( renderView, 0, sizeof( *renderView ) );
 	UpdatePresentationViewState();
+	UpdatePresentationLook();
+	int altViewKind = PRESENTATION_ALT_VIEW_NONE;
+	const idEntity *altViewSource = NULL;
 
 	// copy global shader parms
 	for( i = 0; i < MAX_GLOBAL_SHADER_PARMS; i++ ) {
@@ -13206,8 +13531,13 @@ void idPlayer::CalculateRenderView( void ) {
 		// get origin, axis, and fov
 		if ( privateCameraView ) {
 			privateCameraView->GetViewParms( renderView );
+			altViewKind = PRESENTATION_ALT_VIEW_PRIVATE_CAMERA;
+			altViewSource = privateCameraView;
 		} else {
 			gameLocal.GetCamera()->GetViewParms( renderView );
+			// stopping a camera can hand the view to another one
+			altViewKind = PRESENTATION_ALT_VIEW_CAMERA;
+			altViewSource = gameLocal.GetCamera();
 		}
 	} else {
 		bool cameraIsSet = false;
@@ -13229,13 +13559,16 @@ void idPlayer::CalculateRenderView( void ) {
 				OffsetThirdPersonVehicleView( pm_thirdPersonClip.GetBool() );
 // RAVEN END
 				SmoothenRenderView( false );
+				altViewKind = PRESENTATION_ALT_VIEW_THIRD_PERSON_VEHICLE;
 			} else if ( pm_thirdPerson.GetBool() ) {
 				OffsetThirdPersonView( pm_thirdPersonAngle.GetFloat(), pm_thirdPersonRange.GetFloat(), pm_thirdPersonHeight.GetFloat(), pm_thirdPersonClip.GetBool() );
 				SmoothenRenderView( false );
+				altViewKind = PRESENTATION_ALT_VIEW_THIRD_PERSON;
 			} else if ( pm_thirdPersonDeath.GetBool() ) {
 				range = gameLocal.time < minRespawnTime ? ( gameLocal.time + RAGDOLL_DEATH_TIME - minRespawnTime ) * ( 120.0f / RAGDOLL_DEATH_TIME ) : 120.0f;
 	 			OffsetThirdPersonView( 0.0f, 20.0f + range, 0.0f, false );
 				SmoothenRenderView( false );
+				altViewKind = PRESENTATION_ALT_VIEW_DEATH;
 			} else {
 				GetPresentationViewPos( renderView->vieworg, renderView->viewaxis );
 				SmoothenRenderView( true );
@@ -13253,6 +13586,7 @@ void idPlayer::CalculateRenderView( void ) {
 	if ( renderView->fov_y == 0 ) {
 		common->Error( "renderView->fov_y == 0" );
 	}
+	PresentAlternateView( altViewKind, altViewSource );
 
 	if ( g_showviewpos.GetBool() ) {
 		gameLocal.Printf( "%s : %s\n", renderView->vieworg.ToString(), renderView->viewaxis.ToAngles().ToString() );

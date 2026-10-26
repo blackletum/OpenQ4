@@ -53,6 +53,17 @@ public:
 		return stb_vorbis_get_samples_short_interleaved(decoder, info.channels, output, capacityFrames * info.channels);
 	}
 	bool Seek(unsigned int sample) { return decoder && stb_vorbis_seek(decoder, sample) != 0; }
+	// A stream without length metadata (Frames() is 0) cannot seek until a complete
+	// decode has counted it. Find the last page that carries a position once, then
+	// give each decoder of the stream that page and the counted length.
+	bool FindLastGranulePage(stb_vorbis_openq4_granule_page& page) {
+		return decoder && stb_vorbis_openq4_find_last_granule(decoder, &page) != 0;
+	}
+	bool SetCountedLength(unsigned int counted, const stb_vorbis_openq4_granule_page& page) {
+		if (!decoder || frames || !stb_vorbis_openq4_set_length(decoder, counted, &page)) return false;
+		frames = counted;
+		return true;
+	}
 	unsigned int Frames() const { return frames; }
 	int Channels() const { return info.channels; }
 	int Rate() const { return static_cast<int>(info.sample_rate); }

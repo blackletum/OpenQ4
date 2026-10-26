@@ -1,5 +1,7 @@
 # Quake 4 and The Awakening campaigns
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 Open **Single Player → Campaign** to choose Quake 4 or The Awakening. Selecting
 a campaign opens its page: the difficulty, Turbo Mode, **Start Game** and
 **Chapters**. Back climbs one level at a time, from the campaign page to

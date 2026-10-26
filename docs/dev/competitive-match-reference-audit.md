@@ -1103,3 +1103,46 @@ directories. These checks do not close MP-01: the remaining scenarios above,
 physical localized keyboard/controller workflows, other renderer/platform
 qualification and newly authored UI workflows remain open. The roster duration
 is operational evidence, not a controlled performance comparison.
+
+## Proposal revalidation, veto side and follow identity (2026-10-23)
+
+A review of the MP-01 scenarios found three defects in the shipped pipeline:
+
+- **Passed ballots went stale during their own vote.** A proposal stored the
+  session revision its proposer saw. Every ready change, connection or other
+  session mutation inside the 30-second window advanced that revision, so the
+  passed operation was rejected as stale at execution and consumed with no
+  effect. `ExecutePassedProposal` now revalidates the operation against the
+  session as it is at execution: phase, the proposer's binding and eligibility,
+  target identity and side, and the opcode's own semantic checks all run again.
+  Once-only execution moved to the adapter: `lastExecutedMatchProposalId`
+  records each scope's newest executed ballot, and a ballot whose
+  acknowledgement failed retries only the acknowledgement. Proposals still
+  freeze their electorate and fail closed when the proposer leaves.
+- **The veto turn used two side sources.** The published view decided a veto
+  turn from `ResolveCompetitionSide`, but the executor used the gameplay side
+  in team modes. A series binds seats to series sides and can remap gameplay
+  sides between maps, so the two could disagree. The operation context now
+  carries `actorSeriesSide` from the same resolver, and the executor holds the
+  turn to it.
+- **Spectator follow trusted the slot number.** `UpdateSpectating` revalidated
+  the followed slot each frame and relied on a frame where a disconnected
+  player's slot was empty. It now latches the followed entity's spawn identity
+  and releases the camera when the slot's entity changes, so a replacement
+  connection never inherits a follow by number.
+
+Executable coverage: `mp_match_operations_contract.py` executes a passed
+ballot after an unrelated session change (it fails with the old creation-time
+revision), refuses a second run by revalidation, and holds both veto steps to
+the resolved series side, including a seat whose gameplay side differs.
+`mp_match_spectator_follow_contract.py` replaces the followed slot's entity
+with no empty frame. Each new case was checked against a reverted production
+change and fails there. All 52 asset-free `mp_match_*` contracts pass; the two
+runtime smokes in that family need a staged runtime and were not part of this
+change's evidence.
+
+These fixes do not close MP-01. The live scenarios listed above (successful
+substitution, timed invitation expiry, proposal execution through Match
+Control, physical localized input and the rest of the release closure order)
+still need runtime evidence, and the post-commit series rollback limit is
+unchanged.

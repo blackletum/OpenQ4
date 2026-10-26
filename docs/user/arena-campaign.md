@@ -1,5 +1,7 @@
 # Arena Campaign
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 > **Experimental.** Multiplayer and the single-player Arena Campaign are
 > under active development and are not yet considered stable. Expect rough
 > edges, changing behaviour between builds, and bugs. They are not

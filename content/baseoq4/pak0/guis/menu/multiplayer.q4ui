@@ -12,7 +12,8 @@
   "from_setup": {"type": "boolean", "initial": false},
   "language": {"type": "string", "initial": "", "cvar": "sys_lang"},
   "prompt.glyphs": {"type": "number", "initial": 0},
-  "prompt.swapped": {"type": "boolean", "initial": false}
+  "prompt.swapped": {"type": "boolean", "initial": false},
+  "prompt.accept": {"type": "string", "initial": "#str_231042"}
  },
  "actions": {
   "back": {"operation": "session.menu", "arguments": {"command": "multiplayerBack"}},
@@ -360,6 +361,18 @@
      "none"
     ]
    }
+  },
+  {
+   "id": "prompt-231042-verb.text",
+   "node": "prompt-231042-verb",
+   "property": "text",
+   "value": {"state": "prompt.accept"}
+  },
+  {
+   "id": "prompts-lead.display",
+   "node": "prompts-lead",
+   "property": "display",
+   "value": {"op": "select", "args": [{"op": "==", "args": [{"state": "prompt.accept"}, ""]}, "none", "flex"]}
   },
   {
    "id": "prompt-230045-cap.display",

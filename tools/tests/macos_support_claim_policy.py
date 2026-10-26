@@ -22,7 +22,9 @@ HISTORICAL_ISSUE_98_RELEASES = {
     "v0.13.0.md",
     "v0.13.1.md",
 }
-HISTORICAL_EXPERIMENTAL_MACOS_RELEASES = HISTORICAL_ISSUE_73_RELEASES | HISTORICAL_ISSUE_98_RELEASES
+HISTORICAL_EXPERIMENTAL_MACOS_RELEASES = (
+    HISTORICAL_ISSUE_73_RELEASES | HISTORICAL_ISSUE_98_RELEASES | {"v0.13.2.md"}
+)
 
 
 def read(relative_path: str) -> str:
@@ -52,7 +54,7 @@ def release_files() -> list[Path]:
 def validate_release_facing_docs() -> None:
     expected_tokens = {
         "README.md": (
-            "preview Apple Silicon/arm64 macOS",
+            "experimental Apple Silicon/arm64 macOS",
             "OpenGL/Metal bridge packages",
             "players have run them only on current macOS",
         ),
@@ -64,10 +66,10 @@ def validate_release_facing_docs() -> None:
             "comparison-only",
         ),
         "docs/user/getting-started.md": (
-            "macOS support is a preview",
+            "Our GitHub macOS packages remain a preview",
             "Apple Silicon/arm64 Macs on macOS 11 or later",
             "nothing older than the current macOS has been tested",
-            "Intel Mac and universal2 packages are not published yet",
+            "Our GitHub releases do not yet publish Intel Mac or universal2 packages",
             "Rosetta is not a supported release target",
             "Metal bridge",
             "not a native Metal renderer",

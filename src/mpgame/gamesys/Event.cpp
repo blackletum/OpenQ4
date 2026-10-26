@@ -779,6 +779,7 @@ idEvent::ServiceEvents
 ================
 */
 void idEvent::ServiceEvents( void ) {
+	gameLocal.NotePresentationGameplay( "idEvent::ServiceEvents" );
 	idEvent		*event;
 	int			num;
 	intptr_t	args[ D_EVENT_MAXARGS ];

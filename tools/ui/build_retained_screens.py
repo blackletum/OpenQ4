@@ -184,6 +184,13 @@ def group(ident: str, props: dict, children=(), **extra) -> dict:
     node.update(extra)
     return node
 
+def walk_nodes(node: dict):
+    """`node` and every node under it, depth first."""
+    yield node
+    for child in node.get("children", ()):
+        yield from walk_nodes(child)
+
+
 def vector(ident: str, props: dict, paths: list, children=(), **extra) -> dict:
     node = {"id": ident, "type": "vector", "properties": props, "paths": paths}
     if children:
@@ -644,7 +651,8 @@ def confirmation(doc: Document, ident: str, title_key: str, body_key: str, yes_a
                  no_event: str | None = None, close_key: str | None = None, wide_title: bool = False,
                  height_u: float = 136.0, top_u: float = 155.0, actions_u: float = 96.0, contents: list | None = None,
                  yes_key: str = "#str_200157", no_key: str = "#str_200158", initial: str | None = None,
-                 width_dp: float = 480.0, action_w: float = 180, action_text: float = 20.0, close_w: float = CLOSE_W) -> dict:
+                 width_dp: float = 480.0, action_w: float = 180, action_text: float = 20.0, close_w: float = CLOSE_W,
+                 strogg: bool = False) -> dict:
     """A stock confirmation modal (section 6) over the soft-focused screen: an
     additive glow behind the 480 dp dialog, and inside it the stock popup
     art's black 0.70 silhouette, inset so a 6 dp lit margin shows beside it,
@@ -679,7 +687,16 @@ def confirmation(doc: Document, ident: str, title_key: str, body_key: str, yes_a
     its actions at `actions_u`, its own `contents` in place of the body and
     its own action labels and first focus; a ledger grows to `width_dp`, and
     actions whose labels run long widen to `action_w` with `action_text` dp
-    labels, or a notice's lone action to `close_w`."""
+    labels, or a notice's lone action to `close_w`.
+
+    With `strogg` the dialog takes the Strogg pause's family (section 13.7):
+    the silhouette's slot flanks and lower-leading chamfer become 30-degree
+    shoulders in the Strogg card fill with its #F59512 rail, the glow takes the
+    Strogg backdrop's light, the title and body are R_Strogg in #FCFFC8 and
+    the actions are Strogg plates (strogg_action_plate). Every label arrives
+    in runes as the contents show and plays the short credits translation:
+    the title over 300 ms, the actions 45 ms apart after it; the wrapped body
+    fades in. Ids, events, focus and timing are the stock dialog's."""
     body_nodes = contents
     visible, contents = f"{ident}.visible", f"{ident}.contents"
     doc.state[visible] = {"type": "boolean", "initial": False}
@@ -698,15 +715,18 @@ def confirmation(doc: Document, ident: str, title_key: str, body_key: str, yes_a
     inset = width * 7 / 512
     slot_lead, slot_trail = width * 14 / 512, width * 388 / 512
     slot_depth = 17.0
+    # A Strogg shoulder keeps the slot's depth and runs 30 degrees.
+    flank = round(slot_depth * STROGG_SHOULDER, 4) if strogg else slot_depth
     right = width - inset
-    silhouette = modal_silhouette(width, height)
+    silhouette = strogg_modal_silhouette(width, height) if strogg else [modal_silhouette(width, height)]
+    glow_tint = ST_LIGHT if strogg else GLOW_MODAL
     whole = [(0, 0), ({"fraction": 1}, 0), ({"fraction": 1}, {"fraction": 1}), (0, {"fraction": 1})]
     glow_top, glow_bottom = -U * 87, height + U * 108
     glow = vector(f"{ident}-glow", {**absolute(left=0, top=glow_top, width=width, height=glow_bottom - glow_top), "opacity": number(0),
                                     "display": keyword("block")}, [
         path("column", whole,
-             fill=linear((0, 0), (0, {"fraction": 1}), [(0, rgb(GLOW_MODAL, 0)), (0.28, rgb(GLOW_MODAL, 0.5)), (0.41, rgb(GLOW_MODAL, 0.9)),
-                                                        (0.58, rgb(GLOW_MODAL, 0.9)), (0.72, rgb(GLOW_MODAL, 0.5)), (1, rgb(GLOW_MODAL, 0))]),
+             fill=linear((0, 0), (0, {"fraction": 1}), [(0, rgb(glow_tint, 0)), (0.28, rgb(glow_tint, 0.5)), (0.41, rgb(glow_tint, 0.9)),
+                                                        (0.58, rgb(glow_tint, 0.9)), (0.72, rgb(glow_tint, 0.5)), (1, rgb(glow_tint, 0))]),
              blend="additive")])
     # The soft-focus glow keeps the stock column's plateau inside the rectangle
     # and grades from half strength at its edges to nothing 40 dp beyond them.
@@ -719,47 +739,82 @@ def confirmation(doc: Document, ident: str, title_key: str, body_key: str, yes_a
     soft_glow = vector(f"{ident}-glow-soft", {**absolute(left=-side, top=-reach, width=soft_width, height=soft_height),
                                               "opacity": number(0), "display": keyword("none")}, [
         path("column", whole,
-             fill=linear((0, 0), (0, {"fraction": 1}), [(0, rgb(GLOW_MODAL, 0)), (soft_stop(0), rgb(GLOW_MODAL, 0.5)),
-                                                        (soft_stop(plateau[0]), rgb(GLOW_MODAL, 0.9)), (soft_stop(plateau[1]), rgb(GLOW_MODAL, 0.9)),
-                                                        (soft_stop(height), rgb(GLOW_MODAL, 0.5)), (1, rgb(GLOW_MODAL, 0))]),
+             fill=linear((0, 0), (0, {"fraction": 1}), [(0, rgb(glow_tint, 0)), (soft_stop(0), rgb(glow_tint, 0.5)),
+                                                        (soft_stop(plateau[0]), rgb(glow_tint, 0.9)), (soft_stop(plateau[1]), rgb(glow_tint, 0.9)),
+                                                        (soft_stop(height), rgb(glow_tint, 0.5)), (1, rgb(glow_tint, 0))]),
              blend="additive")],
         mask={"paths": [path("sides", whole, fill=linear((0, 0), ({"fraction": 1}, 0), [
             (0, [1, 1, 1, 0]), (round(side / soft_width, 4), [1, 1, 1, 1]), (round(1 - side / soft_width, 4), [1, 1, 1, 1]), (1, [1, 1, 1, 0])]))]})
-    frame = vector(f"{ident}-frame", {**absolute(left=0, top=0, width=width, height=height), "opacity": number(0)}, [silhouette])
+    frame = vector(f"{ident}-frame", {**absolute(left=0, top=0, width=width, height=height), "opacity": number(0)}, silhouette)
     # The title starts at the foot of the slot's leading flank; its capitals
     # hang from the raised top line into the lit slot, as the stock title's
     # do, its baseline 13.5 dp down where the stock one sits.
-    foot = slot_lead + slot_depth
-    title_end = right - 6 if wide_title else slot_trail - slot_depth
+    foot = slot_lead + flank
+    title_end = right - 6 if wide_title else slot_trail - flank
+    face, title_tint = ("r_strogg", rgb(ST_READ, 0.9)) if strogg else ("marine", [1, 1, 1, 0.9])
     if title_key.startswith("#str_"):
-        # Marine 20 dp at -0.075 em: every shipped language's title must fit
-        # its box, which clips the outline while the fill runs on.
-        needed, language = max((text_width("marine", text, 20) - 1.5 * (len(text) - 1), language)
+        # 20 dp at -0.075 em: every shipped language's title must fit its
+        # box, which clips the outline while the fill runs on.
+        needed, language = max((text_width(face, text, 20) - 1.5 * (len(text) - 1), language)
                                for language, text in merged_text(title_key).items())
         if needed > title_end - foot:
             raise ValueError(f"{ident}: the {language} title {title_key} needs {needed:.1f} dp of {title_end - foot:.1f}"
                              + ("" if wide_title else "; pass wide_title=True"))
-    title = outlined_label(f"{ident}-title", title_key,
-                           absolute(left=round(foot, 4), top=-4, width=round(title_end - foot, 4), height=24),
-                           {**typeface("marine", 20, 24, [1, 1, 1, 0.9]), "letter-spacing": length(-0.075, "em"),
-                            "white-space": keyword("nowrap")}, [1, 1, 1, 0.9], [0, 0, 0, 0.85])
+    title_style = {**typeface(face, 20, 24, title_tint), "letter-spacing": length(-0.075, "em"), "white-space": keyword("nowrap")}
+    title_box = absolute(left=round(foot, 4), top=-4, width=round(title_end - foot, 4), height=24)
+    if strogg:
+        # The outline and its fill translate as one, so the pop keeps them
+        # registered; the rune copy shares their baseline.
+        pad = 3.0
+        title = [label(f"{ident}-title-rune", title_key, {**absolute(left=round(foot, 4), top=round(-4 - rune_rise(20), 3),
+                                                                     width=round(title_end - foot, 4), height=24),
+                       **typeface("strogg", round(20 * RUNE_SCALE, 3), 24, [*rgb(ST_SELECT)[:3], 0]), "white-space": keyword("nowrap"),
+                       "transform": transform(), "pointer-events": keyword("none")}),
+                 group(f"{ident}-title-latin", {**absolute(left=round(foot - pad, 4), top=-4 - pad, width=round(title_end - foot + 2 * pad, 4),
+                                                           height=24 + 2 * pad), "opacity": number(1), "transform": transform(),
+                                                "pointer-events": keyword("none")},
+                       outlined_label(f"{ident}-title", title_key, absolute(left=pad, top=pad, width=round(title_end - foot, 4), height=24),
+                                      title_style, title_tint, [0, 0, 0, 0.85]))]
+    else:
+        title = outlined_label(f"{ident}-title", title_key, title_box, title_style, title_tint, [0, 0, 0, 0.85])
     # The stock body box starts 45 u down (first baseline 87.5 dp) and runs
-    # to the actions at 96 u.
+    # to the actions at 96 u. R_Strogg runs wider than Lowpixel, so the
+    # Strogg body sets a size smaller on the same lines.
+    body_tint = rgb(ST_READ, 0.85) if strogg else [1, 1, 1, 0.8]
     body = [label(f"{ident}-body", body_key, {**absolute(left=33, top=71, width=width - 66, height=73),
-        **typeface("lowpixel", 17, 22, [1, 1, 1, 0.8])})] if body_nodes is None else body_nodes
+        **(typeface("r_strogg", 15, 22, body_tint) if strogg else typeface("lowpixel", 17, 22, body_tint))})] if body_nodes is None else body_nodes
     # The modal's own programs may answer for it: `yes_event` in place of the
     # session action, `no_event` for No and back; each must hide the modal.
+    plate_kind = strogg_action_plate if strogg else action_plate
     if close_key:
-        actions = [action_plate(doc, f"{ident}_close", close_key, 30, U * actions_u, event=no_event or hide, width=close_w)]
+        actions = [plate_kind(doc, f"{ident}_close", close_key, 30, U * actions_u, event=no_event or hide, width=close_w)]
         initial = initial or f"{ident}_close"
     else:
-        yes = action_plate(doc, f"{ident}_yes", yes_key, 30, U * actions_u, action=None if yes_event else yes_action, event=yes_event,
-                           width=action_w)
-        no = action_plate(doc, f"{ident}_no", no_key, width - 33 - action_w, U * actions_u, event=no_event or hide, width=action_w)
+        yes = plate_kind(doc, f"{ident}_yes", yes_key, 30, U * actions_u, action=None if yes_event else yes_action, event=yes_event,
+                         width=action_w)
+        no = plate_kind(doc, f"{ident}_no", no_key, width - 33 - action_w, U * actions_u, event=no_event or hide, width=action_w)
         actions, initial = [yes, no], initial or f"{ident}_no"
         if action_text != 20:
             for plate in actions:
-                next(child for child in plate["children"] if child["id"].endswith("-label"))["properties"]["font-size"] = length(action_text)
+                plate_label = next(node for node in walk_nodes(plate) if node.get("id", "").endswith("-label"))
+                plate_label["properties"]["font-size"] = length(action_text)
+    if strogg:
+        # The labels arrive in runes as the contents show, and translate:
+        # the title over 300 ms, the actions 45 ms apart after it; the wrapped
+        # body fades in. While the contents are hidden, the reset puts every
+        # line back in runes, so the first shown frame never flashes the
+        # translated text.
+        translation = Translation()
+        translation.add(f"{ident}-title", 0, 300, width=round(title_end - foot + 2 * pad, 4))
+        if body_nodes is None:
+            translation.add(f"{ident}-body", 60, 200, rest=body_tint, runes=False)
+        for index, plate in enumerate(actions):
+            translation.add(plate["id"], 100 + 45 * index, 200)
+        tracks, end = translation.tracks(0)
+        doc.timelines.add(f"{ident}Translate", end, tracks)
+        doc.timelines.add(f"{ident}Runes", 1, translation.reset_tracks())
+        doc.events[show].append({"op": "playTimeline", "timeline": f"{ident}Runes"})
+        doc.events[shown].append({"op": "playTimeline", "timeline": f"{ident}Translate"})
     shown_contents = group(f"{ident}-contents", {**FULL, "display": keyword("none")}, [*title, *body, *actions])
     dialog = group(f"{ident}-dialog", absolute(left=left, top=top, width=width, height=height),
                    [glow, soft_glow, frame, shown_contents])
@@ -925,6 +980,13 @@ SHOULDER_LABELS = {
     "nintendo": {"left": "L", "right": "R"},
     "steamdeck": {"left": "L1", "right": "R1"},
 }
+# The label each family prints on its triggers.
+TRIGGER_LABELS = {
+    "xbox": {"left": "LT", "right": "RT"},
+    "playstation": {"left": "L2", "right": "R2"},
+    "nintendo": {"left": "ZL", "right": "ZR"},
+    "steamdeck": {"left": "L2", "right": "R2"},
+}
 # A prompt's key and the button that does the same in menus: Enter is
 # Accept (south), Escape is Back (east), and the cards' Q and E are the
 # previous and next tab (the shoulders).
@@ -1015,7 +1077,7 @@ def face_glyph(ident: str, family: str, position: str, tint: list, size: float =
 
 
 def small_letters(prefix: str, text: str, left: float, top: float, height: float, ink: list, width: float) -> list:
-    """Shoulder labels (L, R, B and 1) drawn as strokes, `height` dp tall from
+    """Shoulder and trigger labels (L, R, B, T, Z, 1 and 2) drawn as strokes, `height` dp tall from
     (`left`, `top`), each glyph 0.55 of its height wide and 0.25 apart."""
     line = stroke(solid(ink), width, minimum=1)
     glyph_w, gap = height * 0.55, height * 0.25
@@ -1029,6 +1091,18 @@ def small_letters(prefix: str, text: str, left: float, top: float, height: float
         elif char == "1":
             paths.append(path(name, [(x + glyph_w * 0.2, top + height * 0.22), (x + glyph_w * 0.6, top),
                                      (x + glyph_w * 0.6, bottom)], closed=False, stroke=line))
+        elif char == "2":
+            paths.append({"id": name, "commands": [
+                {"id": "m", "op": "move", "points": [point(x, top + height * 0.25)]},
+                {"id": "a", "op": "cubic", "points": [point(x, top - height * 0.05), point(right, top - height * 0.05),
+                                                       point(right, top + height * 0.3)]},
+                {"id": "b", "op": "line", "points": [point(x, bottom)]},
+                {"id": "c", "op": "line", "points": [point(right, bottom)]}], "stroke": line})
+        elif char == "T":
+            paths.append(path(f"{name}-bar", [(x, top), (right, top)], closed=False, stroke=line))
+            paths.append(path(name, [(x + glyph_w * 0.5, top), (x + glyph_w * 0.5, bottom)], closed=False, stroke=line))
+        elif char == "Z":
+            paths.append(path(name, [(x, top), (right, top), (x, bottom), (right, bottom)], closed=False, stroke=line))
         elif char in "BR":
             bowl = right - glyph_w * 0.15
             commands = [{"id": "m", "op": "move", "points": [point(x, bottom)]},
@@ -1089,11 +1163,95 @@ def shoulder_glyph(ident: str, family: str, side: str, tint: list, width: float 
                           "height": length(height)}, paths)
 
 
+def trigger_glyph(ident: str, family: str, side: str, tint: list, width: float = 22, height: float = 22) -> dict:
+    """One controller family's trigger (`side` "left" or "right"), taller
+    than a bumper: an 18 dp plate whose top corners round by 7 dp, the label
+    in its lower half. Xbox, PlayStation and Nintendo print their label on
+    the plate, Steam Deck in an outlined plate, and a generic controller
+    shows an outlined plate with a chevron pointing to its side."""
+    top, bottom, radius = (height - 18) / 2, (height + 18) / 2, 7.0
+    inset = max(1.0, (width - 18) / 2)
+    k = 0.5523 * radius
+    right = width - inset
+    plate = [{"id": "m", "op": "move", "points": [point(inset, bottom)]},
+             {"id": "a", "op": "line", "points": [point(inset, top + radius)]},
+             {"id": "b", "op": "cubic", "points": [point(inset, top + radius - k), point(inset + radius - k, top), point(inset + radius, top)]},
+             {"id": "c", "op": "line", "points": [point(right - radius, top)]},
+             {"id": "d", "op": "cubic", "points": [point(right - radius + k, top), point(right, top + radius - k), point(right, top + radius)]},
+             {"id": "e", "op": "line", "points": [point(right, bottom)]},
+             {"id": "z", "op": "close"}]
+    letters_h = 6.6
+    letters_top = bottom - 3 - letters_h
+    if family == "generic":
+        paths = [{"id": "plate", "commands": plate, "stroke": stroke(solid(tint), 1.3, minimum=1)}]
+        mid, tip, back = letters_top + letters_h / 2, (width / 2 - 2.6 if side == "left" else width / 2 + 2.6), \
+            (width / 2 + 1.4 if side == "left" else width / 2 - 1.4)
+        paths.append(path("chevron", [(back, mid - 3.2), (tip, mid), (back, mid + 3.2)], closed=False,
+                          stroke=stroke(solid(tint), 1.5, minimum=1)))
+    else:
+        text = TRIGGER_LABELS[family][side]
+        text_w = len(text) * letters_h * 0.55 + (len(text) - 1) * letters_h * 0.25
+        left = (width - text_w) / 2
+        if family == "steamdeck":
+            paths = [{"id": "plate", "commands": plate, "stroke": stroke(solid(tint), 1.3, minimum=1)}]
+            paths += small_letters("label", text, left, letters_top, letters_h, tint, 1.4)
+        else:
+            paths = [{"id": "plate", "commands": plate, "fill": solid(tint)}]
+            paths += small_letters("label", text, left, letters_top, letters_h, GLYPH_INK, 1.4)
+    return vector(ident, {"position": keyword("relative"), "display": keyword("none"), "width": length(width),
+                          "height": length(height)}, paths)
+
+
+def menu_glyph(ident: str, family: str, tint: list, size: float = 22) -> dict:
+    """One controller family's Menu button (section 13.5), drawn in the
+    family text color: Xbox's three lines on a disc, PlayStation's Options
+    button as three lines on an upright pill, Nintendo's plus on a disc,
+    Steam Deck's three lines in a ring, and a generic controller's three
+    lines in an outlined pill."""
+    scale = size / 22
+    lines_ink = GLYPH_INK if family in ("xbox", "playstation", "nintendo") else tint
+
+    def bars(width: float) -> list:
+        line = stroke(solid(lines_ink), 1.6 * scale, minimum=1)
+        return [path(f"bar-{index}", [((11 - width / 2) * scale, (11 + dy) * scale), ((11 + width / 2) * scale, (11 + dy) * scale)],
+                     closed=False, stroke=line) for index, dy in enumerate((-3.2, 0.0, 3.2))]
+
+    def pill(fill: bool) -> dict:
+        left, right, top, bottom, radius = 5.5 * scale, 16.5 * scale, 1.5 * scale, 20.5 * scale, 5.5 * scale
+        k = 0.5523 * radius
+        commands = [{"id": "m", "op": "move", "points": [point(left, top + radius)]},
+                    {"id": "a", "op": "cubic", "points": [point(left, top + radius - k), point(left + radius - k, top), point(left + radius, top)]},
+                    {"id": "b", "op": "cubic", "points": [point(right - radius + k, top), point(right, top + radius - k), point(right, top + radius)]},
+                    {"id": "c", "op": "line", "points": [point(right, bottom - radius)]},
+                    {"id": "d", "op": "cubic", "points": [point(right, bottom - radius + k), point(right - radius + k, bottom), point(right - radius, bottom)]},
+                    {"id": "e", "op": "cubic", "points": [point(left + radius - k, bottom), point(left, bottom - radius + k), point(left, bottom - radius)]},
+                    {"id": "z", "op": "close"}]
+        return ({"id": "pill", "commands": commands, "fill": solid(tint)} if fill else
+                {"id": "pill", "commands": commands, "stroke": stroke(solid(tint), 1.3 * scale, minimum=1)})
+    if family == "xbox":
+        paths = [circle_path("disc", 11 * scale, 11 * scale, 10.6 * scale, fill=solid(tint))] + bars(9.0)
+    elif family == "playstation":
+        paths = [pill(True)] + bars(6.0)
+    elif family == "nintendo":
+        line = stroke(solid(GLYPH_INK), 1.8 * scale, minimum=1)
+        paths = [circle_path("disc", 11 * scale, 11 * scale, 10.6 * scale, fill=solid(tint)),
+                 path("plus-h", [(6 * scale, 11 * scale), (16 * scale, 11 * scale)], closed=False, stroke=line),
+                 path("plus-v", [(11 * scale, 6 * scale), (11 * scale, 16 * scale)], closed=False, stroke=line)]
+    elif family == "steamdeck":
+        paths = [circle_path("ring", 11 * scale, 11 * scale, 9.9 * scale, line=stroke(solid(tint), 1.5 * scale, minimum=1))] + bars(8.0)
+    else:
+        paths = [pill(False)] + bars(6.0)
+    return vector(ident, {"position": keyword("relative"), "display": keyword("none"), "width": length(size),
+                          "height": length(size)}, paths)
+
+
 def device_glyphs(doc: Document, ident: str, position: str, tint: list, size: float = 22,
                   width: float | None = None) -> list:
-    """Each controller family's button at `position` (a face position, or
-    the "left" or "right" shoulder), each shown only while prompt.glyphs
-    names its family. A shoulder is `width` dp wide (default `size`). An
+    """Each controller family's button at `position` (a face position, the
+    "left" or "right" shoulder, the "left-trigger" or "right-trigger", or
+    "menu"),
+    each shown only while prompt.glyphs names its family. A shoulder or a
+    trigger is `width` dp wide (default `size`). An
     Accept or Back prompt (south or east) also carries each family's button
     at the other of the two, shown while prompt.swapped says confirm has
     moved east (`<ident>-<family>-swapped`)."""
@@ -1111,6 +1269,10 @@ def device_glyphs(doc: Document, ident: str, position: str, tint: list, size: fl
         for node_id, spot, condition in variants:
             if spot in ("left", "right"):
                 node = shoulder_glyph(node_id, family, spot, tint, width or size, size)
+            elif spot in ("left-trigger", "right-trigger"):
+                node = trigger_glyph(node_id, family, spot.split("-")[0], tint, width or size, size)
+            elif spot == "menu":
+                node = menu_glyph(node_id, family, tint, size)
             else:
                 node = face_glyph(node_id, family, spot, tint, size)
             doc.bind(f"{node_id}.display", node_id, "display", {"op": "select", "args": [condition, "block", "none"]})
@@ -1165,6 +1327,18 @@ def prompt_bar(doc: Document, prompts: list, cap_tint: list[float] | None = None
 # trailing edge, under no control of the page's own.
 PROMPT_SELECT, PROMPT_BACK = "#str_231042", "#str_230045"
 KEY_ENTER, KEY_ESCAPE = "#str_107019", "#str_107020"
+# Accept's verb follows focus (section 13.4): the adapter publishes the
+# focused button's prompt to PROMPT_ACCEPT, SELECT for a control that names
+# none, or nothing while no focused control can act. The pages' short verbs:
+PROMPT_ACCEPT = "prompt.accept"
+VERB_LOAD, VERB_DELETE, VERB_SAVE = "#str_231520", "#str_231521", "#str_231522"
+VERB_PLAY, VERB_JOIN = "#str_231523", "#str_231033"
+
+
+def row_prompt(verb: str, chosen: dict) -> dict:
+    """A list row's Accept verb: `verb` while the row holds the choice
+    (`chosen`), when Accept acts on it, otherwise SELECT, which chooses it."""
+    return {"op": "select", "args": [chosen, verb, PROMPT_SELECT]}
 PROMPT_TARGET = 45.0             # the stock plate's target height
 PROMPT_PAD = 8.0                 # Back's target either side of its glyph and verb
 PAGE_BACK_X = U * 532 + PROMPT_PAD   # canvas dp: Back's glyph
@@ -1187,12 +1361,13 @@ def engine_text(key: str) -> dict:
     return {language: texts.get(language, texts["english"]) for language in LANGUAGES}
 
 
-def check_page_prompts(select: bool, face: str, size: float) -> None:
+def check_page_prompts(select: bool, face: str, size: float, verbs: tuple = (), lead_limit: float = PAGE_BAR_LEFT) -> None:
     """Every shipped language's prompts fit a page's bar with the wider of
     each keycap and a controller button: Back's verb ends 8 dp inside the 4:3
-    view's trailing edge, and SELECT starts inside the bar. Generation fails
-    otherwise."""
-    texts = {key: engine_text(key) for key in (KEY_ENTER, KEY_ESCAPE, PROMPT_SELECT, PROMPT_BACK)}
+    view's trailing edge, and Accept, with SELECT or any of the page's
+    `verbs`, starts inside the bar and after `lead_limit` (canvas dp), past
+    whatever the page sets beside the bar. Generation fails otherwise."""
+    texts = {key: engine_text(key) for key in (KEY_ENTER, KEY_ESCAPE, PROMPT_SELECT, PROMPT_BACK, *verbs)}
 
     def glyph(key: str, language: str) -> float:
         return max(22.0, 16 + text_width("lowpixel", texts[key][language], 13))
@@ -1200,25 +1375,30 @@ def check_page_prompts(select: bool, face: str, size: float) -> None:
         end = PAGE_BACK_X + glyph(KEY_ESCAPE, language) + 6 + text_width(face, texts[PROMPT_BACK][language], size)
         if end > CANVAS_W - 8:
             raise SystemExit(f"the prompt bar's Back in {language} ends at {end:.0f} dp, past {CANVAS_W - 8:g}")
-        start = PAGE_BACK_X - 22 - glyph(KEY_ENTER, language) - 6 - text_width(face, texts[PROMPT_SELECT][language], size)
-        if select and start < PAGE_BAR_LEFT:
-            raise SystemExit(f"the prompt bar's SELECT in {language} starts at {start:.0f} dp, before {PAGE_BAR_LEFT:g}")
+        for verb in (PROMPT_SELECT, *verbs):
+            start = PAGE_BACK_X - 22 - glyph(KEY_ENTER, language) - 6 - text_width(face, texts[verb][language], size)
+            if select and start < max(PAGE_BAR_LEFT, lead_limit):
+                raise SystemExit(f"the prompt bar's {verb} in {language} starts at {start:.0f} dp, "
+                                 f"before {max(PAGE_BAR_LEFT, lead_limit):g}")
 
 
 def page_prompts(doc: Document, back: str | None = None, *, action: str | None = None, event: str | None = None,
                  select: bool = True, in_canvas: bool = True, ident: str = "prompts", cap_tint: list[float] | None = None,
-                 verb_face: tuple = ("marine", 14, [1, 1, 1, 0.8]), hot: str = ORANGE) -> dict:
-    """A page's prompt bar (section 13.4): SELECT, the focused control's
-    Accept, then BACK at the trailing end, in the glyphs of the active
-    device. With `action` or `event` Back is the button `back`, standing in
+                 verb_face: tuple = ("marine", 14, [1, 1, 1, 0.8]), hot: str = ORANGE, verbs: tuple = (),
+                 lead_limit: float = PAGE_BAR_LEFT) -> dict:
+    """A page's prompt bar (section 13.4): Accept, then BACK at the trailing
+    end, in the glyphs of the active device. Accept names what the focused
+    control does: its own prompt verb (one of the page's `verbs`), SELECT for
+    a control without one, and Accept leaves the bar while no focused control
+    can act. With `action` or `event` Back is the button `back`, standing in
     for the stock BACK plate in its 45 dp target: the pointer or focus turns
     its verb `hot` and lights its glyph, focus underlines it and a press
     insets it 1 dp. Otherwise both are legends. Legends never take the
-    pointer. `select` False leaves SELECT out where Accept has nothing to do.
+    pointer. `select` False leaves Accept out where it has nothing to do.
     The bar sits in a 4:3 canvas group, or with `in_canvas` False in a node
-    spanning the view."""
+    spanning the view; Accept starts after `lead_limit` (canvas dp)."""
     face, size, verb_tint = verb_face
-    check_page_prompts(select, face, size)
+    check_page_prompts(select, face, size, verbs, lead_limit)
     tint = cap_tint or [1, 1, 1, 0.85]
     middle = (PROMPT_TARGET - 22) / 2
     back_x = PAGE_BACK_X - PAGE_BAR_LEFT
@@ -1230,6 +1410,10 @@ def page_prompts(doc: Document, back: str | None = None, *, action: str | None =
     if select:
         name = f"prompt-{PROMPT_SELECT[5:]}"
         lead = [prompt_glyph(doc, name, KEY_ENTER, tint), verb_label(f"{name}-verb", PROMPT_SELECT)]
+        doc.state[PROMPT_ACCEPT] = {"type": "string", "initial": PROMPT_SELECT}
+        doc.bind(f"{name}-verb.text", f"{name}-verb", "text", {"state": PROMPT_ACCEPT})
+        doc.bind(f"{ident}-lead.display", f"{ident}-lead", "display",
+                 {"op": "select", "args": [{"op": "==", "args": [{"state": PROMPT_ACCEPT}, ""]}, "none", "flex"]})
     leading = group(f"{ident}-lead", {**absolute(top=middle, height=22, right=PAGE_BAR_W - back_x + 22), "display": keyword("flex"),
                                       "flex-direction": keyword("row"), "align-items": keyword("center"),
                                       "pointer-events": keyword("none")}, lead)
@@ -1975,6 +2159,24 @@ def campaign_document(campaigns: bool) -> dict:
 # ------------------------------------------------------------------- the pause
 
 OBJECTIVE_ROWS = 3   # the stock objective screen's three slots
+LEVEL_SHOT = 110.0   # u: the level block's levelshot, short enough to leave its foot two time lines
+LEVEL_FOOT = 29.0    # u: the time lines' rule above the card's foot
+
+
+def level_time_lines(doc: Document, pw: float, h: float, tint: list[float]) -> list:
+    """The level block's foot (section 13.7): the time in the mission and the
+    run's total on one line, how long ago the newest save was written on the
+    next, under a faint rule while either has text."""
+    rule = vector("level-stats-rule", {**absolute(left=15, top=h - U * LEVEL_FOOT, width=pw, height=1), "display": keyword("none")},
+                  [path("rule", [(0, 0.5), (pw, 0.5)], closed=False, stroke=stroke(solid([1, 1, 1, 0.1]), 1))])
+    lines = []
+    for index, (ident, state) in enumerate((("level-stats", "pause_stats"), ("level-saved", "pause_saved"))):
+        lines.append(label(ident, "#str_230030", {**absolute(left=15, top=h - U * (27 - 10 * index), width=pw, height=U * 10),
+            **typeface("lowpixel", 11, U * 10, tint), "white-space": keyword("nowrap")}))
+        doc.bind(f"{ident}.text", ident, "text", {"state": state})
+    empty = {"op": "&&", "args": [{"op": "==", "args": [{"state": "pause_stats"}, ""]}, {"op": "==", "args": [{"state": "pause_saved"}, ""]}]}
+    doc.bind("level-stats-rule.display", "level-stats-rule", "display", {"op": "select", "args": [empty, "none", "block"]})
+    return [rule, *lines]
 
 
 def level_row_bindings(doc: Document, ident: str, index: int, text_nodes: tuple) -> dict:
@@ -2008,9 +2210,10 @@ def level_block(doc: Document) -> dict:
     """The current level block in the emblem's place (section 13.7): a card
     (section 6: black 0.94 in a marine.rail.card rail, 12 and 3 dp cuts, a
     40 dp header) with the levelshot in a picture frame, the level, the
-    difficulty, the objectives the player holds and the time in the mission.
-    The game publishes the objectives, newest first; a map's own objectives
-    summary stands in while it publishes none."""
+    difficulty, the objectives the player holds and, at its foot, the time in
+    the mission with the run's total and the last save. The game publishes
+    the objectives, newest first; a map's own objectives summary stands in
+    while it publishes none."""
     x, y, w, h = U * 374, U * 118, U * 262, U * 270
     major, minor = 12.0, 3.0
     card = [(minor, 0), (w - major, 0), (w, major), (w, h - minor), (w - minor, h), (major, h), (0, h - major), (0, minor)]
@@ -2023,7 +2226,7 @@ def level_block(doc: Document) -> dict:
         path("rail", card, stroke=stroke(solid(rgb(RAIL_CARD)), 1.5)),
         marker_path("mark", 14, 16, 8, rgb(MARKER)),
     ])
-    pw, ph = w - 30, U * 118
+    pw, ph = w - 30, U * LEVEL_SHOT
     shot = picture("level-shot", "", {**absolute(left=15, top=header + 12, width=pw, height=ph)})
     shot_frame = vector("level-shot-frame", absolute(left=15, top=header + 12, width=pw, height=ph), [
         path("frame", [(0.5, 0.5), ({"fraction": 1, "dp": -0.5}, 0.5), ({"fraction": 1, "dp": -0.5}, {"fraction": 1, "dp": -0.5}), (0.5, {"fraction": 1, "dp": -0.5})],
@@ -2037,7 +2240,7 @@ def level_block(doc: Document) -> dict:
         **typeface("lowpixel", 17, 20, [1, 1, 1, 0.6]), "white-space": keyword("nowrap")})
     objectives_head = label("level-objectives-head", "#str_200291", {**absolute(left=15, top=below + 54, width=pw, height=18),
         **typeface("marine", 14, 18, rgb(OBJECTIVE_HEAD)), "white-space": keyword("nowrap"), "display": keyword("block")})
-    rows_top, row_h, stats_rule = below + 76, U * 12.5, h - U * 22
+    rows_top, row_h, stats_rule = below + 76, U * 12.5, h - U * LEVEL_FOOT
     objectives = label("level-objectives", "#str_230030", {**absolute(left=15, top=rows_top, width=pw, height=stats_rule - rows_top - 3),
         **typeface("lowpixel", 14, 18, [0.82, 0.87, 0.71, 1]), "overflow": keyword("hidden"), "display": keyword("block")})
     # Each objective with its state: an open one behind the atlas marker,
@@ -2053,14 +2256,7 @@ def level_block(doc: Document) -> dict:
                           [mark, level_check(ident, rgb("#B5C784")), title]))
         completed = level_row_bindings(doc, ident, index, (f"{ident}-text",))
         doc.bind(f"{ident}-text.color", f"{ident}-text", "color", [1, 1, 1, {"op": "select", "args": [completed, 0.5, 0.9]}])
-    # The time in the mission under a faint rule at the foot of the card.
-    rule = vector("level-stats-rule", {**absolute(left=15, top=stats_rule, width=pw, height=1), "display": keyword("none")},
-                  [path("rule", [(0, 0.5), (pw, 0.5)], closed=False, stroke=stroke(solid([1, 1, 1, 0.1]), 1))])
-    stats = label("level-stats", "#str_230030", {**absolute(left=15, top=h - U * 20, width=pw, height=U * 14),
-        **typeface("lowpixel", 11, U * 14, rgb(LEVEL_STATS)), "white-space": keyword("nowrap")})
-    doc.bind("level-stats.text", "level-stats", "text", {"state": "pause_stats"})
-    doc.bind("level-stats-rule.display", "level-stats-rule", "display",
-             {"op": "select", "args": [{"op": "==", "args": [{"state": "pause_stats"}, ""]}, "none", "block"]})
+    foot = level_time_lines(doc, pw, h, rgb(LEVEL_STATS))
     doc.bind("level-shot.image", "level-shot", "image", {"state": "pause_shot"})
     doc.bind("level-name.text", "level-name", "text", {"state": "pause_level"})
     doc.bind("level-detail.text", "level-detail", "text", {"state": "pause_detail"})
@@ -2072,7 +2268,7 @@ def level_block(doc: Document) -> dict:
              {"op": "select", "args": [{"op": "||", "args": [published, {"op": "!=", "args": [{"state": "pause_objectives"}, ""]}]},
                                        "block", "none"]})
     return group("level-block", absolute(left=x, top=y, width=w, height=h),
-                 [frame, shot, shot_frame, heading, name, detail, objectives_head, objectives, *rows, rule, stats])
+                 [frame, shot, shot_frame, heading, name, detail, objectives_head, objectives, *rows, *foot])
 
 
 # ----------------------------------------------------------- the Strogg pause
@@ -2206,6 +2402,21 @@ class Translation:
 
     def bar(self, ident: str, delay: float, slide: float) -> None:
         self.bars.append((ident, delay, slide))
+
+    def reset_tracks(self) -> list:
+        """Tracks that put every line back in runes at once: the rune copy at
+        0.80, the R_Strogg label or its wrapper hidden."""
+        runes = [*rgb(ST_SELECT)[:3], 0.8]
+        result = []
+        for prefix, _, _, rest, white, _, has_runes in self.lines:
+            if has_runes:
+                result.append(track(f"{prefix}-rune", "color", [(0, colour(runes)), (1, colour(runes))]))
+            if rest is None:
+                result.append(track(f"{prefix}-latin", "opacity", [(0, number(0)), (1, number(0))]))
+            else:
+                hidden = [1, 1, 1, 0] if white else [*rest[:3], 0]
+                result.append(track(prefix, "color", [(0, colour(hidden)), (1, colour(hidden))]))
+        return result
 
     @staticmethod
     def pop(scale: float, width: float | None) -> dict:
@@ -2433,6 +2644,85 @@ def strogg_plinth(links: list) -> dict:
     return vector("plinth", {**absolute(left=U * left, top=U * top, width=width, height=height), "opacity": number(1)}, [shape], [row])
 
 
+STROGG_SHOULDER = 1.732   # a 30-degree shoulder runs this far along per unit it falls
+
+
+def strogg_modal_silhouette(width: float, height: float) -> list:
+    """modal_silhouette in the Strogg family (section 13.7): the slot keeps
+    its 17 dp depth but its flanks fall at 30 degrees, and the lower-leading
+    chamfer becomes a 30-degree shoulder over the same 38 dp run. The
+    silhouette takes the Strogg level card's fill and its #F59512 rail."""
+    inset, raised, bottom = width * 7 / 512, 3.5625, height - 5.34375
+    slot_lead, slot_trail = width * 14 / 512, width * 388 / 512
+    depth = 17.0
+    flank = round(depth * STROGG_SHOULDER, 4)
+    run, rise = 38.0, round(38.0 / STROGG_SHOULDER, 4)
+    right = width - inset
+    outline = [(inset, raised), (slot_lead, raised), (slot_lead + flank, raised + depth), (slot_trail - flank, raised + depth),
+               (slot_trail, raised), (right, raised), (right, bottom), (inset + run, bottom), (inset, bottom - rise)]
+    return [path("frame", outline, fill=solid(rgb(ST_CARD, 0.85))),
+            path("rail", outline, stroke=stroke(solid(rgb(ST_LINE, 0.75)), 1.5))]
+
+
+def strogg_action_plate(doc: Document, ident: str, key: str, left: float, top: float, *, action: str | None = None,
+                        event: str | None = None, width: float = 180) -> dict:
+    """action_plate in the Strogg family (section 13.7): the 35 dp band in its
+    45 dp target keeps its 20 dp run, but the lower-leading cut becomes a
+    30-degree shoulder; the fill is the Strogg plates' black fade and the rail
+    #F59512. The slanted marker and the R_Strogg label turn #FFCC00 on focus.
+    The label rests translated over its rune copy; the confirmation's
+    translation plays them, so the control's states keep the label's color."""
+    band_top, band_bottom = 5.0, 40.0
+    run, rise = 20.0, round(20.0 / STROGG_SHOULDER, 4)
+    fade = [(0, [0, 0, 0, 1]), (0.55, [0, 0, 0, 1]), (0.8, [0, 0, 0, 0.5]), (1, [0, 0, 0, 0])]
+    rail = [(0, rgb(ST_LINE, 0.9)), (0.55, rgb(ST_LINE, 0.9)), (1, rgb(ST_LINE, 0.2))]
+    whole = absolute(left=0, top=0, width=width, height=45)
+    plate = vector(f"{ident}-plate", {**whole, "opacity": number(0.4)}, [
+        path("fill", [(0, band_top), (width, band_top), (width, band_bottom), (run, band_bottom), (0, band_bottom - rise)],
+             fill=linear((0, 0), (width, 0), fade)),
+        path("rail", [(0.75, band_top), (0.75, band_bottom - rise), (run, band_bottom - 0.75), (width, band_bottom - 0.75)],
+             closed=False, stroke=stroke(linear((0, 0), (width, 0), rail), 1.5)),
+    ])
+    focus = vector(f"{ident}-focus", {**whole, "opacity": number(0)}, [
+        path("inset", [(run + 2, band_bottom - 3.5), (width - 20, band_bottom - 3.5)], closed=False,
+             stroke=stroke(solid(rgb(ST_SELECT)), 1.2))])
+
+    def slanted(tint: list[float]) -> dict:
+        lean = round(8 * 0.267, 4)
+        return path("mark", [(lean, 0), (8, 0), (8 - lean, 8), (0, 8)], fill=solid(tint))
+    marker_rest = vector(f"{ident}-marker", {**absolute(left=14, top=14, width=8, height=8), "opacity": number(0.4)}, [slanted(rgb(ST_LINE))])
+    marker_hot = vector(f"{ident}-marker-hot", {**absolute(left=14, top=14, width=8, height=8), "opacity": number(0)},
+                        [slanted(rgb(ST_SELECT))])
+    size = 20.0
+    read, hot = rgb(ST_READ, 0.8), rgb(ST_SELECT)
+    text_node = label(f"{ident}-label", key, {"position": keyword("relative"), "display": keyword("block"),
+                                              **typeface("r_strogg", size, 45, read), "white-space": keyword("nowrap"),
+                                              "transform": transform()})
+    latin = group(f"{ident}-latin", {"position": keyword("relative"), "display": keyword("block"), "opacity": number(1),
+                                     "transform": transform()}, [text_node])
+    rune = label(f"{ident}-rune", key, {**absolute(left=0, top=round(-rune_rise(size), 3)),
+                                        **typeface("strogg", round(size * RUNE_SCALE, 3), 45, [*rgb(ST_SELECT)[:3], 0]),
+                                        "white-space": keyword("nowrap"), "transform": transform(), "pointer-events": keyword("none")})
+    fit = group(f"{ident}-fit", absolute(left=26, top=0, width=width - 30, height=45), [rune, latin])
+    def state(plate_alpha, marker, marker_lit, focus_alpha, tint, moved):
+        return [(f"{ident}-plate", "opacity", number(plate_alpha)), (f"{ident}-marker", "opacity", number(marker)),
+                (f"{ident}-marker-hot", "opacity", number(marker_lit)), (f"{ident}-focus", "opacity", number(focus_alpha)),
+                (f"{ident}-label", "color", colour(tint)), (f"{ident}-label", "transform", moved)]
+    ids = doc.states(ident, {
+        "default": state(0.4, 0.4, 0, 0, read, transform()),
+        "hover": state(0.8, 0, 1, 0, hot, transform(sx=1.03, sy=1.03)),
+        "focus": state(0.8, 0, 1, 1, hot, transform(sx=1.03, sy=1.03)),
+        "pressed": state(1, 0, 1, 1, hot, transform(tx=1, ty=1, sx=1.03, sy=1.03)),
+        "disabled": state(0.4, 0.4, 0, 0, rgb(ST_READ, 0.4), transform()),
+    })
+    control = {"role": "button", "label": key, "states": ids}
+    if action:
+        control["action"] = action
+    else:
+        control["event"] = event
+    return group(ident, absolute(left=left, top=top, width=width, height=45), [plate, focus, marker_rest, marker_hot, fit], control=control)
+
+
 def strogg_level_block(doc: Document, translation: Translation, start: float) -> dict:
     """The Strogg level block (section 13.7): the Marine block's content in a
     chamfered card (10 u at every corner, #0A0503 at 0.94 in a #F59512 rail
@@ -2462,7 +2752,7 @@ def strogg_level_block(doc: Document, translation: Translation, start: float) ->
                                   "image-blend": keyword("additive"), "image-color": colour([1, 0.75, 0.4, 0.14])}, fit="fill"))
     grain = group("level-grain", {**absolute(left=inset, top=inset, width=w - 2 * inset, height=h - 2 * inset),
                                   "overflow": keyword("hidden"), "pointer-events": keyword("none")}, tiles)
-    pw, ph = w - 30, U * 118
+    pw, ph = w - 30, U * LEVEL_SHOT
     px, py, chamfer = 15, header + 12, U * 6
     shot = picture("level-shot", "", {**absolute(left=px, top=py, width=pw, height=ph)})
     corners = vector("level-shot-frame", absolute(left=px, top=py, width=pw, height=ph), [
@@ -2484,7 +2774,7 @@ def strogg_level_block(doc: Document, translation: Translation, start: float) ->
     line("level-detail", "#str_230030", absolute(left=15, top=below + 26, width=pw), 17, 20, rgb(ST_SELECT), 140, 200)
     line("level-objectives-head", "#str_200291", absolute(left=15, top=below + 54, width=pw), 14.5, 18, rgb(ST_SELECT), 180, 200,
          display=keyword("block"))
-    rows_top, row_h, stats_rule = below + 76, U * 12.5, h - U * 22
+    rows_top, row_h, stats_rule = below + 76, U * 12.5, h - U * LEVEL_FOOT
     # A map's own objectives summary wraps, so it fades in with its heading
     # rather than translating.
     objectives = label("level-objectives", "#str_230030", {**absolute(left=15, top=rows_top, width=pw, height=stats_rule - rows_top - 3),
@@ -2504,13 +2794,7 @@ def strogg_level_block(doc: Document, translation: Translation, start: float) ->
                                   "opacity": number(1)}, [mark, level_check(ident, rgb(ST_SELECT)), *text_parts]))
         completed = level_row_bindings(doc, ident, index, (f"{ident}-text", f"{ident}-text-rune"))
         doc.bind(f"{ident}.opacity", ident, "opacity", {"op": "select", "args": [completed, 0.55, 1]})
-    rule = vector("level-stats-rule", {**absolute(left=15, top=stats_rule, width=pw, height=1), "display": keyword("none")},
-                  [path("rule", [(0, 0.5), (pw, 0.5)], closed=False, stroke=stroke(solid([1, 1, 1, 0.1]), 1))])
-    stats = label("level-stats", "#str_230030", {**absolute(left=15, top=h - U * 20, width=pw, height=U * 14),
-        **typeface("lowpixel", 11, U * 14, rgb(ST_STATS)), "white-space": keyword("nowrap")})
-    doc.bind("level-stats.text", "level-stats", "text", {"state": "pause_stats"})
-    doc.bind("level-stats-rule.display", "level-stats-rule", "display",
-             {"op": "select", "args": [{"op": "==", "args": [{"state": "pause_stats"}, ""]}, "none", "block"]})
+    foot = level_time_lines(doc, pw, h, rgb(ST_STATS))
     doc.bind("level-shot.image", "level-shot", "image", {"state": "pause_shot"})
     for ident, value in (("level-name", "pause_level"), ("level-detail", "pause_detail")):
         doc.bind(f"{ident}.text", ident, "text", {"state": value})
@@ -2523,7 +2807,7 @@ def strogg_level_block(doc: Document, translation: Translation, start: float) ->
     doc.bind("level-objectives-head.display", "level-objectives-head", "display", shown)
     doc.bind("level-objectives-head-rune.display", "level-objectives-head-rune", "display", shown)
     return group("level-block", absolute(left=x, top=y, width=w, height=h),
-                 [frame, grain, shot, corners, *lines, objectives, *rows, rule, stats])
+                 [frame, grain, shot, corners, *lines, objectives, *rows, *foot])
 
 
 def strogg_title(translation: Translation) -> dict:
@@ -2778,6 +3062,7 @@ def pause_document(strogg: bool = False) -> dict:
         "pause_objective_count": {"type": "number", "initial": 0},
         **{f"pause_objective_{index}": {"type": "string", "initial": ""} for index in range(OBJECTIVE_ROWS)},
         "pause_stats": {"type": "string", "initial": ""},
+        "pause_saved": {"type": "string", "initial": ""},
     })
     doc.session("resume", "resume")
     doc.session("saveGame", "saveGame")
@@ -2787,9 +3072,10 @@ def pause_document(strogg: bool = False) -> dict:
     doc.session("quitToMenu", "quitToMenu")
     doc.session("quit", "quit")
     # QUIT CURRENT GAME outruns the lit slot in French: it runs on over the
-    # raised trailing section, as the longer dialog titles do.
-    quit_modal = confirmation(doc, "quitModal", "#str_200004", "#str_200174", "quitToMenu", wide_title=True)
-    exit_modal = confirmation(doc, "exitModal", "#str_200169", "#str_200170", "quit", frame_leave_ms=200)
+    # raised trailing section, as the longer dialog titles do. The Strogg
+    # pause asks in its own family.
+    quit_modal = confirmation(doc, "quitModal", "#str_200004", "#str_200174", "quitToMenu", wide_title=True, strogg=strogg)
+    exit_modal = confirmation(doc, "exitModal", "#str_200169", "#str_200170", "quit", frame_leave_ms=200, strogg=strogg)
     doc.events["onBack"] = [{"op": "action", "action": "resume"}]
     items = [("nav_resume", "#str_200381", "resume", None), ("nav_savegame", "#str_200003", "saveGame", None),
              ("nav_loadgame", "#str_200001", "loadGame", None), ("nav_restart", "#str_229983", "restartLevel", None),
@@ -2838,8 +3124,7 @@ def pause_document(strogg: bool = False) -> dict:
                ("settings", "#str_200009", 332.2)]
     objectives_bar, objectives = objectives_page(doc, strogg)
     if strogg:
-        # The Strogg light, crosses and bands; the confirmations stay the
-        # stock dialogs of section 6.
+        # The Strogg light, crosses and bands.
         field = lit_field("field", 0.55, glow=ST_LIGHT, grid={"tint": rgb(ST_GRID), "arm_u": 5.5})
         bands = framing_bands("band", STROGG_BANDS)
         prompt = prompt_bar(doc, prompts, cap_tint=rgb(ST_SELECT, 0.85), verb_face=("r_strogg", 14, rgb(ST_READ, 0.8)))

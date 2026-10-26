@@ -1,5 +1,7 @@
 # Steam Deck
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 openQ4 supports Steam Deck through the dedicated `openQ4-steamdeck` launcher shipped in Linux packages as of March 30, 2026.
 
 ## Launching

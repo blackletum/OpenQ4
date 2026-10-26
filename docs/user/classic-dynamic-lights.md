@@ -1,5 +1,7 @@
 # Classic Dynamic Lights
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 Quake II and Quake III lit the world from the action itself. Every muzzle flash threw a pool of light
 across the room, every rocket and plasma ball carried its own glow down the corridor, and every
 explosion flashed the walls for a tenth of a second. Quake 4 replaced that with authored BSE effects,

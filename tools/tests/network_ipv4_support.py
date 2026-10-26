@@ -239,57 +239,59 @@ def validate_posix_dual_stack_bind_contract(body: str) -> None:
 
 
 def validate_windows_per_socket_lag_contract(source: str) -> None:
-    """Keep latency queues private to the idPort instance that owns them."""
-    if re.search(r"\bidUDPLag\s*\*\s*udpPorts\b|\budpPorts\s*\[", source):
-        raise AssertionError("Windows latency state is globally indexed by bound port")
+    """Keep simulated-network delay lines private to the idPort instance that owns them."""
+    if re.search(r"\bidUDPLag\s*\*\s*udpPorts\b|\budpPorts\s*\[|\bnet_impairedPorts\s*\[\s*bound_to", source):
+        raise AssertionError("Windows delay-line state is globally indexed by bound port")
 
     constructor = function_body(source, "idPort::idPort()", "Windows UDP socket construction")
-    require(constructor, "platformData = NULL;", "Windows per-socket latency construction")
+    require(constructor, "platformData = NULL;", "Windows per-socket delay-line construction")
 
+    allocation = "platformData = Net_OpenImpairment( bound_to.port );"
     port_init = function_body(source, "bool idPort::InitForPort", "Windows UDP socket initialization")
-    require(port_init, "platformData = new idUDPLag;", "Windows per-socket latency allocation")
-    require_before(port_init, "Close();", "platformData = new idUDPLag;", "Windows latency-state replacement")
+    require(port_init, allocation, "Windows per-socket delay-line allocation")
+    require_before(port_init, "Close();", allocation, "Windows delay-line replacement")
     require_before(
         port_init,
         "if ( !Net_BindDualStack(",
-        "platformData = new idUDPLag;",
-        "Windows latency allocation after successful bind",
+        allocation,
+        "Windows delay-line allocation after successful bind",
     )
     failed_bind = function_body(
         port_init,
         "if ( !Net_BindDualStack(",
         "Windows failed UDP initialization",
     )
-    reject(failed_bind, "new idUDPLag", "Windows failed-bind latency allocation")
+    reject(failed_bind, "Net_OpenImpairment", "Windows failed-bind delay-line allocation")
 
     close = function_body(source, "void idPort::Close", "Windows UDP socket close")
-    release = function_body(close, "if ( platformData != NULL )", "Windows per-socket latency release")
-    require(release, "delete static_cast<idUDPLag *>( platformData );", "Windows exact latency-state release")
-    require(release, "platformData = NULL;", "Windows latency-state close sentinel")
-    if release.index("delete static_cast<idUDPLag *>( platformData );") > release.index("platformData = NULL;"):
-        raise AssertionError("Windows idPort clears its latency pointer before deleting the owned state")
+    release = function_body(close, "if ( platformData != NULL )", "Windows per-socket delay-line release")
+    release_call = "Net_CloseImpairment( static_cast<netImpairmentPort_t *>( platformData ) );"
+    require(release, release_call, "Windows exact delay-line release")
+    require(release, "platformData = NULL;", "Windows delay-line close sentinel")
+    if release.index(release_call) > release.index("platformData = NULL;"):
+        raise AssertionError("Windows idPort clears its delay-line pointer before deleting the owned state")
 
     for signature, context, queue_tokens in (
         (
             "bool idPort::GetPacket(",
             "Windows delayed UDP receive",
-            ("lag->recieveFirst", "lag->udpMsgAllocator"),
+            ("impairment->receive.Offer(", "impairment->receive.Pop(", "impairment->FlushSends("),
         ),
         (
             "void idPort::SendPacket",
             "Windows delayed UDP send",
-            ("lag->sendFirst", "lag->udpMsgAllocator"),
+            ("impairment->send.Offer(", "impairment->FlushSends("),
         ),
     ):
         body = function_body(source, signature, context)
-        lag_declaration = "idUDPLag *lag = static_cast<idUDPLag *>( platformData );"
-        require(body, lag_declaration, context)
-        require(body, "lag == NULL", f"{context} closed-port guard")
-        if body.index(lag_declaration) > body.index("lag == NULL"):
-            raise AssertionError(f"{context} tests its private latency state before loading it")
+        declaration = "netImpairmentPort_t *impairment = static_cast<netImpairmentPort_t *>( platformData );"
+        require(body, declaration, context)
+        require(body, "impairment == NULL", f"{context} closed-port guard")
+        if body.index(declaration) > body.index("impairment == NULL"):
+            raise AssertionError(f"{context} tests its private delay-line state before loading it")
         for token in queue_tokens:
             require(body, token, f"{context} private queue")
-        reject(body, "bound_to.port", f"{context} port-keyed latency lookup")
+        reject(body, "bound_to.port", f"{context} port-keyed delay-line lookup")
 
 
 def validate_idport_platform_data_mirror() -> None:
@@ -311,7 +313,7 @@ def validate_idport_platform_data_mirror() -> None:
     if game_api.is_file():
         require(
             game_api.read_text(encoding="utf-8", errors="strict"),
-            "const int GAME_API_VERSION\t\t= 53;",
+            "const int GAME_API_VERSION\t\t= 54;",
             "idPort-layout game API revision",
         )
 
@@ -327,7 +329,7 @@ def validate_windows_networking() -> None:
     ):
         require(source, token, "Windows global socket sentinels")
 
-    resolver = function_body(source, "static bool Net_StringToSockaddr", "Windows IPv4 resolver")
+    resolver = function_body(source, "static int Net_ResolveSockaddrs", "Windows IPv4 resolver")
     for token in (
         "idNetworkEndpoint::Split",
         "getaddrinfo",
@@ -339,18 +341,21 @@ def validate_windows_networking() -> None:
         require(resolver, token, "Windows IPv4 resolver")
     # An explicit family must still take the first usable record, and AF_UNSPEC
     # must keep preferring an A record so the legacy IPv4 transports behave
-    # exactly as before for a dual-stack hostname.
+    # exactly as before for a dual-stack hostname. The shared ordering does both;
+    # CoreSafetyTest proves its table.
     require(
         resolver,
-        "if ( selected == NULL || ( family == AF_UNSPEC && selected->ai_family != AF_INET && result->ai_family == AF_INET ) )",
+        "idNetworkEndpoint::OrderCandidates( families, usableCount, family == AF_UNSPEC, order, maxOrder )",
         "Windows IPv4 A-record preference",
     )
+    require(resolver, "result->ai_addrlen > sizeof( *addresses )", "Windows resolver copy bound")
+    require(resolver, "usableCount < idNetworkEndpoint::MAX_RESOLVER_RESULTS", "Windows resolver record bound")
+    single = function_body(source, "static bool Net_StringToSockaddr", "Windows single-address resolver")
     require(
-        resolver,
-        "if ( family != AF_UNSPEC || result->ai_family == AF_INET )",
-        "Windows IPv4 resolver selection break",
+        single,
+        "return Net_ResolveSockaddrs( text, address, addressLen, 1, doDNSResolve, family, defaultPort, socketType ) == 1;",
+        "Windows single-address resolver keeps the first candidate",
     )
-    require(resolver, "result->ai_addrlen > sizeof( *address )", "Windows resolver copy bound")
     require(
         resolver,
         "endpoint.hasPort ? endpoint.port : defaultPort",
@@ -365,7 +370,7 @@ def validate_windows_networking() -> None:
         "if ( effectivePort < 0 || effectivePort > 65535 )",
         "Windows resolver port guard",
     )
-    require(resolver_port_guard, "return false;", "Windows resolver invalid-port result")
+    require(resolver_port_guard, "return 0;", "Windows resolver invalid-port result")
 
     socket_body = function_body(source, "SOCKET NET_IPSocket", "Windows UDP bind")
     socket_port_guard = function_body(
@@ -456,95 +461,33 @@ def validate_windows_networking() -> None:
     require(public_receive, "size = 0;", "Windows public packet-size initialization")
     require(public_receive, "memset( &from, 0, sizeof( from ) );", "Windows public packet-address initialization")
     require(public_receive, "from.type = NA_BAD;", "Windows public packet-address sentinel")
-    public_receive_guard = "if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || lag == NULL || data == NULL || maxSize <= 0 )"
+    public_receive_guard = "if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || impairment == NULL || data == NULL || maxSize <= 0 )"
     require(public_receive, public_receive_guard, "Windows public packet input guard")
     if public_receive.index("from.type = NA_BAD;") > public_receive.index(public_receive_guard):
         raise AssertionError("Windows packet source must be initialized before early returns")
 
-    receive_queue_guard = function_body(
-        public_receive,
-        "if ( size > MAX_UDP_MSG_SIZE )",
-        "Windows delayed-receive queue capacity",
-    )
-    require(receive_queue_guard, "continue;", "Windows oversized delayed-receive result")
-    require_before(
-        public_receive,
-        "if ( size > MAX_UDP_MSG_SIZE )",
-        "udpMsgAllocator.Alloc()",
-        "Windows delayed-receive queue allocation",
-    )
-
-    queued_guard_token = "if ( msg->size > maxSize )"
-    queued_copy_token = "memcpy( data, msg->data, msg->size );"
-    if queued_guard_token in public_receive:
-        queued_copy_guard = function_body(
-            public_receive,
-            queued_guard_token,
-            "Windows delayed-receive caller capacity",
-        )
-        require_before(
-            public_receive,
-            queued_guard_token,
-            queued_copy_token,
-            "Windows delayed-receive caller capacity",
-        )
-    else:
-        helper_name, helper_body = called_c_helper_with_token(
-            source,
-            public_receive,
-            queued_copy_token,
-            queued_guard_token,
-            "Windows delayed-receive capacity helper",
-        )
-        queued_copy_guard = function_body(
-            helper_body,
-            queued_guard_token,
-            "Windows delayed-receive helper capacity",
-        )
-        require_before(
-            public_receive,
-            f"{helper_name}(",
-            queued_copy_token,
-            "Windows delayed-receive capacity helper call",
-        )
-        if queued_copy_token in helper_body:
-            require_before(
-                helper_body,
-                queued_guard_token,
-                queued_copy_token,
-                "Windows delayed-receive helper capacity",
-            )
-    for token in (
-        "recieveFirst = msg->next;",
-        "recieveLast = NULL;",
-        "udpMsgAllocator.Free( msg );",
-        "size = 0;",
-        "memset( &from, 0, sizeof( from ) );",
-        "from.type = NA_BAD;",
-        "return false;",
-    ):
-        require(queued_copy_guard, token, "Windows delayed-receive caller capacity")
-    reject(queued_copy_guard, "memcpy( data", "Windows rejected delayed-receive copy")
+    # Delayed datagrams leave through the caller's own capacity: the delay line
+    # discards a due datagram larger than maxSize instead of copying it.
+    queued_release = "return impairment->receive.Pop( now, from, data, maxSize, size );"
+    require(public_receive, queued_release, "Windows delayed-receive caller capacity")
+    require_before(public_receive, "from.type = NA_BAD;\n\treturn impairment->receive.Pop(", queued_release,
+                   "Windows delayed-receive source reset")
+    impairment_header = read("src/sys/NetworkImpairment.h")
+    pop = function_body(impairment_header, "bool\t\tPop( int now", "delay-line release")
+    oversize = function_body(pop, "if ( buffer == NULL || length > maxSize )", "delay-line caller capacity")
+    require(oversize, "stats.discarded++;", "delay-line oversize datagram")
+    reject(oversize, "memcpy(", "delay-line rejected copy")
+    require_before(pop, "if ( buffer == NULL || length > maxSize )", "memcpy( buffer", "delay-line copy after the capacity check")
+    offer = function_body(impairment_header, "int\t\t\tOffer(", "delay-line admission")
+    require(offer, "if ( size < 0 || size > MAX_DATAGRAM_BYTES || ( size > 0 && data == NULL ) )", "delay-line datagram bound")
 
     send_packet = function_body(source, "void idPort::SendPacket", "Windows public UDP send")
     public_send_socket_guard = function_body(
         send_packet,
-        "if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || lag == NULL )",
+        "if ( ( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || impairment == NULL )",
         "Windows public UDP send socket guard",
     )
     require(public_send_socket_guard, "return;", "Windows public UDP send socket guard")
-    send_queue_guard = function_body(
-        send_packet,
-        "if ( size > MAX_UDP_MSG_SIZE )",
-        "Windows delayed-send queue capacity",
-    )
-    require(send_queue_guard, "return;", "Windows oversized delayed-send result")
-    require_before(
-        send_packet,
-        "if ( size > MAX_UDP_MSG_SIZE )",
-        "udpMsgAllocator.Alloc()",
-        "Windows delayed-send queue allocation",
-    )
 
     public_init = function_body(source, "bool idPort::InitForPort", "Windows public UDP initialization")
     public_port_guard = function_body(
@@ -789,12 +732,18 @@ def validate_posix_networking() -> None:
     require(linux_storage, "netint[ num_interfaces ].ip = ip;", "Linux valid-netmask storage")
     require(linux_storage, "netint[ num_interfaces ].mask = mask;", "Linux valid-netmask storage")
 
-    resolver = function_body(source, "static bool Sys_ResolveSockaddr", "POSIX address resolver")
+    resolver = function_body(source, "static int Sys_ResolveSockaddrs", "POSIX address resolver")
     require(
         resolver,
         "endpoint.hasPort ? endpoint.port : defaultPort",
         "POSIX explicit TCP endpoint port precedence",
     )
+    require(
+        resolver,
+        "idNetworkEndpoint::OrderCandidates( families, usableCount, family == AF_UNSPEC, order, maxOrder )",
+        "POSIX A-record preference",
+    )
+    require(resolver, "result->ai_addrlen > sizeof( *sadrs )", "POSIX resolver copy bound")
     require(resolver, "effectivePort < 0 || effectivePort > 65535", "POSIX TCP default port validation")
 
     socket_helper = function_body(source, "static int IPSocketForFamily", "POSIX UDP family bind")
@@ -979,19 +928,24 @@ def validate_posix_networking() -> None:
         "POSIX UDP send buffer validation",
     )
     require(send_buffer_guard, "return;", "POSIX invalid UDP send buffer result")
+    direct_send = "Net_SendDatagram( netSocket, netSocket6, to, packetData, size )"
     for token in (
         "const char emptyPacket = '\\0';",
         "const void *packetData = data != NULL ? data : &emptyPacket;",
-        "sendto( socketFd, packetData, size, 0",
+        direct_send,
+        "impairment->send.Offer( settings, now, to, packetData, size );",
     ):
         require(send_packet, token, "POSIX zero-length UDP send")
     if not (
         send_packet.index("if ( size < 0 || ( data == NULL && size > 0 ) )")
         < send_packet.index("const char emptyPacket = '\\0';")
-        < send_packet.index("sendto( socketFd, packetData, size, 0")
+        < send_packet.index(direct_send)
     ):
         raise AssertionError("POSIX zero-length UDP sends must validate then substitute a non-null buffer")
     reject(send_packet, "sendto( socketFd, data, size", "POSIX nullable zero-length UDP buffer")
+    reject(send_packet, "Net_SendDatagram( netSocket, netSocket6, to, data,", "POSIX nullable zero-length UDP buffer")
+    datagram = function_body(source, "static bool Net_SendDatagram(", "POSIX single-destination send")
+    require(datagram, "sendto( socketFd, data, size, 0", "POSIX single-destination send")
 
     tcp = function_body(source, "bool idTCP::Init( const char *host, int port )", "POSIX TCP initialization")
     require(tcp, "Sys_ResolveSockaddr( host, true, AF_UNSPEC, SOCK_STREAM, port", "POSIX TCP resolver")
@@ -1784,25 +1738,25 @@ def validate_generated_font_decl_checksum_stability() -> None:
 
 def validate_critical_mutation_sensitivity() -> None:
     windows = read("src/sys/win32/win_net.cpp")
-    lag_allocation = "platformData = new idUDPLag;"
+    lag_allocation = "platformData = Net_OpenImpairment( bound_to.port );"
     if windows.count(lag_allocation) != 1:
-        raise AssertionError("Windows per-socket latency allocation mutation anchor is not unique")
+        raise AssertionError("Windows per-socket delay-line allocation mutation anchor is not unique")
     expect_contract_rejection(
         validate_windows_per_socket_lag_contract,
-        windows.replace(lag_allocation, "udpPorts[ bound_to.port ] = new idUDPLag;", 1),
-        "Windows latency state is keyed globally by bound port",
+        windows.replace(lag_allocation, "net_impairedPorts[ bound_to.port ] = Net_OpenImpairment( bound_to.port );", 1),
+        "Windows delay-line state is keyed globally by bound port",
     )
 
-    lag_release = "delete static_cast<idUDPLag *>( platformData );"
+    lag_release = "Net_CloseImpairment( static_cast<netImpairmentPort_t *>( platformData ) );"
     if windows.count(lag_release) != 1:
-        raise AssertionError("Windows per-socket latency release mutation anchor is not unique")
+        raise AssertionError("Windows per-socket delay-line release mutation anchor is not unique")
     expect_contract_rejection(
         validate_windows_per_socket_lag_contract,
-        windows.replace(lag_release, "delete static_cast<idUDPLag *>( NULL );", 1),
-        "Windows close does not release the calling idPort's latency state",
+        windows.replace(lag_release, "Net_CloseImpairment( NULL );", 1),
+        "Windows close does not release the calling idPort's delay lines",
     )
 
-    receive_lag_guard = "( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || lag == NULL || data == NULL"
+    receive_lag_guard = "( netSocket == INVALID_SOCKET && netSocket6 == INVALID_SOCKET ) || impairment == NULL || data == NULL"
     if windows.count(receive_lag_guard) != 1:
         raise AssertionError("Windows closed-port receive mutation anchor is not unique")
     expect_contract_rejection(

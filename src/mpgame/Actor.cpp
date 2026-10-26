@@ -1295,7 +1295,13 @@ bool idActor::AllowsPresentationInterpolation( void ) const {
 	// shadow in first person and disappears in third person only because that view
 	// puts the camera back on the authoritative clock as well.
 	if ( gameLocal.isMultiplayer && this != static_cast< const idActor * >( gameLocal.GetLocalPlayer() ) ) {
-		return false;
+		// A spectating client fires no shots, so nothing it draws is ever rewound
+		// against (MP-07). Its free or followed camera and every body it shows
+		// share the presentation clock instead of the bodies stepping at 60 Hz.
+		const idPlayer *localPlayer = gameLocal.GetLocalPlayer();
+		if ( localPlayer == NULL || !localPlayer->spectating ) {
+			return false;
+		}
 	}
 	return idAFEntity_Gibbable::AllowsPresentationInterpolation();
 }

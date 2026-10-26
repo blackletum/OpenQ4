@@ -149,6 +149,14 @@ private:
 	int					clientPredictTime;			// prediction time used to send user commands
 
 	netadr_t			serverAddress;				// IP address of server
+	// openQ4: every address a typed host name resolved to, in the order they are
+	// tried. While challenges go unanswered SetupConnection moves through them,
+	// so one unreachable record no longer strands the connection.
+	static const int	MAX_CONNECT_CANDIDATES = 8;
+	netadr_t			connectCandidates[MAX_CONNECT_CANDIDATES];
+	int					connectCandidateCount;
+	int					connectCandidateIndex;		// the candidate in serverAddress
+	int					connectChallengesSent;		// challenges sent to it so far
 	int					serverId;					// server identification
 	int					serverChallenge;			// challenge from server
 	int					serverMessageSequence;		// sequence number of last server message

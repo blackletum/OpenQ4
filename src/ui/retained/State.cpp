@@ -188,6 +188,15 @@ bool State::EvaluateDerived(const StateValues& base, const StateValues* overlay,
 		const Control& control = *declared;
 		ControlReadback value;
 		const auto reject = [&]() { error = "Control '"+id+"': "+error; return false; };
+		if (control.role == ControlRole::Button) {
+			if (!control.context || !EvaluateTyped(*control.context,base,overlay,value.value,error) ||
+				!std::holds_alternative<std::string>(value.value)) {
+				if (error.empty()) error = "Missing or invalid button context";
+				return reject();
+			}
+			readbacks.emplace(id,std::move(value));
+			continue;
+		}
 		if (!control.value || !EvaluateTyped(*control.value,base,overlay,value.value,error)) {
 			if (error.empty()) error = "Missing authoritative value expression";
 			return reject();
@@ -256,7 +265,8 @@ bool State::Reset(std::shared_ptr<const DocumentModel> shared, std::string& erro
 	candidate.presentationDeclarations = std::shared_ptr<const std::map<std::string,PresentationVariable>>(shared,&model.presentationVariables);
 	auto controls = std::make_shared<std::map<std::string,const Control*>>();
 	const auto collect = [&](const auto& self, const Node& node) -> void {
-		if (node.control && node.control->role != ControlRole::Button && node.control->role != ControlRole::Scrollbar) controls->emplace(node.id,&*node.control);
+		if (node.control && node.control->role != ControlRole::Scrollbar &&
+			(node.control->role != ControlRole::Button || node.control->context)) controls->emplace(node.id,&*node.control);
 		for (const auto& child : node.children) self(self,child);
 	};
 	collect(collect,model.root);

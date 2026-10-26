@@ -39,10 +39,11 @@ revision; the parity test checks the pinned files as well as the working tree.
 | Arrow keys / D-pad | Spatial navigation |
 | Enter, keypad Enter, Space / gamepad South (East while swapped) | Accept on paired release |
 | Escape / gamepad East (South while swapped), Start, Back | Pop the current modal scope, then close the root menu |
+| Gamepad Menu (Start) | The document's `onMenuButton` where it declares it ([Menu button](#menu-button-24-october-2026)), once per press; otherwise, and while a dialog or an open list holds the input, as Back |
 | Primary pointer | Focus, arm and release the hit button |
 | Movement stick | Dominant-axis spatial navigation after neutral |
 | Q / E, gamepad shoulders | The document's previous / next tab (`onTabPrevious`, `onTabNext`) where it declares them; not while a field is being edited, nor with Ctrl or Alt |
-| Gamepad triggers | The document's previous / next section (`onSectionPrevious`, `onSectionNext`), on the same terms |
+| Gamepad triggers | The document's previous / next section (`onSectionPrevious`, `onSectionNext`), on the same terms; where it declares neither, PageUp / PageDown ([list paging](#list-paging-24-october-2026)) |
 | Gamepad West / North | The document's secondary / tertiary action (`onSecondary`, `onTertiary`), on the same terms |
 
 SDL's gamepad South/East buttons map to engine `K_JOY3`/`K_JOY4` and West/North
@@ -97,8 +98,8 @@ it, followed by the face layout.
 `RetainedUI_PromptGlyphs` combines the device and the family. The adapter publishes the
 result as `prompt.glyphs` to every document that declares it, before the
 frame that shows the change draws. The value is 0 for the keyboard's keycaps
-and 1–5 for the Xbox, PlayStation, Nintendo, Steam Deck and generic face and
-shoulder buttons. The adapter also publishes `prompt.swapped`
+and 1–5 for the Xbox, PlayStation, Nintendo, Steam Deck and generic face,
+shoulder and trigger buttons. The adapter also publishes `prompt.swapped`
 (`RetainedUI_PromptSwapped`, the swap above) to documents that declare it. Keyboard scancodes, controller buttons and pointer buttons have
 separate source IDs. Multiple sources mapped to Accept hold one logical press;
 releasing the first source cannot activate while another remains down. Key-up
@@ -106,6 +107,132 @@ releases the action captured at key-down, including when Shift changes first.
 
 Evidence for prompt glyphs: `.tmp/ui/retained-prompt-glyphs-evidence/validation-evidence.json`,
 SHA-256 `8246e1584cd199da491094441ac48f320d14fe796122ecb7a7e2991214ff004c`.
+
+### List paging (24 October 2026)
+
+Section 13.5 pages lists with the triggers. PageUp and PageDown, from the
+keyboard or a trigger, move focus a visible page through the scrolling list
+that holds the focused button or toggle (`Runtime::Impl::PageList`): to the
+farthest row that fits on the list's client height with the focused one, or
+the next row when even that one does not fit. Home and End move to the list's
+first and last row. Rows in the focused row's column are preferred, a
+disabled or hidden row is skipped, focus is revealed as any focus change is,
+and nothing activates. Focus outside a scrolling list, a list with nowhere to
+go and a focused slider, scrollbar or choice keep their existing meaning.
+
+The adapter sends the triggers as PageUp (left) and PageDown (right) to a
+document that declares no `onSectionPrevious`/`onSectionNext` of its own; on
+a focused slider the right trigger raises the value, as Right does, by the
+interaction's ten-step coarse step. Documents with section events keep them.
+`tools/tests/native/UiFocusRevealTest.cpp` covers the paging at 1x and 2x
+density, and the `list-paging` capture pages the Load Game list.
+
+### Menu button (24 October 2026)
+
+Section 13.5's Menu button closes the menus and resumes play. The adapter
+runs a document's `onMenuButton`, once per press, where the document declares
+it, and treats the button as Back elsewhere, as before. The pause's pages
+declare it: Save Game, Restart Level and, during a game, Load Game ask the
+session for `menuResume`, which returns the pause and runs its RESUME, so the
+softened view releases as it does from the pause. At the title, Load Game's
+Menu goes back as Back does. The pause itself already resumes on Back.
+`menuResume` acts only while a single-player game runs; a field being edited
+keeps the button.
+
+Evidence for the Menu button:
+`.tmp/ui/menu-button-resume/validation-evidence.json`, SHA-256
+`7d791a2d806b2f192709d210e04b984d5ba59b3a49860c5564c28448e1af3782`.
+
+**Apply.** On a screen with pending changes the Menu button applies them.
+While a dialog (an authored modal scope) or the focused control's open list
+holds the input, the adapter keeps the button Back, which closes them
+(`Runtime::ModalOpen`, the widget's `popupOpen`), so Menu never acts behind
+a dialog. The two screens with an Apply declare it:
+
+- The opt-in SYSTEM page (`tools/ui/update_system_menu_button.py`) runs its
+  own programs. With pending changes Menu runs `apply`, whose condition
+  still decides whether Apply can run; with a typed number not yet
+  committed it moves the focus to that number, as Continue Editing does,
+  since Apply waits for it; on a clean page it runs `onBack`, which closes
+  the page. In the display confirmation and the discard dialog it does what
+  Back does there (`confirmationBack`, `continueEditing`), so Menu never
+  keeps a display change unseen; the adapter already routes those dialogs
+  to Back.
+- The Escape card's [Admin page](multiplayer-menus.md#the-admin-page)
+  presses Apply changes while its Server section has something to apply
+  (`mp.admin.apply.available`); otherwise Menu closes the card, as Back
+  does. The Welcome and summary cards keep the button Back. The Apply
+  changes plate ends with the Menu button's glyph for a controller
+  ([Menu glyphs](#menu-glyphs-24-october-2026)).
+
+Match Control's staged rules commit through a confirmation and keep Menu
+as Back.
+
+Evidence for Apply: `.tmp/ui/menu-button-apply/validation-evidence.json`,
+SHA-256 `f8fea2394b50fc49215af334f825208e7b17f9fe35970f45b7adb3e9945665c6`.
+
+### Trigger glyphs (24 October 2026)
+
+The triggers step the Escape card's Match and Admin sections, and their inner
+strips now end with the triggers' glyphs (section 13.5), so the strip shows
+which buttons step it. The glyphs are a legend for a controller only: no key
+steps the sections, so the keyboard shows none, and the slot stays empty.
+Each family's trigger is taller than its bumper, an 18 dp plate whose top
+corners round by 7 dp, labelled as SDL reports it: LT and RT (Xbox), L2 and
+R2 (PlayStation and Steam Deck, the latter outlined), ZL and ZR (Nintendo),
+and for a generic controller an outlined plate with a chevron pointing to its
+side. Generation fails if a strip's sections in any shipped language would
+reach the glyphs. Glyphs for the Menu and View buttons and the sticks remain;
+no prompt names them yet.
+
+Evidence for trigger glyphs: `.tmp/ui/trigger-glyphs/validation-evidence.json`,
+SHA-256 `1de24fafd097c2ba6f764a6b37406e5972111dc88c79fa6b55a74db617779d59`.
+
+### Menu glyphs (24 October 2026)
+
+Section 13.5's glyph families gain the Menu button, drawn in the family text
+color: Xbox's three lines on a disc, PlayStation's Options button as three
+lines on an upright pill, Nintendo's plus on a disc, Steam Deck's three
+lines in a ring and a generic controller's three lines in an outlined pill
+(`menu_glyph`, the `menu` position of `device_glyphs`). The card's prompt
+bar has no room for a Menu prompt in every language (German and Spanish run
+past the card with one), so the glyph sits on the control the button
+presses: the end of the Admin page's Apply changes plate, after its label
+and lock, for a controller only. The keyboard has no key for it and shows
+none. Glyphs for the View button and the sticks remain; no control names
+them yet.
+
+Evidence for Menu glyphs: `.tmp/ui/menu-glyphs/validation-evidence.json`,
+SHA-256 `c2bc17f9841b34b99304af21faa4c2f65104a3c8dad2af5a484488d67fa2a4cf`.
+
+### Settings rows (24 October 2026)
+
+Settings > Game Options > Controller offers both choices as rows, after Low
+Battery Rumble Cap (section 13.5, `INP-011`):
+
+| Row | Cvar | Choices (values) |
+| --- | --- | --- |
+| Prompt Style | `in_promptStyle` | Automatic (0), Xbox (1), PlayStation (2), Nintendo (3), Steam Deck (4), Generic (5) |
+| Swap Confirm and Back | `in_swapConfirmBack` | Automatic (0), Off (1, south confirms), On (2, east confirms) |
+
+They are ordinary stock `choiceDef` rows bound to the archived cvars, so a
+change applies at once: the next frame's prompts take the family, and the next
+menu key takes the swap. Brand names stay as printed; the other words are in
+all twelve tables (`#str_231526`-`#str_231529`). Every later Game Options row,
+its hover and the section anchors moved two rows (48 px) down; the page's
+scroll extent, its last step (75) and the section thresholds in
+`MainMenuSettingsSectionChoiceForScroll` follow, and
+`tools/tests/settings_menu_coverage.py` pins them with the registry entries
+`game.controller.prompt_style` and `game.controller.swap_confirm`.
+
+The `settings-controller` capture (with the retained screens off) scrolls
+Game Options to the rows, sets both cvars from the console and reads them back
+in the rows, then shows the page's last step.
+
+Evidence for the settings rows, list paging and Join Game's row focus
+([retained screens](retained-screens.md#join-game-sub-page)):
+`.tmp/ui/controller-settings-paging/validation-evidence.json`, SHA-256
+`4ee88d83dbf0f98347f95fa70529aeb463fc20bb7725aaad1f905b6a5a82831c`.
 
 The device-independent `Input` adapter owns navigation repeat: immediate first
 navigation, 320 ms initial delay, then 110 ms between repeats. The newest held

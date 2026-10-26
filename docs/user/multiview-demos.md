@@ -1,5 +1,7 @@
 # Demo Library, Playback, and Multi-View Demos
 
+> **Development documentation:** This page follows the current source tree and may describe changes newer than the public download. See [release status and released-version guides](release-status.md) before using it with a release package.
+
 Multi-view demos are server-side multiplayer recordings. One `.mvd` file
 contains the full match state across every active multiplayer instance instead
 of only the camera seen by the person who started recording, so playback can
@@ -37,6 +39,26 @@ openQ4 records to a `.mvd.part` file first. A clean stop adds the end marker and
 renames it to `.mvd`. If the game or machine stops unexpectedly, the partial
 file stays clearly marked and the last good data is not mistaken for a
 complete demo.
+
+`mvdStatus` shows a recording in progress: its file, size, elapsed time and
+snapshot count. It also shows whether the last recording was saved, or why it
+failed and where its partial file is.
+
+### Recover an interrupted recording
+
+Every record in an MVD carries its own length and checksum, so the complete
+part of an interrupted recording can be saved:
+
+```text
+mvdRecover match_name.mvd.part
+```
+
+openQ4 copies every complete record up to the first damaged or missing one,
+rebuilds the timeline and writes the end marker into a new demo named
+`match_name_recovered.mvd`, or the next free numbered name. The `.part` file is
+never changed and no existing demo is overwritten. The console reports how many
+snapshots were kept and why the copy stopped. A recording with no complete
+snapshot cannot be recovered. Stop any recording or playback first.
 
 The familiar Quake 4 names `recordNetDemo`, `stopNetDemo`, and `playNetDemo`
 are aliases for this system. The files are still `.mvd`; openQ4 does not
@@ -85,13 +107,17 @@ format supports the action:
 | `demoSeek <seconds>` | Go to an absolute time from the start. |
 | `demoSkip <seconds>` | Move by a signed interval, such as `demoSkip -10`. |
 | `demoStep` | Pause and advance one frame. |
-| `demoFollow` | Follow the next player in an MVD. |
+| `demoFollow [next\|prev\|free\|<slot>\|<name>]` | Follow the next or previous player, a client slot, or a player by name in an MVD. |
 | `demoFreeRoam` | Leave MVD follow mode for free flight. |
 | `demoStop` | Stop the active demo. |
 
+A name matches whole names first, ignoring colors and case, then the one name
+that contains what you typed; the console says when several names match. The
+overlay names the player you follow.
+
 MVD-only equivalents remain available: `mvdPause`, `mvdSpeed`, `mvdSeek`,
-`mvdSkip`, `mvdStep`, `mvdFollowNext`, and `mvdFreeRoam`. Use `stopMVD` to
-stop MVD recording or playback.
+`mvdSkip`, `mvdStep`, `mvdFollow`, `mvdFollowNext`, `mvdFollowPrev`, and
+`mvdFreeRoam`. Use `stopMVD` to stop MVD recording or playback.
 
 ## What each format can do
 
@@ -102,7 +128,7 @@ stop MVD recording or playback.
 | Retail Quake 4 render `.demo` | Not supported yet | None | Not available |
 | Retail Quake 4 `.netdemo` | Not supported yet | None | Not available |
 | Command `.cdemo` | Developer best effort | Play/stop only | Determined by the recorded simulation |
-| `.mvd.part`, `.part`, `.ucmd` | Incomplete; not playable | None | None |
+| `.mvd.part`, `.part`, `.ucmd` | Incomplete; not playable (`mvdRecover` saves an interrupted `.mvd.part`) | None | None |
 
 A render demo stores the recorded renderer, sound, and GUI presentation, not a
 complete multiplayer world. It therefore cannot provide genuine free roam or

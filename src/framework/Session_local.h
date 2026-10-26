@@ -197,6 +197,12 @@ typedef enum {
 // lines, never read as a #str_ key.
 idStr Session_RetainedPlayerText( const char *text, int maxBytes, int maxLines );
 
+// A difficulty's localized name (g_skill 0-4) and a play time in seconds as
+// the retained screens show them (Session.cpp).
+const char *Session_SkillName( int skill );
+idStr Session_RetainedPlayTime( int seconds );
+idStr Session_RetainedList( const char *first, const char *second );
+
 const int USERCMD_PER_DEMO_FRAME	= 2;
 const int CONNECT_TRANSMIT_TIME		= 1000;
 const int MAX_LOGGED_USERCMDS		= 60*60*60;	// one hour of single player, 15 minutes of four player
@@ -266,9 +272,9 @@ public:
 	void				ReportSystemSettings();
 	void				CloseSystemSettings();
 
-	// Opt-in retained (RmlUi) screens, gated by ui_retained. The title and the
-	// single-player pause screens cover the legacy main menu while it rests at
-	// its home state; its pages stay legacy and are reached by hand-off.
+	// Retained (RmlUi) screens, enabled by default and gated by ui_retained.
+	// The title and single-player pause screens cover the legacy main menu
+	// while it rests at its home state; remaining legacy pages use hand-off.
 	void				UpdateRetainedHome();
 	bool				RetainedHomePresenting() const { return guiRetainedHome != NULL; }
 	// Whether menu input reaches a retained view: the home screen over the
@@ -361,6 +367,8 @@ public:
 	void				ReturnRetainedSinglePlayerHome();
 	void				DrawRetainedPageHome( int presentationTime );
 	void				PublishRetainedLoadPage( idUserInterface *gui, int select, const char *error );
+	void				BuildRetainedSaveList( idUserInterface *gui, int select );
+	bool				RefreshRetainedSaveList( idUserInterface *gui, const char *request );
 	void				PublishRetainedLoadRows( idUserInterface *gui );
 	void				PublishRetainedLoadSave( idUserInterface *gui, const char *error );
 	void				HandleRetainedLoadRequest( idUserInterface *gui, const char *request );
@@ -660,6 +668,9 @@ public:
 	bool				retainedPageReturn;
 	idStrList			retainedLoadSlots;
 	idList<ID_TIME_T>	retainedLoadTimes;
+	idStrList			retainedLoadNames;
+	idStrList			retainedLoadLocations;
+	int					retainedSaveGeneration;
 	int					retainedLoadFirst;
 	int					retainedLoadSelected;
 	// The Save Game page (NULL until it first loads), which shares the list
@@ -757,6 +768,7 @@ public:
 	idList<int>			retainedJoinServers;	// the scan's servers the list shows, in list order
 	int					retainedJoinFirst;		// the first of them the list holds
 	idStr				retainedJoinAddress;	// the chosen server's address (empty: none)
+	idStrList			retainedJoinRowAddresses;	// each page row's server address as last published
 	int					retainedJoinRevision;	// the scan's revision the page shows (-1: none yet)
 	idStr				retainedJoinShotMap;	// the map whose levelshot the page shows
 	idStr				retainedJoinShot;		// that levelshot

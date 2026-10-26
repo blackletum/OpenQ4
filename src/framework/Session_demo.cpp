@@ -445,7 +445,9 @@ static void Session_DemoStep_f( const idCmdArgs &args ) {
 
 static void Session_DemoFollow_f( const idCmdArgs &args ) {
 	if ( idAsyncNetwork::multiViewDemo.IsPlaying() ) {
-		idAsyncNetwork::multiViewDemo.FollowNext();
+		// demoFollow [next|prev|free|<slot>|<name>]; no argument keeps the
+		// historical "follow the next player".
+		idMultiViewDemo::Follow_f( args );
 	}
 }
 
@@ -551,7 +553,7 @@ void idSessionLocal::InitDemoSystem() {
 	cmdSystem->AddCommand( "demoSeek", Session_DemoSeek_f, CMD_FL_SYSTEM, "seeks to a unified demo time in seconds" );
 	cmdSystem->AddCommand( "demoSkip", Session_DemoSkip_f, CMD_FL_SYSTEM, "moves relative to the current demo time in seconds" );
 	cmdSystem->AddCommand( "demoStep", Session_DemoStep_f, CMD_FL_SYSTEM, "steps a paused demo by one frame" );
-	cmdSystem->AddCommand( "demoFollow", Session_DemoFollow_f, CMD_FL_SYSTEM, "follows the next MVD player" );
+	cmdSystem->AddCommand( "demoFollow", Session_DemoFollow_f, CMD_FL_SYSTEM, "follows an MVD player: demoFollow [next|prev|free|<slot>|<name>]" );
 	cmdSystem->AddCommand( "demoFreeRoam", Session_DemoFreeRoam_f, CMD_FL_SYSTEM, "enters MVD free-roam mode" );
 	cmdSystem->AddCommand( "demoStop", Session_DemoStop_f, CMD_FL_SYSTEM, "stops unified demo playback" );
 #endif
@@ -724,10 +726,15 @@ void idSessionLocal::UpdateDemoMenuGui() {
 		seeking = idAsyncNetwork::multiViewDemo.IsSeeking();
 		title = idAsyncNetwork::multiViewDemo.GetPlaybackName();
 		title.StripPath();
-		view = idAsyncNetwork::multiViewDemo.GetFollowClient() >= 0
-			? va( "%s %d", DemoLocalized( "#str_41560" ),
-				idAsyncNetwork::multiViewDemo.GetFollowClient() + 1 )
-			: DemoLocalized( "#str_41539" );
+		const int followClient = idAsyncNetwork::multiViewDemo.GetFollowClient();
+		idStr followName;
+		if ( followClient < 0 ) {
+			view = DemoLocalized( "#str_41539" );
+		} else if ( idAsyncNetwork::multiViewDemo.CopyFollowName( followClient, followName ) ) {
+			view = va( "%s %s", DemoLocalized( "#str_41560" ), followName.c_str() );
+		} else {
+			view = va( "%s %d", DemoLocalized( "#str_41560" ), followClient + 1 );
+		}
 	} else if ( renderPlaying ) {
 		demoActiveType = DEMO_LIBRARY_RENDER;
 		capabilities = DEMO_CAP_PLAY;
@@ -1409,6 +1416,12 @@ bool idSessionLocal::HandleDemoMenuCommand( const char *menuCommand ) {
 	if ( !idStr::Icmp( cmd, "demoFollow" ) ) {
 		if ( idAsyncNetwork::multiViewDemo.IsPlaying() ) {
 			idAsyncNetwork::multiViewDemo.FollowNext();
+		}
+		return true;
+	}
+	if ( !idStr::Icmp( cmd, "demoFollowPrev" ) ) {
+		if ( idAsyncNetwork::multiViewDemo.IsPlaying() ) {
+			idAsyncNetwork::multiViewDemo.FollowPrev();
 		}
 		return true;
 	}

@@ -166,6 +166,10 @@ bool idSoundOggStream::Open( const char* filename ) {
 	return true;
 }
 bool idSoundOggStream::Seek( unsigned int frame ) { return decoder != NULL && decoder->Seek( frame ); }
+bool idSoundOggStream::SetCountedLength( unsigned int frames, unsigned int pageStart, unsigned int pageEnd, unsigned int granule ) {
+	const stb_vorbis_openq4_granule_page page = { pageStart, pageEnd, granule };
+	return decoder != NULL && decoder->SetCountedLength( frames, page );
+}
 int idSoundOggStream::Read( short* pcm, int frames ) { return decoder != NULL ? decoder->Read( pcm, frames ) : 0; }
 int idSoundOggStream::Channels() const { return decoder != NULL ? decoder->Channels() : 0; }
 int idSoundOggStream::Rate() const { return decoder != NULL ? decoder->Rate() : 0; }
@@ -423,6 +427,10 @@ idSoundSample_OpenAL::idSoundSample_OpenAL()
 	openalBufferUploadFailed = false;
 	openalReserved = 0;
 	amplitudeReserved = 0;
+	streamCountedLength = false;
+	streamPageStart = 0;
+	streamPageEnd = 0;
+	streamPageGranule = 0;
 }
 
 /*
@@ -977,6 +985,28 @@ void idSoundSample_OpenAL::ReleaseCpuPayload()
 
 /*
 ========================
+idSoundSample_OpenAL::ReleaseCpuCopy
+
+ReleaseCpuPayload for memory pressure: keepPayload and s_releaseSamplePayload
+keep a copy only to save a reload, which a low-memory notice outweighs.
+========================
+*/
+int idSoundSample_OpenAL::ReleaseCpuCopy()
+{
+	if( !HasCpuCopy() )
+	{
+		return 0;
+	}
+	const int bytes = buffers[0].bufferSize;
+	FreeBuffer( buffers[0].buffer );
+	buffers[0].buffer = NULL;
+	payloadReleased = true;
+	keepPayload = false;
+	return bytes;
+}
+
+/*
+========================
 idSoundSample_OpenAL::EnsureCpuPayload
 
 Restore through a temporary sample. Other voices may still be using our OpenAL
@@ -1217,7 +1247,27 @@ struct idSoundSampleDecode
 	bool						headerMismatch = false;	// the job's open disagreed with SoundSample_PeekOggInfo
 	uint64					reservedBytes = 0;	// main-thread admission, held until joined/cancelled
 	std::unique_ptr<idJobList>	list;
+	// A streamed track: the job builds only its 60 Hz envelope, into the sample's
+	// amplitude list sized before submission, and keeps no PCM.
+	byte*						envelope = NULL;
+	int							envelopeEntries = 0;
 };
+
+// The peak of each 1/60 s of PCM as 0-255, accumulated a block at a time for a
+// stream that is never resident: the same values SoundSample_BuildAmplitudeEnvelope
+// gives a whole sample. Touches only the envelope it is given.
+static void SoundSample_AccumulateEnvelope( const short* pcm, int count, int channels, int rate, uint64 firstFrame, byte* envelope, int entries )
+{
+	for( int frame = 0; frame < count; ++frame ) {
+		int peak = 0;
+		for( int channel = 0; channel < channels; ++channel ) {
+			const int sample = pcm[frame * channels + channel];
+			peak = Max( peak, sample < 0 ? -sample : sample );
+		}
+		const int entry = static_cast<int>( ( ( firstFrame + frame + 1 ) * 60 - 1 ) / rate );
+		if( entry < entries ) envelope[entry] = Max( envelope[entry], static_cast<byte>( Min( 255, ( peak * 255 + 16383 ) / 32767 ) ) );
+	}
+}
 
 idCVar s_asyncSampleDecode( "s_asyncSampleDecode", "1", CVAR_BOOL, "decode the Ogg samples a level load references on job workers, while the rest of the level loads" );
 // The largest installed retail/Awakening input+PCM pair is below 48 MiB.
@@ -1404,6 +1454,52 @@ static bool SoundSample_PeekOggInfo( const byte* data, const int length, int& ch
 	return false;
 }
 
+// The envelope of a stream counted as it decodes: grows about a minute of entries
+// at a time, every entry reserved against the audio budget like the fixed case.
+static bool SoundGrowAmplitude( idList<byte>& out, uint64& reserved, int count )
+{
+	if( count <= out.Num() ) return true;
+	if( count > out.NumAllocated() ) {
+		const int capacity = Max( count, out.NumAllocated() + 60 * 60 );
+		const uint64 bytes = ( static_cast<uint64>( capacity ) + 15 ) / 16 * 16;
+		if( bytes > reserved ) {
+			if( !SoundMemoryAcquire( bytes - reserved ) ) return false;
+			reserved = bytes;
+		}
+		out.Resize( static_cast<int>( bytes ) );
+	}
+	const int old = out.Num();
+	out.SetNum( count, false );
+	memset( out.Ptr() + old, 0, count - old );
+	return true;
+}
+
+/*
+========================
+SoundSample_ProbeOggStream
+
+The decoder's own view of a stream SoundSample_PeekOggInfo could not read: the
+peek needs a final end-of-stream page that ends the file, while stb_vorbis also
+finds the length of a truncated stream or one followed by other bytes. frames is
+0 for a stream that has no length at all. Reads only the headers and final pages.
+========================
+*/
+static bool SoundSample_ProbeOggStream( idFile* file, int& channels, int& rate, unsigned int& frames )
+{
+	SoundSampleDecodeReservation reservation;
+	if( !reservation.Grow( SOUND_STREAM_BYTES ) ) return false;
+	SoundVorbisStream stream;
+	const bool opened = stream.Open( SoundStream_ReadAt, file, file->Length() );
+	if( opened ) {
+		channels = stream.Channels();
+		rate = stream.Rate();
+		frames = stream.Frames();
+	}
+	stream.Close();
+	file->Rewind();
+	return opened;
+}
+
 bool idSoundSample_OpenAL::LoadOggStream( const idStr& filename )
 {
 	// Loading metadata/envelopes must not consume the live-voice pool: a newly
@@ -1414,36 +1510,138 @@ bool idSoundSample_OpenAL::LoadOggStream( const idStr& filename )
 	SoundVorbisStream stream;
 	if( input == NULL || input->Length() <= 0 || !stream.Open( SoundStream_ReadAt, input, input->Length() ) ) return false;
 	const int channels = stream.Channels(), rate = stream.Rate();
-	const unsigned int frames = stream.Frames();
-	if( frames == 0 || static_cast<uint64>( frames ) * channels * sizeof( short ) > idMath::INT_MAX ||
-		static_cast<uint64>( frames ) > static_cast<uint64>( rate ) * 60 * 60 ) return false;
+	unsigned int frames = stream.Frames();
+	// A stream without length metadata is counted by the envelope pass below. Its
+	// decoders can seek once they know that length and the last page that carries
+	// a position; a stream with no positioned page at all decodes whole instead.
+	const bool counted = frames == 0;
+	stb_vorbis_openq4_granule_page lastPage = {};
+	if( counted && !stream.FindLastGranulePage( lastPage ) ) return false;
+	// The decoded size must fit the sample's int-sized PCM bookkeeping: about three
+	// hours of 48 kHz stereo, more at the stock rates. The envelope is 60 bytes a second.
+	if( !counted && static_cast<uint64>( frames ) * channels * sizeof( short ) > idMath::INT_MAX ) return false;
 
 	// Build the same 60 Hz envelope as resident PCM, with one bounded block.
 	// Virtualized speech, shaking and flicker can query any offset afterwards.
-	const int entries = static_cast<int>( ( static_cast<uint64>( frames ) * 60 + rate - 1 ) / rate );
+	const int entries = counted ? 0 : static_cast<int>( ( static_cast<uint64>( frames ) * 60 + rate - 1 ) / rate );
 	if( !SoundResizeAmplitude( amplitude, amplitudeReserved, entries ) ) return false;
-	memset( amplitude.Ptr(), 0, entries );
+	if( entries > 0 ) memset( amplitude.Ptr(), 0, entries );
 	short pcm[SoundVorbisStream::ChunkFrames * 2];
 	unsigned int decoded = 0;
-	while( decoded < frames ) {
-		const int count = stream.Read( pcm, Min( SoundVorbisStream::ChunkFrames, static_cast<int>( frames - decoded ) ) );
+	while( counted || decoded < frames ) {
+		const int count = stream.Read( pcm, counted ? SoundVorbisStream::ChunkFrames : Min( SoundVorbisStream::ChunkFrames, static_cast<int>( frames - decoded ) ) );
+		if( count <= 0 && counted && decoded > 0 ) break;
 		if( count <= 0 ) { SoundResizeAmplitude( amplitude, amplitudeReserved, 0 ); return false; }
-		for( int frame = 0; frame < count; ++frame ) {
-			int peak = 0;
-			for( int channel = 0; channel < channels; ++channel ) {
-				const int sample = pcm[frame * channels + channel];
-				peak = Max( peak, sample < 0 ? -sample : sample );
+		if( counted ) {
+			const uint64 total = static_cast<uint64>( decoded ) + count;
+			if( total * channels * sizeof( short ) > idMath::INT_MAX ||
+				!SoundGrowAmplitude( amplitude, amplitudeReserved, static_cast<int>( ( total * 60 + rate - 1 ) / rate ) ) ) {
+				SoundResizeAmplitude( amplitude, amplitudeReserved, 0 );
+				return false;
 			}
-			const int entry = static_cast<int>( ( ( static_cast<uint64>( decoded ) + frame + 1 ) * 60 - 1 ) / rate );
-			if( entry < entries ) amplitude[entry] = Max( amplitude[entry], static_cast<byte>( Min( 255, ( peak * 255 + 16383 ) / 32767 ) ) );
 		}
+		SoundSample_AccumulateEnvelope( pcm, count, channels, rate, decoded, amplitude.Ptr(), amplitude.Num() );
 		decoded += count;
+	}
+	if( counted ) {
+		// Every decoder of this stream gets the same length; the first proves it works.
+		if( !stream.SetCountedLength( decoded, lastPage ) ) { SoundResizeAmplitude( amplitude, amplitudeReserved, 0 ); return false; }
+		frames = decoded;
+		streamCountedLength = true;
+		streamPageStart = lastPage.page_start;
+		streamPageEnd = lastPage.page_end;
+		streamPageGranule = lastPage.granule;
 	}
 	buffers.SetNum( 1 );
 	buffers[0].buffer = NULL;
 	FinishOggLoad( channels, rate, frames );
 	streamName = filename;
-	if( s_debugHardware.GetBool() ) idLib::Printf( "Compressed stream: %s, %d Hz, %d channels, %u frames\n", filename.c_str(), rate, channels, frames );
+	if( s_debugHardware.GetBool() ) idLib::Printf( "Compressed stream: %s, %d Hz, %d channels, %u frames%s\n", filename.c_str(), rate, channels, frames, counted ? " (counted; no length metadata)" : "" );
+	return true;
+}
+
+/*
+========================
+idSoundSample_OpenAL::BeginOggStreamEnvelope
+
+LoadOggStream for a level load. The track streams from its file, so only its
+60 Hz envelope is outstanding: the compressed bytes go to a job worker, which
+fills the envelope sized here while the rest of the level loads (the full pass
+took the main thread a tenth to a third of a second per music track). Until
+FinishDecode joins the job the envelope reads silent; voices can already stream.
+False leaves the sample untouched for the synchronous path.
+========================
+*/
+static void SoundSample_RunDecode( idSoundSampleDecode& decode );
+static void SoundSample_DecodeJob( const idJobContext& context );
+
+bool idSoundSample_OpenAL::BeginOggStreamEnvelope( const idStr& filename, idFile* file, int channels, int rate, unsigned int frames, idSoundSampleDecode** asyncDecode )
+{
+	if( asyncDecode == NULL || frames == 0 || channels < 1 || channels > 2 || rate <= 0 ||
+		soundSamplePendingDecodes >= SOUND_SAMPLE_MAX_PENDING_DECODES || !jobSystem.IsInitialized() || jobSystem.IsSynchronous() ||
+		static_cast<uint64>( frames ) * channels * sizeof( short ) > idMath::INT_MAX )
+	{
+		return false;
+	}
+	const int fileLen = file->Length();
+	SoundSampleDecodeReservation reservation;
+	if( fileLen <= 0 || !reservation.Grow( static_cast<uint64>( fileLen ) + SoundVorbisStream::ArenaBytes ) )
+	{
+		return false;
+	}
+	byte* fileData = static_cast<byte*>( AllocBuffer( fileLen, filename.c_str() ) );
+	if( fileData == NULL )
+	{
+		return false;
+	}
+	file->Rewind();
+	const bool read = file->Read( fileData, fileLen ) == fileLen;
+	file->Rewind();
+	const int entries = static_cast<int>( ( static_cast<uint64>( frames ) * 60 + rate - 1 ) / rate );
+	if( !read || !SoundResizeAmplitude( amplitude, amplitudeReserved, entries ) )
+	{
+		FreeBuffer( fileData );
+		return false;
+	}
+	memset( amplitude.Ptr(), 0, entries );
+
+	idSoundSampleDecode* decode = new idSoundSampleDecode;
+	decode->fileData = fileData;
+	decode->fileLen = fileLen;
+	decode->capacityFrames = frames;
+	decode->channels = channels;
+	decode->sampleRate = rate;
+	decode->envelope = amplitude.Ptr();
+	decode->envelopeEntries = entries;
+	decode->list = jobSystem.CreateJobList( "sound-stream-envelope", 1, 0, idJobPriority::LOW );
+	const bool submitted = decode->list != nullptr && decode->list->AddJob( &SoundSample_DecodeJob, decode ) &&
+		decode->list->Submit() == idJobSubmitResult::ACCEPTED;
+	if( !submitted && decode->list != nullptr )
+	{
+		decode->list->Wait();
+	}
+	buffers.SetNum( 1 );
+	buffers[0].buffer = NULL;
+	FinishOggLoad( channels, rate, frames );
+	streamName = filename;
+	if( !submitted )
+	{
+		// rejected or run inline by the job system: finish it here
+		SoundSample_RunDecode( *decode );
+		const bool damaged = decode->headerMismatch;
+		delete decode;
+		if( damaged )
+		{
+			FreeData();
+			return false;
+		}
+		*asyncDecode = NULL;
+		return true;
+	}
+	soundSamplePendingDecodes++;
+	decode->reservedBytes = reservation.Transfer();
+	*asyncDecode = decode;
+	if( s_debugHardware.GetBool() ) idLib::Printf( "Compressed stream: %s, %d Hz, %d channels, %u frames (envelope on a job worker)\n", filename.c_str(), rate, channels, frames );
 	return true;
 }
 
@@ -1472,6 +1670,28 @@ static void SoundSample_RunDecode( idSoundSampleDecode& decode )
 		{
 			decode.headerMismatch = true;
 		}
+	}
+	if( decode.vorbis != NULL && decode.envelope != NULL )
+	{
+		// A streamed track: only its envelope, a block at a time; no PCM is kept.
+		// One that decodes short is damaged and loads the ordinary way.
+		short block[SoundVorbisStream::ChunkFrames * 2];
+		uint64 decoded = 0;
+		while( decoded < decode.capacityFrames )
+		{
+			const int count = stb_vorbis_get_samples_short_interleaved( decode.vorbis, decode.channels, block,
+				Min( SoundVorbisStream::ChunkFrames, static_cast<int>( decode.capacityFrames - decoded ) ) * decode.channels );
+			if( count <= 0 )
+			{
+				break;
+			}
+			SoundSample_AccumulateEnvelope( block, count, decode.channels, decode.sampleRate, decoded, decode.envelope, decode.envelopeEntries );
+			decoded += count;
+		}
+		decode.decodedFrames = static_cast<unsigned int>( decoded );
+		decode.headerMismatch = decoded != decode.capacityFrames;
+		stb_vorbis_close( decode.vorbis );
+		decode.vorbis = NULL;
 	}
 	if( decode.vorbis != NULL )
 	{
@@ -1528,11 +1748,23 @@ bool idSoundSample_OpenAL::BeginOggLoad( const idStr& filename, idSoundSampleDec
 		const bool read = fileIn->Read( peek, prefix ) == prefix &&
 			fileIn->Seek( fileLen - tail, FS_SEEK_SET ) == 0 && fileIn->Read( peek + prefix, tail ) == tail;
 		fileIn->Rewind();
-		if( read && SoundSample_PeekOggInfo( peek, prefix + tail, channels, rate, frames ) &&
-			channels >= 1 && channels <= 2 && rate >= 8000 && rate <= 192000 &&
-			static_cast<uint64>( frames ) * channels * sizeof( short ) > static_cast<uint64>( s_streamThresholdKB.GetInteger() ) * 1024 ) {
+		bool known = read && SoundSample_PeekOggInfo( peek, prefix + tail, channels, rate, frames );
+		uint64 decodedBytes = static_cast<uint64>( frames ) * channels * sizeof( short );
+		// A truncated stream, one followed by other bytes or one whose last page has
+		// no position defeats the peek, not the decoder: ask it, and with no length
+		// at all judge by the compressed size. Vorbis keeps speech and music to a
+		// quarter or less of their 16-bit PCM, so a long track never decodes whole.
+		if( !known && SoundSample_ProbeOggStream( fileIn, channels, rate, frames ) ) {
+			known = true;
+			decodedBytes = frames != 0 ? static_cast<uint64>( frames ) * channels * sizeof( short ) : static_cast<uint64>( fileLen ) * 4;
+		}
+		if( known && channels >= 1 && channels <= 2 && rate >= 8000 && rate <= 192000 &&
+			decodedBytes > static_cast<uint64>( s_streamThresholdKB.GetInteger() ) * 1024 ) {
 			timestamp = fileIn->Timestamp();
-			return LoadOggStream( filename );
+			const bool streamed = BeginOggStreamEnvelope( filename, fileIn, channels, rate, frames, asyncDecode ) || LoadOggStream( filename );
+			// A stream with no positioned page at all cannot seek: decode it whole.
+			if( streamed || frames != 0 ) return streamed;
+			FreeData();
 		}
 	}
 	SoundSampleDecodeReservation reservation;
@@ -1835,6 +2067,7 @@ void idSoundSample_OpenAL::FinishDecode()
 	SoundSample_RunDecode( *decode );
 	const bool mismatch = decode->headerMismatch;
 	const unsigned int decodedFrames = decode->decodedFrames;
+	const bool envelopeOnly = decode->envelope != NULL;
 	soundSamplePendingDecodeBytes -= decode->reservedBytes;
 	delete decode;
 	SoundMemoryRelease( SoundVorbisStream::ArenaBytes );
@@ -1843,6 +2076,11 @@ void idSoundSample_OpenAL::FinishDecode()
 	{
 		// the peeked header disagreed with the stream: load it the ordinary way
 		LoadResource();
+		return;
+	}
+	// a streamed track's envelope is complete; it has no PCM to upload
+	if( envelopeOnly )
+	{
 		return;
 	}
 	if( !FinishOggDecode( pendingDecodeName, decodedFrames ) )
@@ -2113,6 +2351,8 @@ void idSoundSample_OpenAL::FreeData()
 	}
 	SoundResizeAmplitude( amplitude, amplitudeReserved, 0 );
 	streamName.Clear();
+	streamCountedLength = false;
+	streamPageStart = streamPageEnd = streamPageGranule = 0;
 	SoundMemoryRelease( openalReserved ); openalReserved = 0;
 
 	timestamp = FILE_NOT_FOUND_TIMESTAMP;
@@ -2187,6 +2427,11 @@ float idSoundSample_OpenAL::GetAmplitude( int timeMS ) const
 	if( IsDefault() )
 	{
 		return 1.0f;
+	}
+	// A job worker may still be filling a streamed track's envelope.
+	if( pendingDecode != NULL )
+	{
+		return 0.0f;
 	}
 	int index = timeMS * 60 / 1000;
 	if( index < 0 || index >= amplitude.Num() )

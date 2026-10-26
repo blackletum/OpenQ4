@@ -45,6 +45,42 @@ static bool previewRequested;
 static bool previewCommitted;
 static const char *previewRejection = "disabled";
 static unsigned int previewCompletedViews;
+// Every view's admission outcome since the map (render world) changed, so the
+// reported reason is not only whichever 3D view of the frame happened to run
+// last. Reasons are static strings; a small fixed table bounds the counts.
+struct hdrOutcomeCount_t {
+	const char *reason;
+	bool preview;
+	unsigned int views;
+};
+static const int HDR_OUTCOME_SLOTS = 48;
+static hdrOutcomeCount_t hdrOutcomes[ HDR_OUTCOME_SLOTS ];
+static int hdrOutcomeCount;
+static unsigned int hdrOutcomeOverflow;
+static const void *hdrOutcomeWorld;
+static const char *hdrMainViewReason = "none";
+
+static void VK_HDR_CountOutcome( const viewDef_t *view, bool preview, const char *reason ) {
+	if ( reason == NULL ) { return; }
+	if ( view != NULL && view->renderWorld != hdrOutcomeWorld ) {
+		hdrOutcomeWorld = view->renderWorld;
+		hdrOutcomeCount = 0;
+		hdrOutcomeOverflow = 0;
+	}
+	// FinishOutput passes no view: it only ever settles the main scene view.
+	if ( view == NULL || ( !view->isSubview && view->superView == NULL ) ) { hdrMainViewReason = reason; }
+	for ( int i = 0; i < hdrOutcomeCount; ++i ) {
+		if ( hdrOutcomes[i].preview == preview && idStr::Cmp( hdrOutcomes[i].reason, reason ) == 0 ) {
+			++hdrOutcomes[i].views;
+			return;
+		}
+	}
+	if ( hdrOutcomeCount >= HDR_OUTCOME_SLOTS ) { ++hdrOutcomeOverflow; return; }
+	hdrOutcomes[hdrOutcomeCount].reason = reason;
+	hdrOutcomes[hdrOutcomeCount].preview = preview;
+	hdrOutcomes[hdrOutcomeCount].views = 1;
+	++hdrOutcomeCount;
+}
 
 // The linear scene and the floating-point preview are laboratory modes
 // (r_pbrLinearScene): the linear scene presents classic surfaces through the
@@ -95,6 +131,15 @@ void VK_HDRScene_PrintInfo() {
 		hdrRejection, hdrCompletedViews, hdrScene.samples );
 	common->Printf( "Vulkan PBR preview: requested=%d committed=%d reason=%s completedViews=%u samples=%d\n",
 		int( previewRequested ), int( previewCommitted ), previewRejection, previewCompletedViews, hdrScene.samples );
+	common->Printf( "Vulkan HDR scene views on this map: main view reason=%s%s\n", hdrMainViewReason,
+		hdrOutcomeCount == 0 ? " (none counted)" : "" );
+	for ( int i = 0; i < hdrOutcomeCount; ++i ) {
+		common->Printf( "  %s %s: %u\n", hdrOutcomes[i].preview ? "preview" : "linear", hdrOutcomes[i].reason,
+			hdrOutcomes[i].views );
+	}
+	if ( hdrOutcomeOverflow > 0 ) {
+		common->Printf( "  %u further outcomes not counted\n", hdrOutcomeOverflow );
+	}
 }
 
 static VkShaderModule VK_HDR_CreateModule( VkShaderModule &module, const unsigned char *code, unsigned int bytes ) {
@@ -284,21 +329,27 @@ bool VK_HDRScene_BeginView( const viewDef_t *view, const char *rejection ) {
 	const bool preview = previewRequested;
 	const char *&reason = preview ? previewRejection : hdrRejection;
 	reason = rejection;
-	if ( rejection != NULL ) { return false; }
+	if ( rejection != NULL ) { VK_HDR_CountOutcome( view, preview, reason ); return false; }
 	if ( !preview ) {
 		reason = VK_PostProcess_PrepareLinearOutput( view );
-		if ( reason != NULL ) { return false; }
+		if ( reason != NULL ) { VK_HDR_CountOutcome( view, preview, reason ); return false; }
 	}
 	idRenderTexture *destination = VK_Exec_ActiveRenderTexture();
 	if ( !VK_HDR_Prepare( destination, preview ) ) {
 		(void)VK_Exec_SetRenderTarget( destination );
 		VK_PostProcess_DiscardLinearOutput();
 		reason = "accumulation-resources";
+		VK_HDR_CountOutcome( view, preview, reason );
 		return false;
 	}
 	bool ready = VK_Exec_SetRenderTarget( hdrScene.accumulation ) && VK_Exec_HDRScenePipelinesReady( view );
 	ready = VK_Exec_SetRenderTarget( destination ) && ready;
-	if ( !ready ) { VK_PostProcess_DiscardLinearOutput(); reason = "material-pipelines"; return false; }
+	if ( !ready ) {
+		VK_PostProcess_DiscardLinearOutput();
+		reason = "material-pipelines";
+		VK_HDR_CountOutcome( view, preview, reason );
+		return false;
+	}
 	if ( preview ) {
 		// Ordered transparency runs after the opaque combine, on the float
 		// preview target. Its original LDR pipelines cannot be replayed there.
@@ -307,6 +358,7 @@ bool VK_HDRScene_BeginView( const viewDef_t *view, const char *rejection ) {
 		if ( !ready ) {
 			(void)VK_PBR_RetargetTransparentView( view );
 			reason = "transparent-pipelines";
+			VK_HDR_CountOutcome( view, preview, reason );
 			return false;
 		}
 	}
@@ -315,10 +367,12 @@ bool VK_HDRScene_BeginView( const viewDef_t *view, const char *rejection ) {
 		if ( preview ) { (void)VK_PBR_RetargetTransparentView( view ); }
 		VK_PostProcess_DiscardLinearOutput();
 		reason = "seed";
+		VK_HDR_CountOutcome( view, preview, reason );
 		return false;
 	}
 	hdrView = view;
 	reason = "accumulating";
+	VK_HDR_CountOutcome( view, preview, reason );
 	return true;
 }
 
@@ -327,6 +381,17 @@ bool VK_HDRScene_EndOpaque( const viewDef_t *view ) {
 	const char *&reason = hdrScene.preview ? previewRejection : hdrRejection;
 	if ( !VK_HDR_Combine( view ) ) {
 		reason = "combine";
+		VK_HDR_CountOutcome( view, hdrScene.preview, reason );
+		// The caller abandons the rest of this view, so its opaque content is
+		// lost, but the accumulation must not stay bound for the GUI and later
+		// views. Return to the view's own target and release the output.
+		(void)VK_Exec_SetRenderTarget( hdrScene.destination );
+		if ( hdrScene.preview ) {
+			(void)VK_PBR_RetargetTransparentView( view );
+		} else {
+			VK_PostProcess_DiscardLinearOutput();
+		}
+		hdrView = NULL;
 		return false;
 	}
 	hdrLinearActive = !hdrScene.preview;
@@ -363,12 +428,17 @@ void VK_HDRScene_FinishOutput( bool submitted ) {
 	hdrLinearActive = false;
 	hdrRejection = submitted ? "complete" : "output";
 	if ( submitted ) { ++hdrCompletedViews; }
+	VK_HDR_CountOutcome( NULL, false, hdrRejection );
 }
 
 void VK_HDRScene_Shutdown() {
 	VK_HDRScene_ResetView();
 	hdrCompletedViews = 0;
 	previewCompletedViews = 0;
+	hdrOutcomeCount = 0;
+	hdrOutcomeOverflow = 0;
+	hdrOutcomeWorld = NULL;
+	hdrMainViewReason = "none";
 	delete hdrScene.accumulation;
 	delete hdrScene.previewTarget;
 	memset( &hdrScene, 0, sizeof( hdrScene ) );

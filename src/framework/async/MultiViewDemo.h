@@ -68,6 +68,10 @@ public:
 	bool					SeekByMS( int deltaMS );
 	void					StepFrames( int frames );
 	void					FollowNext();
+	void					FollowPrev();
+	bool					FollowClient( int clientNum );
+	int						FindFollowClient( const char *text ) const;
+	bool					CopyFollowName( int clientNum, idStr &name ) const;
 	void					FreeRoam();
 	bool					QueryFileInfo( const char *name, mvdFileInfo_t &info );
 
@@ -86,7 +90,10 @@ public:
 	static void				Skip_f( const idCmdArgs &args );
 	static void				Speed_f( const idCmdArgs &args );
 	static void				Step_f( const idCmdArgs &args );
+	static void				Recover_f( const idCmdArgs &args );
 	static void				FollowNext_f( const idCmdArgs &args );
+	static void				FollowPrev_f( const idCmdArgs &args );
+	static void				Follow_f( const idCmdArgs &args );
 	static void				FreeRoam_f( const idCmdArgs &args );
 
 private:
@@ -184,6 +191,7 @@ private:
 	void					StopPlayback( const char *reason );
 	void					FinishPlayback( const char *reason, bool warning );
 	bool					Inspect( const idCmdArgs &args );
+	bool					Recover( const idCmdArgs &args );
 
 	bool					WriteHeader();
 	bool					ReadHeader( idFile *source, header_t &outHeader );

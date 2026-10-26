@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../snd_local.h"
 #include "../SoundSurround.h"
 #include "../SoundQueue.h"
+#include "../SoundOutputRecovery.h"
 
 extern idCVar s_warnOnMissingSamples;
 extern idCVar s_openALEfxDebugMode;
@@ -209,6 +210,9 @@ idSoundVoice_OpenAL::idSoundVoice_OpenAL()
 	hasVUMeter( false ),
 	paused( true ),
 	centerRouting( false ),
+	outputRecovery( false ),
+	outputSerial( 0 ),
+	startFlags( 0 ),
 	deepRoutedQueue( false ),
 	appliedSourceRadius( -1.0f )
 {
@@ -254,6 +258,63 @@ bool idSoundVoice_OpenAL::UsesBoundedQueue() const
 {
 	return centerRouting || ( leadinSample != NULL && leadinSample->openalBuffer == 0 ) ||
 		( loopingSample != NULL && loopingSample->openalBuffer == 0 );
+}
+
+bool idSoundVoice_OpenAL::RecoversAtClock() const
+{
+	return outputRecovery || UsesBoundedQueue();
+}
+
+bool idSoundVoice_OpenAL::WantsCenterRouting() const
+{
+#if OPENQ4_OPENAL_CENTER_ROUTING_SUPPORTED
+	return SoundUseCenterChannel( soundSystemLocal.hardware.HasCenterChannelOutput(),
+		numChannels == 1 && ( loopingSample == NULL || loopingSample->NumChannels() == 1 ),
+		( startFlags & SSF_CENTER ) != 0, centerChannel, position.LengthSqr() );
+#else
+	return false;
+#endif
+}
+
+/*
+========================
+idSoundVoice_OpenAL::CheckOutput
+
+The output serial moves when the device is reopened, reset in place, gains or
+loses its centre speaker, or returns after it was lost. A source stopped across
+that, or routed for a layout the output no longer has, hands itself back so its
+channel restarts it at the scene clock; one that kept playing on an equivalent
+layout carries on. A paused voice keeps its serial: UnPause decides.
+========================
+*/
+bool idSoundVoice_OpenAL::CheckOutput()
+{
+	const idSoundHardware_OpenAL& hardware = soundSystemLocal.hardware;
+	const unsigned int serial = hardware.GetOutputSerial();
+	if( serial == outputSerial || paused )
+	{
+		return true;
+	}
+	ALint state = AL_INITIAL;
+	alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
+	const bool stopped = CheckALErrors() == AL_NO_ERROR && state == AL_STOPPED;
+	const bool wantsRouting = WantsCenterRouting();
+	switch( SoundOutputVoiceCheck( outputSerial, serial, hardware.IsOutputConnected(), stopped, centerRouting, wantsRouting ) )
+	{
+		case SoundOutputVoiceAction::Recover:
+			if( s_debugHardware.GetBool() )
+			{
+				idLib::Printf( "Output change recovery: %s (%s, routed %d -> %d)\n", leadinSample->GetName(),
+					stopped ? "stopped" : "playing", centerRouting ? 1 : 0, wantsRouting ? 1 : 0 );
+			}
+			outputRecovery = true;
+			return false;
+		case SoundOutputVoiceAction::Adopt:
+			outputSerial = serial;
+			return true;
+		default:
+			return true;
+	}
 }
 
 int idSoundVoice_OpenAL::StreamingBufferIndex( const ALuint buffer ) const
@@ -704,10 +765,12 @@ bool idSoundVoice_OpenAL::Start( int offsetMS, int ssFlags )
 	{
 		return false;
 	}
+	// The output this voice plays on; CheckOutput compares it every update.
+	outputSerial = soundSystemLocal.hardware.GetOutputSerial();
+	outputRecovery = false;
+	startFlags = ssFlags;
 #if OPENQ4_OPENAL_CENTER_ROUTING_SUPPORTED
-	centerRouting = SoundUseCenterChannel( soundSystemLocal.hardware.HasCenterChannelOutput(),
-		numChannels == 1 && ( loopingSample == NULL || loopingSample->NumChannels() == 1 ),
-		( ssFlags & SSF_CENTER ) != 0, centerChannel, position.LengthSqr() );
+	centerRouting = WantsCenterRouting();
 	if( centerRouting ) {
 		if( !EnsureStreamingBuffers() ) return false;
 		alSourcei( openalSource, AL_DIRECT_CHANNELS_SOFT, soundSystemLocal.hardware.GetDirectChannelsMode() );
@@ -1064,7 +1127,10 @@ bool idSoundVoice_OpenAL::QueueNextBuffer( ALuint streamBuffer )
 			oggStream = new idSoundOggStream;
 			oggStreamSample = sample;
 			oggStreamOffset = 0;
-			if( !oggStream->Open( sample->streamName ) || oggStream->Channels() != sample->NumChannels() ||
+			if( !oggStream->Open( sample->streamName ) ||
+				( sample->streamCountedLength && !oggStream->SetCountedLength( static_cast<unsigned int>( sample->playLength ),
+					sample->streamPageStart, sample->streamPageEnd, sample->streamPageGranule ) ) ||
+				oggStream->Channels() != sample->NumChannels() ||
 				oggStream->Rate() != sample->SampleRate() || oggStream->Frames() != static_cast<unsigned int>( sample->playLength ) ) {
 				ResetQueuedBufferState(); return false;
 			}
@@ -1154,6 +1220,11 @@ bool idSoundVoice_OpenAL::Update()
 	{
 		return false;
 	}
+	// The output this voice started on was lost, replaced or re-laid out.
+	if( !CheckOutput() )
+	{
+		return false;
+	}
 
 	if( !HasQueuedBufferState() )
 	{
@@ -1162,12 +1233,18 @@ bool idSoundVoice_OpenAL::Update()
 		// stopped after alcReopenDeviceSOFT, which left looping ambience and music
 		// silent after a headset was unplugged. Hand the voice back: the channel
 		// restarts a looping sound at its current offset and ends a finished one.
+		// A stop by a lost endpoint is not the end of the sound: dialogue and other
+		// one-shots restart at the scene clock too once the output returns.
 		if( !paused )
 		{
 			ALint state = AL_PLAYING;
 			alGetSourcei( openalSource, AL_SOURCE_STATE, &state );
 			if( CheckALErrors() == AL_NO_ERROR && state == AL_STOPPED )
 			{
+				if( !soundSystemLocal.hardware.IsOutputConnected() )
+				{
+					outputRecovery = true;
+				}
 				return false;
 			}
 		}
@@ -1437,6 +1514,11 @@ void idSoundVoice_OpenAL::FlushSourceBuffers()
 
 	alSourcei( openalSource, AL_BUFFER, 0 );
 	alSourcei( openalSource, AL_LOOPING, AL_FALSE );
+	// A source that has played stays AL_STOPPED, and OpenAL counts every buffer
+	// queued on a stopped source as processed. A stream started on a recycled
+	// voice was unqueued as fast as it was queued and never played, once the
+	// voice pool had cycled. Back to AL_INITIAL, as a new source starts.
+	alSourceRewind( openalSource );
 	CheckALErrors();
 
 	paused = true;
@@ -1499,6 +1581,18 @@ bool idSoundVoice_OpenAL::UnPause()
 	if( s_debugHardware.GetBool() )
 	{
 		idLib::Printf( "%dms: %i unpausing %s\n", Sys_Milliseconds(), openalSource, leadinSample ? leadinSample->GetName() : "<null>" );
+	}
+
+	// OpenAL plays a paused source that lost its voice to an output change from its
+	// first sample. Leave it stopped instead: the next update hands it back and the
+	// channel restarts it at the scene clock.
+	if( !SoundOutputResumePaused( outputSerial, soundSystemLocal.hardware.GetOutputSerial(), soundSystemLocal.hardware.IsOutputConnected() ) )
+	{
+		alSourceStop( openalSource );
+		CheckALErrors();
+		paused = false;
+		outputRecovery = true;
+		return false;
 	}
 
 	if( HasQueuedBufferState() && !SourceHasPlayableBuffer() )
@@ -1932,12 +2026,24 @@ void idSoundVoice_OpenAL::ApplyWetDryRouting()
 			airGainHF = idMath::ClampFloat( 0.0f, 1.0f, idMath::Pow( perMeter, meters ) );
 		}
 	}
+	// A mod reverb's room rolloff: OpenAL attenuates a mono voice's sends with distance
+	// itself, but does not spatialize the direct 5.1 channels of a centre-routed voice,
+	// so that voice kept its full reverb however far away it was.
+	float primaryRolloffGain = 1.0f;
+	float areaRolloffGain = 1.0f;
+	if( centerRouting )
+	{
+		const idSoundHardware_OpenAL& hardware = soundSystemLocal.hardware;
+		const float reference = Max( innerRadius, 0.001f );
+		primaryRolloffGain = SoundReverb_RoomRolloffGain( position.Length(), reference, hardware.GetReverbSlotRoomRolloff( hardware.GetPrimaryReverbSlot() ) );
+		areaRolloffGain = SoundReverb_RoomRolloffGain( position.Length(), reference, hardware.GetReverbSlotRoomRolloff( reverbAreaSlot ) );
+	}
 	// openQ4's liquid and suit muffling, then retail's EAX source occlusion and room level
 	const float directFilterGain = effectiveDry * occlusionFilter.directGain * eaxDirectGain;
 	const float directFilterGainHF = occlusionFilter.directGainHF * eaxDirectGainHF * airGainHF;
-	const float wetFilterGain = effectiveWet * occlusionFilter.wetGain * eaxPrimaryGain;
+	const float wetFilterGain = effectiveWet * occlusionFilter.wetGain * eaxPrimaryGain * primaryRolloffGain;
 	const float wetFilterGainHF = occlusionFilter.wetGainHF * eaxPrimaryGainHF * airGainHF;
-	const float areaFilterGain = effectiveWet * occlusionFilter.wetGain * eaxAreaGain;
+	const float areaFilterGain = effectiveWet * occlusionFilter.wetGain * eaxAreaGain * areaRolloffGain;
 	const float areaFilterGainHF = occlusionFilter.wetGainHF * eaxAreaGainHF * airGainHF;
 
 #if OPENQ4_OPENAL_EFX_SUPPORTED

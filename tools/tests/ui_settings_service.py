@@ -403,11 +403,64 @@ static void Ownership() {
     }
     Check(host.reads==reads && host.validations==validations && host.writes.empty(),"foreign owner cannot inspect or mutate host/draft");
     Check(Read(first)==draft,"owner read revalidates Apply without changing the draft");
-    Check(Dispatch(first,"begin") && Read(first)==draft && host.reads==reads,"same-owner begin keeps unsaved draft");
+    const auto beforeBegin=host.reads;
+    Check(Dispatch(first,"begin") && host.reads==beforeBegin && Read(first)==draft,"same-owner begin keeps unsaved draft without its own read");
     UI_SettingsCloseOwner(second);Check(Read(first)==draft,"closing nonowner preserves current draft");
     UI_SettingsReleaseOwner(second);output=sentinel;
     Check(!UI_SettingsRead(second,output) && output==sentinel && !Dispatch(second,"begin"),"released token cannot read or reacquire");
     UI_SettingsReleaseOwner(first);Check(host.writes.empty(),"editing release never writes live state");
+}
+static void ExternalRefresh() {
+    const auto owner=Begin();
+    host.live["r_brightness"]=1.25;host.live["r_shadows"]=false;
+    auto values=Read(owner);
+    Check(values.at("settings.baseline.r_brightness")==StateValue(1.25) &&
+          values.at("settings.draft.r_brightness")==StateValue(1.25) &&
+          values.at("settings.draft.r_shadows")==StateValue(false),"clean page refreshes complete external snapshot");
+    Check(values.at("settings.dirty")==StateValue(false) && !UI_SettingsBlocksConfigWrite() &&
+          host.writes.empty(),"external refresh neither applies nor acquires persistence ownership");
+    Check(Dispatch(owner,"edit",{{"r_brightness",1.5}}),"edit refreshed baseline");
+    host.live["r_shadows"]=true;
+    values=Read(owner);
+    Check(values.at("settings.draft.r_brightness")==StateValue(1.5) &&
+          values.at("settings.baseline.r_brightness")==StateValue(1.25) &&
+          values.at("settings.draft.r_shadows")==StateValue(false),"external conflict preserves whole dirty draft and baseline");
+    Check(values.at("settings.message")==StateValue(std::string("#str_230011")) &&
+          values.at("settings.canApply")==StateValue(false),"external conflict is visible before Apply and disables it");
+    Check(!Dispatch(owner,"apply") && host.writes.empty(),"direct Apply cannot bypass the conflict");
+    Check(Dispatch(owner,"revert"),"discard dirty attempt explicitly");
+    values=Read(owner);
+    Check(values.at("settings.draft.r_brightness")==StateValue(1.25) &&
+          values.at("settings.draft.r_shadows")==StateValue(true) &&
+          values.at("settings.message")==StateValue(std::string("#str_230007")),"discard refreshes live values without reopening");
+    Check(!Dispatch(owner,"edit",{{"r_brightness",99.0}}),"failed edit remains visible");
+    Expect(owner,"message",std::string("#str_230010"));
+    host.live["r_brightness"]=1.75;
+    values=Read(owner);
+    Check(values.at("settings.draft.r_brightness")==StateValue(1.75) &&
+          values.at("settings.message")==StateValue(std::string("#str_230010")),"background refresh preserves operation failure status");
+    Check(Dispatch(owner,"begin"),"explicit operation clears prior failure");
+    host.failRead=true;host.live["r_brightness"]=1.8;
+    values=Read(owner);
+    Check(values.at("settings.draft.r_brightness")==StateValue(1.75) &&
+          values.at("settings.message")==StateValue(std::string("#str_230010")) &&
+          values.at("settings.canApply")==StateValue(false),"unavailable read preserves snapshot and reports failure");
+    host.failRead=false;
+    Expect(owner,"draft.r_brightness",1.8);Expect(owner,"message",std::string("#str_230007"));
+    Check(Dispatch(owner,"edit",{{"r_brightness",1.6}}) && Dispatch(owner,"apply"),"fresh edit applies after read recovery");
+    Check(host.writes==std::vector<StateValues>{{{"r_brightness",1.6}}},"apply writes only the edit based on refreshed values");
+    UI_SettingsReleaseOwner(owner);
+    const auto reads=host.reads;
+    StateValues sentinel{{"sentinel",true}},output=sentinel;
+    Check(!UI_SettingsRead(owner,output) && output==sentinel && host.reads==reads,"retired owner cannot refresh");
+    const auto fresh=Begin();host.confirm=true;
+    Check(Dispatch(fresh,"edit",{{"r_brightness",1.7}}) && Dispatch(fresh,"apply"),"pending confirmation before external write");
+    host.live["r_shadows"]=false;
+    values=Read(fresh);
+    Check(values.at("settings.phase")==StateValue(static_cast<double>(SettingsPhase::Confirming)) &&
+          values.at("settings.baseline.r_brightness")==StateValue(1.6) &&
+          values.at("settings.draft.r_brightness")==StateValue(1.7) &&
+          values.at("settings.baseline.r_shadows")==StateValue(true),"refresh cannot adopt a pending effect as the baseline");
 }
 static void Drafts() {
     const auto owner=Begin();
@@ -1411,6 +1464,7 @@ int main(int argc,char** argv) {
     else if(name=="renderer_route")RendererRoute();else if(name=="renderer_status")RendererStatus();
     else if(name=="display_catalog")DisplayCatalog();else if(name=="display_pick_drift")DisplayPickDrift();
     else if(name=="display_pick_resets")DisplayPickResets();
+    else if(name=="external_refresh")ExternalRefresh();
     else if(name=="exit_immediate")ExitImmediate(false);else if(name=="exit_noop")ExitImmediate(true);
     else if(name.starts_with("exit_invalidate_"))ExitInvalidate(name.substr(16));
     else if(name.starts_with("exit_failure_"))ExitFailure(name.substr(13));
@@ -1436,7 +1490,7 @@ SCENARIOS = (
     'display_close_queued', 'display_close_written', 'startup_shutdown', 'stale_display_actions', 'level_load_policy', 'level_load_unreadable',
     'deferred_apply', 'deferred_mixed', 'deferred_not_ready', 'deferred_persist_failure', 'deferred_close', 'deferred_apply_exit',
     'deferred_apply_exit_restore', 'unsupported_effects', 'deferred_retry_renews', 'light_grid_status', 'renderer_route', 'renderer_status',
-    'display_catalog', 'display_pick_drift', 'display_pick_resets',
+    'display_catalog', 'display_pick_drift', 'display_pick_resets', 'external_refresh',
     'frame_outside','frame_skipped','frame_submit_only','frame_present_only',
     'frame_readback_before_draw','frame_readback_after_draw','frame_readback_during_end',
     'frame_nested','frame_aborted','frame_begin_aborted','frame_wrong_request','frame_shutdown',

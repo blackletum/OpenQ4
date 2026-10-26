@@ -41,6 +41,7 @@ public:
     enum spectatorFollow_t {@ENUM@};
     enum {EVENT_SPECTATOR_FOLLOW=12};
     int entityNumber=0,spectator=0,currentWeapon=0,lastSpectateChange=0,lastArenaChange=0,arena=0,hudUpdates=0,freeMoves=0;
+    int spectatorFollowSlot=-1,spectatorFollowSpawnId=0;
     bool spectating=false,fake=false,wantSpectate=false,connected=true;
     struct {int upmove=0,buttons=0;}usercmd;
     std::vector<byte> sent;
@@ -160,6 +161,17 @@ int main(){
     observer.spectating=false;Tick();Deliver(observer,direct);assert(observer.spectator==0);observer.spectating=true;
     // A role or policy change revokes the current camera before any input can run.
     Tick();Deliver(observer,direct);assert(observer.spectator==1);
+    gameLocal.mpGame.policy.lockedSpectatorSideMask=3;observer.UpdateSpectating();assert(observer.spectator==0);
+    // A replacement connection in the followed slot - a different entity with no
+    // empty frame between - releases the camera by identity, not by slot number.
+    gameLocal.mpGame.policy.lockedSpectatorSideMask=0;
+    Tick();Deliver(observer,direct);assert(observer.spectator==1);
+    observer.UpdateSpectating();assert(observer.spectator==1);
+    ++players[1].spawnId;observer.UpdateSpectating();assert(observer.spectator==0);
+    --players[1].spawnId;
+    // Following again latches the slot's current entity afresh.
+    Tick();Deliver(observer,direct);assert(observer.spectator==1);
+    observer.UpdateSpectating();observer.UpdateSpectating();assert(observer.spectator==1);
     gameLocal.mpGame.policy.lockedSpectatorSideMask=3;observer.UpdateSpectating();assert(observer.spectator==0);
     // A request queued while privileged is checked against the role at receipt.
     gameLocal.mpGame.recipient.roles=MPMatchRoleBit(MP_MATCH_ROLE_BROADCASTER);

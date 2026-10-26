@@ -305,6 +305,16 @@ public:
 	int						secretAreasDiscovered;
 };
 
+// alternate views sampled by idPlayer::PresentAlternateView
+enum {
+	PRESENTATION_ALT_VIEW_NONE = 0,
+	PRESENTATION_ALT_VIEW_CAMERA,
+	PRESENTATION_ALT_VIEW_PRIVATE_CAMERA,
+	PRESENTATION_ALT_VIEW_THIRD_PERSON,
+	PRESENTATION_ALT_VIEW_THIRD_PERSON_VEHICLE,
+	PRESENTATION_ALT_VIEW_DEATH
+};
+
 class idPlayer : public idActor {
 public:
 
@@ -471,6 +481,33 @@ public:
 	idVec3					presentationCurViewOrigin;
 	idMat3					presentationCurViewAxis;
 	float					presentationCurFov;
+	// openQ4 late look (in_presentationView): the authoritative view and usercmd
+	// angles at the camera's two samples, and the correction frozen for the draw
+	// being prepared. Draw-only, like the samples above: never saved or sent.
+	idAngles				presentationPrevLookAngles;
+	idAngles				presentationCurLookAngles;
+	idAngles				presentationPrevCmdAngles;
+	idAngles				presentationCurCmdAngles;
+	bool					presentationLookCoupled;
+	bool					presentationLookActive;
+	idAngles				presentationLookCorrection;
+	float					presentationLookInputYaw;	// diagnostics only
+	// openQ4 alternate views (cinematic and private cameras, third person, the
+	// death camera): the authoritative view sampled once per tic, like the eye
+	// above, so the camera and the scene it shows share the presentation clock.
+	int						presentationAltViewTime;
+	int						presentationAltViewKind;
+	int						presentationAltViewSource;
+	bool					presentationAltViewCanInterpolate;
+	bool					presentationAltViewDrawn;
+	idVec3					presentationPrevAltOrigin;
+	idMat3					presentationPrevAltAxis;
+	float					presentationPrevAltFovX;
+	float					presentationPrevAltFovY;
+	idVec3					presentationCurAltOrigin;
+	idMat3					presentationCurAltAxis;
+	float					presentationCurAltFovX;
+	float					presentationCurAltFovY;
 
 	idDragEntity			dragEntity;
 	idVec3					intentDir;
@@ -570,6 +607,12 @@ public:
 	bool					IsPresentationViewInterpolated( void ) const;
 	float					GetPresentationViewBlendFraction( void ) const;
 	float					GetPresentationFov( void );
+	void					PresentAlternateView( int kind, const idEntity *source );
+	bool					AllowsPresentationLook( void ) const;
+	bool					GetPresentationLookDiagnostic( float &inputYaw, float &correctionYaw ) const;
+	void					UpdatePresentationLook( void );
+	void					ApplyPresentationLookToView( idVec3 &origin, idMat3 &axis ) const;
+	void					ApplyPresentationLookToEyeAttachment( const idVec3 &eyeOrigin, const idMat3 &eyeAxis, idVec3 &origin, idMat3 &axis ) const;
 	
 	void					DrawShadow( renderEntity_t *headRenderEnt );
 	void					UpdateMultiplayerVisibilityEffects( renderEntity_t *headRenderEnt );
@@ -903,6 +946,9 @@ public:
 	bool					IsSpectatedClient( void ) const;
 	bool					IsWaitingForPredictAck( void ) const;
 
+	// openQ4: the air reservoir, out of pm_airTics; a bot reads it before it dives.
+	int						GetAirTics( void ) const { return airTics; }
+
 protected:
 	void					SetupHead( const char* modelKeyName = "", idVec3 headOffset = idVec3(0, 0, 0) );
 
@@ -1053,6 +1099,10 @@ private:
 	// Extra replay tics this remote has already been re-simulated for in the current
 	// chain.  Client-only transient state; deliberately not saved.
 	int						remotePredictedTics;
+	// The same re-simulated tics counted for net_mpPredictDebug from one snapshot to the
+	// next. remotePredictedTics is reset by PredictionErrorDecay on every presented frame,
+	// so it no longer holds the chain's count when the next snapshot arrives.
+	int						remoteChainResimulatedTics;
 	idVec3					predictedOrigin;
 	idAngles				predictedAngles;
 	bool					predictedUpdated;
@@ -1074,6 +1124,11 @@ private:
 	bool					isTelefragged;			// proper obituaries
 	
 	int						lastSpectateChange;
+	// openQ4: the entity a followed slot held when this spectator started
+	// following it.  UpdateSpectating releases the camera when the slot's entity
+	// changes, so a reused slot never inherits a follow by number alone.
+	int						spectatorFollowSlot;
+	int						spectatorFollowSpawnId;
  	int						lastTeleFX;
  	unsigned int			lastSnapshotSequence;	// track state hitches on clients
  	
@@ -1086,6 +1141,8 @@ private:
 	int						connectTime;
 	unsigned int			mutedPlayers;			// bitfield set to which clients this player wants muted
 	unsigned int			friendPlayers;			// bitfield set to which clients this player has marked as friends
+	int						mutedPlayerIdentities[MAX_CLIENTS] = {};
+	int						friendPlayerIdentities[MAX_CLIENTS] = {};
 	
 	int						voiceDest[MAX_CONCURRENT_VOICES];
 	int						voiceDestTimes[MAX_CONCURRENT_VOICES];
@@ -1403,10 +1460,6 @@ ID_INLINE bool idPlayer::IsPlayerMuted( idPlayer* player ) const {
 	return player != NULL && IsPlayerMuted( player->entityNumber );
 }
 
-ID_INLINE bool idPlayer::IsPlayerMuted( int clientNum ) const {
-	return clientNum >= 0 && clientNum < MAX_CLIENTS && ( mutedPlayers & ( 1u << clientNum ) ) != 0;
-}
-
 ID_INLINE void idPlayer::MutePlayer( idPlayer* player, bool mute ) {
 	if ( player == NULL ) {
 		return;
@@ -1414,24 +1467,8 @@ ID_INLINE void idPlayer::MutePlayer( idPlayer* player, bool mute ) {
 	MutePlayer( player->entityNumber, mute );
 }
 
-ID_INLINE void idPlayer::MutePlayer( int clientNum, bool mute ) {
-	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
-		return;
-	}
-	const unsigned int clientMask = 1u << clientNum;
-	if( mute ) {
-		mutedPlayers |= clientMask;
-	} else {
-		mutedPlayers &= ~clientMask;
-	}
-}
-
 ID_INLINE bool idPlayer::IsFriend( idPlayer* player ) const {
 	return player != NULL && IsFriend( player->entityNumber );
-}
-
-ID_INLINE bool idPlayer::IsFriend( int clientNum ) const {
-	return clientNum >= 0 && clientNum < MAX_CLIENTS && ( friendPlayers & ( 1u << clientNum ) ) != 0;
 }
 
 ID_INLINE void idPlayer::SetFriend( idPlayer* player, bool isFriend ) {
@@ -1439,18 +1476,6 @@ ID_INLINE void idPlayer::SetFriend( idPlayer* player, bool isFriend ) {
 		return;
 	}
 	SetFriend( player->entityNumber, isFriend );
-}
-
-ID_INLINE void idPlayer::SetFriend( int clientNum, bool isFriend ) {
-	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
-		return;
-	}
-	const unsigned int clientMask = 1u << clientNum;
-	if( isFriend ) {
-		friendPlayers |= clientMask;
-	} else {
-		friendPlayers &= ~clientMask;
-	}
 }
 
 ID_INLINE int idPlayer::GetConnectTime( void ) const {

@@ -174,6 +174,10 @@ def restart_level_document(family: Family = MARINE) -> dict:
     doc.session("back", "restartBack")
     doc.session("go", "restartGo")
     doc.events["onBack"] = [{"op": "action", "action": "back"}]
+    # The Menu button closes the menus and resumes play (section 13.5): the
+    # session returns the pause, whose RESUME closes it.
+    doc.session("menuResume", "menuResume")
+    doc.events["onMenuButton"] = [{"op": "action", "action": "menuResume"}]
     plates = difficulty_plates(doc, "restart.skill", family)
     description = difficulty_description(doc, "restart-description", "restart.skill", family)
     go = primary_plate(doc, "restart_go", "#str_229983", *PRIMARY, action="go", family=family)

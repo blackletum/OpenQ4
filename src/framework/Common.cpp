@@ -1867,6 +1867,30 @@ static bool Common_HasStartupVariable( const char *match ) {
 	return false;
 }
 
+/*
+==================
+Common_IsRetailGameDirFile
+
+True when the file a relative path resolves to is a loose file in the retail
+game directory. GOG's Quake 4 installers write q4base/autoexec.cfg with the
+language picked at install time, and tools that extract every language variant
+leave whichever came last (issue #199).
+==================
+*/
+static bool Common_IsRetailGameDirFile( const char *relativePath ) {
+	idFile *file = fileSystem->OpenFileRead( relativePath );
+	if ( file == NULL ) {
+		return false;
+	}
+
+	idStr directory = file->GetFullPath();
+	fileSystem->CloseFile( file );
+	directory.BackSlashesToSlashes();
+	directory.StripFilename();
+	directory.StripPath();
+	return directory.Icmp( BASE_GAMEDIR ) == 0;
+}
+
 void idCommonLocal::StartupVariable( const char *match, bool once ) {
 	int			i;
 	const char *s;
@@ -6663,6 +6687,7 @@ void idCommonLocal::LoadGameDLL( void ) {
 	gameImport.collisionModelManager	= ::collisionModelManager;
 	gameImport.bse						= ::bse;
 	gameImport.vrSystem					= ::vrSystem;
+	gameImport.usercmdGen				= ::usercmdGen;
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_CALL_GET_GAME_API );
 	const gameExport_t *gameExportPtr = GetGameAPI( &gameImport );
@@ -7212,12 +7237,27 @@ void idCommonLocal::InitGame( void ) {
 			cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec " CONFIG_FILE "\n" );
 		}
 	}
+
+	// An installer's q4base/autoexec.cfg supplies the first launch's language.
+	// After that the saved config holds the player's Settings choice, which a
+	// player's own autoexec.cfg elsewhere may still override.
+	const bool keepSavedLanguage = !sysDetect && !SafeMode() && Common_IsRetailGameDirFile( "autoexec.cfg" );
+	idStr savedLanguage;
+	if ( keepSavedLanguage ) {
+		cmdSystem->ExecuteCommandBuffer();
+		savedLanguage = cvarSystem->GetCVarString( "sys_lang" );
+	}
 	if ( fileSystem->ReadFile( "autoexec.cfg", NULL ) >= 0 ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec autoexec.cfg\n" );
 	}
 
 	// run cfg execution
 	cmdSystem->ExecuteCommandBuffer();
+	if ( keepSavedLanguage && savedLanguage.Icmp( cvarSystem->GetCVarString( "sys_lang" ) ) != 0 ) {
+		Printf( "Keeping the saved language '%s' over sys_lang '%s' from " BASE_GAMEDIR "/autoexec.cfg.\n",
+			savedLanguage.c_str(), cvarSystem->GetCVarString( "sys_lang" ) );
+		cvarSystem->SetCVarString( "sys_lang", savedLanguage.c_str() );
+	}
 
 	// re-override anything from the config files with command line args
 	StartupVariable( NULL, false );

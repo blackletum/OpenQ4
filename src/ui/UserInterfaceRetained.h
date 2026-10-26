@@ -22,6 +22,8 @@ const openq4::ui::DocumentModel* UI_RetainedDocumentModel(idUserInterface* gui);
 // The names of a retained GUI's declared state that start with `prefix`, in
 // order: how a session finds the application lines a document shows.
 int UI_RetainedStateNames(idUserInterface* gui, const char* prefix, std::vector<std::string>& names);
+// Read semantic focus so a refreshed catalog can follow the same entry.
+std::string UI_RetainedFocusedControl(idUserInterface* gui);
 
 // Engine adapter for explicit .q4ui resources. The public game ABI remains
 // idUserInterface; RmlUi, canonical nodes and device ownership stay private.
@@ -32,6 +34,7 @@ class idUserInterfaceRetained final : public idUserInterfaceManaged {
 	friend bool UI_RetainedViewFailed(idUserInterface*);
 	friend const openq4::ui::DocumentModel* UI_RetainedDocumentModel(idUserInterface*);
 	friend int UI_RetainedStateNames(idUserInterface*, const char*, std::vector<std::string>&);
+	friend std::string UI_RetainedFocusedControl(idUserInterface*);
 public:
 	explicit idUserInterfaceRetained(bool managed = true);
 	~idUserInterfaceRetained() override;

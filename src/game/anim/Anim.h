@@ -651,6 +651,8 @@ class idAnimator{
 	jointModPrev_t *		FindJointModPrev( int jointnum, bool create );
 	bool					GetJointModDiagnostic( int index, int &jointnum, idMat3 &mat ) const;
 	bool					GetPresentationJointDiagnostic( int index, idVec3 &pos ) const;
+	static int				presentationAFBlendCount;	// diagnostics: AF poses drawn blended since g_presentationClockCapture last read it
+	static int				presentationAFFrameCount;	// diagnostics: AF poses requested on draw frames, blended or not
 	void						ClearPresentationFrame( void );
 	bool						FrameHasChanged( int animtime ) const;
 	void						GetDelta( int fromtime, int totime, idVec3 &delta ) const;
@@ -751,6 +753,9 @@ private:
 	int							numJoints;
 	idJointMat *				joints;
 	idJointMat *				presentationJoints;
+	idJointMat *				presentationPrevAFJoints;	// previous authoritative AF pose; draw-only, never serialized
+	int							presentationPrevAFTime;
+	int							authoritativeFrameTime;		// time of the pose in joints[]; ForceUpdate() leaves it
 
 	mutable int					lastTransformTime;		// mutable because the value is updated in CreateFrame
 	bool						presentationJointsValid;		// transient draw-only state; never serialized

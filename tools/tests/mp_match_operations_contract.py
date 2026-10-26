@@ -980,8 +980,9 @@ int main( void ) {
         MPMatchRoleBit( MP_MATCH_ROLE_SERVER_OPERATOR ) ) == 0 );
 
     // A passed proposal re-enters the exact executor. Current actor binding,
-    // proposal revision, phase and session CAS are revalidated. Ack is a
-    // separate mutation, preventing a cross-core partial commit.
+    // proposal revision, phase and the operation's semantics are revalidated
+    // against the session as it is at execution. Ack is a separate mutation,
+    // preventing a cross-core partial commit.
     mpMatchOperationRequest_t target = MakeRequest( MP_MATCH_OP_ABORT, session, generation );
     target.argumentCount = 1;
     target.arguments[ 0 ].fieldId = MP_MATCH_ARG_REASON;
@@ -1005,6 +1006,15 @@ int main( void ) {
     CHECK( proposals.GetProposal( MP_PROPOSAL_SCOPE_GLOBAL )->status ==
         MP_PROPOSAL_STATUS_PASSED );
 
+    // An unrelated session change inside the voting window - here a bot
+    // joining - advances the session revision. It must not void the ballot.
+    const uint64_t ballotCreationRevision = session.GetSessionRevision();
+    mpParticipantId lateBot;
+    CHECK( session.BindParticipant( 6, false, MPMatchRoleBit( MP_MATCH_ROLE_PLAYER ),
+        session.GetSessionRevision(), lateBot ).WasApplied() );
+    CHECK( session.GetSessionRevision() != ballotCreationRevision );
+    CHECK( session.GetPhase() == COUNTDOWN );
+
     context = MakeContext( rules, proposals, series );
     result = executor.ExecutePassedProposal( MP_PROPOSAL_SCOPE_GLOBAL, 7,
         context, session, rules, proposals, series );
@@ -1017,9 +1027,13 @@ int main( void ) {
         MP_PROPOSAL_STATUS_PASSED );
     Fingerprint afterTarget = Snapshot( session, rules, proposals, series );
 
+    // Revalidation also refuses a second run: the aborted match is no longer in
+    // a phase the operation allows. Once-only execution itself belongs to the
+    // adapter, which acknowledges every executed ballot.
     result = executor.ExecutePassedProposal( MP_PROPOSAL_SCOPE_GLOBAL, 7,
         context, session, rules, proposals, series );
-    CHECK( result.reason == MP_OPERATION_REASON_STALE_SESSION_REVISION );
+    CHECK( result.outcome == MP_OPERATION_REJECTED );
+    CHECK( result.reason == MP_OPERATION_REASON_WRONG_PHASE );
     CHECK( Same( afterTarget, Snapshot( session, rules, proposals, series ) ) );
 
     result = executor.AcknowledgePassedProposal( MP_PROPOSAL_SCOPE_GLOBAL, 7,
@@ -1093,6 +1107,18 @@ int main( void ) {
     AddVeto( decider, MP_MATCH_VETO_DECIDER, "mp/q4dm1" );
     context = MakeContext( rules, proposals, series );
     const uint64_t beforeDeciderRevision = series.GetRevision();
+    // The turn is held to the series side the adapter resolved for the view,
+    // never to the gameplay side: without one, or with the other side's, the
+    // same captain is refused and the series does not move.
+    result = executor.Execute( decider, context, session, rules, proposals, series );
+    CHECK( result.outcome == MP_OPERATION_REJECTED );
+    CHECK( result.reason == MP_OPERATION_REASON_TARGET_ALIGNMENT );
+    CHECK( series.GetRevision() == beforeDeciderRevision );
+    context.actorSeriesSide = 1;
+    result = executor.Execute( decider, context, session, rules, proposals, series );
+    CHECK( result.outcome == MP_OPERATION_REJECTED );
+    CHECK( series.GetRevision() == beforeDeciderRevision );
+    context.actorSeriesSide = 0;
     result = executor.Execute( decider, context, session, rules, proposals, series );
     CHECK( result.outcome == MP_OPERATION_APPLIED );
     CHECK( result.continuation.kind == MP_OPERATION_CONTINUATION_SERIES_PERSIST );
@@ -1118,6 +1144,12 @@ int main( void ) {
         MP_MATCH_STARTING_SIDE_STROGG );
     context = MakeContext( rules, proposals, series );
     context.trustedTransportSlot = 1;
+    // Gameplay side 1 is not enough when the series maps this seat to side 0.
+    context.actorSeriesSide = 0;
+    result = executor.Execute( chooseSide, context, session, rules, proposals, series );
+    CHECK( result.outcome == MP_OPERATION_REJECTED );
+    CHECK( series.GetRevision() == beforeMalformedSide );
+    context.actorSeriesSide = 1;
     result = executor.Execute( chooseSide, context, session, rules, proposals, series );
     CHECK( result.outcome == MP_OPERATION_APPLIED );
     CHECK( series.GetRevision() == beforeMalformedSide + 1 );
