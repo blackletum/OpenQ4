@@ -49,6 +49,27 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile \
+            tools/tests/aas_liquid_area_state.py \
+            tools/tests/airdefense_performance_contract.py \
+            tools/tests/mvd_seek_weapon_state.py \
+            tools/tests/mvd_storage_budget.py \
+            tools/tests/player_air_readout_state.py \
+            tools/tests/renderer_selection_startup.py \
+            tools/tests/ui_rendering_settings.py \
+            tools/tests/airdefense_performance.py \
+            tools/tests/checkpoint_performance.py \
+            tools/tests/generate_capture_resample_test.py \
+            tools/tests/generate_checkpoint_commit_test.py \
+            tools/tests/generate_checkpoint_preview_test.py \
+            tools/tests/generate_checkpoint_storage_test.py \
+            tools/tests/generate_dict_identity_test.py \
+            tools/tests/generate_save_dict_test.py \
+            tools/tests/mp_bot_walk_replay.py \
+            tools/tests/mp_liquid_air_smoke.py \
+            tools/tests/mp_mvd_quota_smoke.py \
+            tools/tests/mp_mvd_seek_smoke.py \
+            tools/tests/performance_presets_smoke.py \
+            tools/tests/rendering_selection_smoke.py \
             tools/build/android_cross.py \
             tools/build/android_elf.py \
             tools/build/prepare_android_deps.py \
@@ -598,6 +619,13 @@ jobs:
           bash -n tools/validation/validate_push.sh
           bash -n tools/validation/validate_pr.sh
           python tools/validation/audit_source_provenance.py --check
+          python tools/tests/aas_liquid_area_state.py
+          python tools/tests/airdefense_performance_contract.py
+          python tools/tests/mvd_seek_weapon_state.py
+          python tools/tests/mvd_storage_budget.py
+          python tools/tests/player_air_readout_state.py
+          python tools/tests/renderer_selection_startup.py
+          python tools/tests/ui_rendering_settings.py
           python tools/tests/aas_compiler_contract.py
           python tools/tests/aas_settings_contract.py
           python tools/tests/chat_history.py

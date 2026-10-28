@@ -648,6 +648,21 @@ def validate_validation_wiring() -> None:
     # exercised by their native harnesses or runtime callers. Keep both out of
     # the argument-free lightweight suite; CI still checks their syntax.
     smoke_wiring_allowlist = {
+        # Runtime probes require staged binaries/assets; generators feed Meson native tests.
+        "airdefense_performance.py",
+        "checkpoint_performance.py",
+        "generate_capture_resample_test.py",
+        "generate_checkpoint_commit_test.py",
+        "generate_checkpoint_preview_test.py",
+        "generate_checkpoint_storage_test.py",
+        "generate_dict_identity_test.py",
+        "generate_save_dict_test.py",
+        "mp_bot_walk_replay.py",
+        "mp_liquid_air_smoke.py",
+        "mp_mvd_quota_smoke.py",
+        "mp_mvd_seek_smoke.py",
+        "performance_presets_smoke.py",
+        "rendering_selection_smoke.py",
         # Stage 2 drivers: each launches a staged client, dedicated server,
         # WSL peer or OpenXR runtime on retail assets; the workflows py_compile
         # them and their production-extraction siblings are wired.

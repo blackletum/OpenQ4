@@ -405,6 +405,13 @@ def validate_game_libs_repo_path(game_libs_repo: Path) -> Path:
 
 def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
     tests = [
+        root / "tools" / "tests" / "aas_liquid_area_state.py",
+        root / "tools" / "tests" / "airdefense_performance_contract.py",
+        root / "tools" / "tests" / "mvd_seek_weapon_state.py",
+        root / "tools" / "tests" / "mvd_storage_budget.py",
+        root / "tools" / "tests" / "player_air_readout_state.py",
+        root / "tools" / "tests" / "renderer_selection_startup.py",
+        root / "tools" / "tests" / "ui_rendering_settings.py",
         root / "tools" / "tests" / "aas_compiler_contract.py",
         root / "tools" / "tests" / "aas_settings_contract.py",
         root / "tools" / "tests" / "arena_campaign.py",

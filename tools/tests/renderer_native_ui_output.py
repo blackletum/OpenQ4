@@ -56,6 +56,7 @@ static bool validShader=true,preserveDepth=false;
 enum { RENDERER_PRESENT_FINISH, RENDERER_PRESENT_FINAL_POST };
 static unsigned long long R_RendererMetrics_CpuClock(){return 0;}
 static void R_RendererMetrics_EndPresentPhase(int,unsigned long long){}
+static void RB_QueueSavePreview(){}
 static std::vector<std::string> calls;
 static std::array<int,16> backbuffer{};
 static std::array<int,4> viewport{},quadExtent{};

@@ -14,7 +14,7 @@
     "default_cfg": "content/baseoq4/pak0/default.cfg",
     "openq4_defaults_cfg": "content/baseoq4/pak0/openq4_defaults.cfg",
     "system_retained": "content/baseoq4/pak0/guis/menu/settings/system.q4ui",
-    "rendering_settings": "src/ui/RenderingSettings.cpp"
+    "settings_service": "src/ui/SettingsService.cpp"
   },
   "settings": [
     {
@@ -1617,7 +1617,7 @@
       "target": "r_renderApi",
       "default": "best",
       "adapter": {
-        "source": "rendering_settings",
+        "source": "settings_service",
         "command": "settings.system.backend"
       },
       "restart_required": true,
@@ -1639,7 +1639,7 @@
       "target": "r_renderDevice",
       "default": "auto",
       "adapter": {
-        "source": "rendering_settings",
+        "source": "settings_service",
         "command": "settings.system.renderDevice"
       },
       "restart_required": true,
@@ -1661,7 +1661,7 @@
       "target": "restartRenderer",
       "default": "N/A",
       "adapter": {
-        "source": "rendering_settings",
+        "source": "settings_service",
         "command": "settings.system.restartRenderer"
       },
       "restart_required": false,

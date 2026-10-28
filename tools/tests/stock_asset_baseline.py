@@ -1061,7 +1061,8 @@ def test_tga_and_report_verification(tool: ModuleType, base: Path) -> None:
 
     tool.save_preview_comparison = cached_save_preview_comparison
     assert tool.verify_recorded_files(report, base, asset_root, runtime_dir) == []
-    assert tool.verify_recorded_files(report, base, asset_root) == []
+    recorded_failures = tool.verify_recorded_files(report, base, asset_root)
+    assert recorded_failures == [], recorded_failures
 
     wrong_display_contract = json.loads(json.dumps(report))
     wrong_display_contract["safety"]["displayContract"]["width"] = 1279
