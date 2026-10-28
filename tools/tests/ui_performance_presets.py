@@ -308,7 +308,9 @@ if(Probe(nullptr))return 3;std::puts("production GL/GLES shader capability parsi
  'native':('#include <cmath>\n#include "src/ui/retained/Document.h"\n'+valid+'\n'+source('tools/tests/native/UiPerformancePresetTest.cpp'),['src/framework/PerformancePreset.cpp','src/ui/application/SettingsTransaction.cpp']),
  'host':(host_test.SUPPORT+'\n#include <set>\n'+function_body(source('src/framework/CVarSystem.cpp'),'\nbool CVar_ReadDefault(')+valid+no_includes(source('src/ui/application/SystemSettingsHost.cpp'))+HOST_MAIN,['src/framework/PerformancePreset.cpp','src/ui/retained/Presentation.cpp','src/ui/application/SettingsTransaction.cpp']),
  'common':(COMMON_SUPPORT+common[start:end]+function_body(common,'void idCommonLocal::SetMachineSpec( void ) {')+COMMON_MAIN,['src/framework/PerformancePreset.cpp']),
- 'android_observer':('#define __ANDROID__ 1\n'+COMMON_SUPPORT+function_body(common,'bool Common_CapturePerformancePresetSignals(')+r'''
+ # Parse the host library before selecting the extracted Android observer;
+ # macOS libc++ otherwise requires Android SDK headers for this host fixture.
+ 'android_observer':(COMMON_SUPPORT+'\n#define __ANDROID__ 1\n'+function_body(common,'bool Common_CapturePerformancePresetSignals(')+r'''
 int main(){raw.systemRamMB=16384;raw.gpuClass=RendererGpuClass::Integrated;raw.modernEffects=true;raw.logicalCpus=8;raw.drawableWidth=1920;raw.drawableHeight=1080;
 openq4::PerformancePresetSignals got;std::string error;if(!Common_CapturePerformancePresetSignals(got,error)||!got.mobile||std::string(openq4::DetectPerformancePreset(got).preset->name)!="performance")return 1;
 std::puts("production Android observer keeps a mobile power ceiling");}

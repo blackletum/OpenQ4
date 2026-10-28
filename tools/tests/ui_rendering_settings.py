@@ -20,6 +20,10 @@ SUPPORT = r'''
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+// Exercise Android adapter branches without retargeting host libc++ headers.
+#if defined(OPENQ4_TEST_ANDROID) && !defined(__ANDROID__)
+#define __ANDROID__ 1
+#endif
 static int checks=0;
 #define CHECK(x) do { ++checks; if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::exit(1);} }while(false)
 using namespace openq4::ui;
@@ -133,7 +137,7 @@ def main():
         env = dict(os.environ, TEMP=name, TMP=name, TMPDIR=name)
         for android in (False, True):
             exe = temp / ('android.exe' if android else 'desktop.exe')
-            flags = ['-D__ANDROID__'] if android else []
+            flags = ['-DOPENQ4_TEST_ANDROID=1'] if android else []
             if args.sanitize: flags += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
             subprocess.run([compiler, '-std=c++20', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT), *flags,
                             str(path), '-o', str(exe)], check=True, cwd=temp, env=env)
