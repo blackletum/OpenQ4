@@ -19,7 +19,8 @@ order:
 
 --reference is the operator's statement that the window is visible, in the
 foreground, on the reference machine; only then are the 240 Hz verdicts
-qualifying. The run writes reference-summary.md and suite.json beside each
+qualifying. --windowed runs every case in a 960x540 window instead, a rehearsal
+that checks the procedure end to end without taking over the display. The run writes reference-summary.md and suite.json beside each
 case's own output. It reads no device input except the operator's own presses
 in the sensor session.
 """
@@ -40,6 +41,10 @@ CAPS = [30, 60, 120, 144, 165, 240, 360, 0]
 def run_case(args, output: Path, name: str, options: list[str], timeout: int = 1800) -> dict:
     """One harness invocation; returns its report (or the failure) for the summary."""
     directory = output / name
+    # Every case loads from a fresh save path and regenerates its images first, which
+    # a busy machine can stretch past the harness's default four minutes per client.
+    if "--timeout" not in options:
+        options = options + ["--timeout", "600"]
     command = [sys.executable, str(HARNESS), "--basepath", str(args.basepath), "--output-dir", str(directory),
                "--runtime-dir", str(args.runtime_dir)] + options
     if args.reference:
@@ -81,17 +86,26 @@ def summarise(args, records: list[dict], vrr_cap: int | None) -> str:
     output = args.output_dir.resolve()
     statement = ("visible foreground window on the reference machine (--reference)" if args.reference
                  else "NOT declared reference: engine-side rehearsal only")
+    if args.windowed:
+        statement += ", windowed"
+    failed = [record["name"] for record in records if record["exit"] != 0]
     lines = ["# HF-07/HF-08 reference run", "",
              f"Statement: {statement}.",
-             f"Runtime: `{args.runtime_dir}`. Variable-refresh cap: {vrr_cap if vrr_cap else 'not run (no refresh reported)'}.", "",
+             f"Runtime: `{args.runtime_dir}`. Variable-refresh cap: {vrr_cap if vrr_cap else 'not run (no refresh reported)'}.",
+             f"Runs: {len(records)}; runs with a failed case: {', '.join(failed) if failed else 'none'}.", "",
              "## Pacing", "",
              "| Run | Case | Swap | Drawn Hz | Draw p95/p99 ms | Presented p95/p99 ms | Queue p50 ms | Late wake p95 ms | Verdict |",
              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for record in records:
         report = record.get("report") or {}
         for case in report.get("cases", []):
+            if case.get("scenario") != "pacing":
+                continue
             pacing = case.get("pacing")
-            if not pacing or case.get("scenario") != "pacing":
+            if not pacing:
+                # a case that drew too few interpolated frames to judge must still show
+                lines.append(f"| {record['name']} | {case['case']} | {report.get('swapInterval')} | — | no capture "
+                             f"({case.get('samples', 0)} draws, exit {case['exit']}) | — | — | — | not judged |")
                 continue
             lines.append(
                 f"| {record['name']} | {case['case']} | {report.get('swapInterval')} | {pacing['presentedHz']:.1f} | "
@@ -113,12 +127,14 @@ def summarise(args, records: list[dict], vrr_cap: int | None) -> str:
                          f"{spread(swap.get('flashPressToSwap'), 'p50', 'p95')} ms"
                          " (subtract from the sensor's readings for the GPU, compositor and display share)")
             if scenario == "minimized":
-                note += f"; {case.get('minimizedPacing')}"
+                shown = case.get("minimizedPacing") or {}
+                note += (f"; cap {shown.get('cap')}, {shown.get('hz') or 0.0:.1f} Hz over {shown.get('frames', 0)} frames"
+                         " (at most 60; the OS may slow it further)")
             if scenario == "hidden":
                 note += f"; presented {((case.get('pacing') or {}).get('presentedHz') or 0.0):.1f} Hz"
-            if scenario == "review":
-                note += f"; verdicts in {output / record['name'] / 'review-checklist.md'}"
             lines.append(note)
+        if record["name"] == "review":
+            lines.append(f"- review verdicts: {output / record['name'] / 'review-checklist.md'}")
         if record.get("tail"):
             lines.append(f"- {record['name']}: did not complete ({record['exit']})")
     lines += ["", "Record the 240 Hz verdicts, the sensor readings minus the engine share and the review",
@@ -134,27 +150,30 @@ def main() -> int:
     parser.add_argument("--renderers", nargs="+", choices=("gl", "vulkan"), default=["gl", "vulkan"])
     parser.add_argument("--reference", action="store_true",
                         help="operator statement: a visible foreground window on the HF-07 reference machine")
+    parser.add_argument("--windowed", action="store_true",
+                        help="rehearsal: run every case in a window instead of full screen")
     parser.add_argument("--sensor-seconds", type=int, default=120)
     parser.add_argument("--skip-sensor", action="store_true")
     parser.add_argument("--skip-review", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="print the cases without running them")
     args = parser.parse_args()
     output = args.output_dir.resolve()
+    screen = [] if args.windowed else ["--fullscreen"]
 
     plan = []
     for renderer in args.renderers:
         timing = ["--present-timing"] if renderer == "vulkan" else []
-        base = ["--renderer", renderer, "--fullscreen"] + timing
+        base = ["--renderer", renderer] + screen + timing
         plan.append((f"{renderer}-caps", ["--scenario", "pacing", "--fps"] + [str(c) for c in CAPS] + base))
         plan.append((f"{renderer}-vsync", ["--scenario", "pacing", "--fps", "240", "0", "--swap-interval", "1"] + base))
         plan.append((f"{renderer}-adaptive", ["--scenario", "pacing", "--fps", "240", "--swap-interval", "-1"] + base))
         plan.append((f"{renderer}-vrr", None))	# filled from the refresh the caps run reports
     plan.append(("policy", ["--scenario", "hidden", "minimized", "menu", "hitch", "--fps", "240"]))
     if not args.skip_sensor:
-        plan.append(("sensor", ["--scenario", "sensor", "--fps", "240", "--fullscreen", "--sensor-seconds", str(args.sensor_seconds),
-                                "--timeout", str(args.sensor_seconds + 240)]))
+        plan.append(("sensor", ["--scenario", "sensor", "--fps", "240", "--sensor-seconds", str(args.sensor_seconds),
+                                "--timeout", str(args.sensor_seconds + 240)] + screen))
     if not args.skip_review:
-        plan.append(("review", ["--scenario", "review", "--fps", "240", "--fullscreen"]))
+        plan.append(("review", ["--scenario", "review", "--fps", "240"] + screen))
     if args.dry_run:
         for name, options in plan:
             print(name, " ".join(options) if options else "(--swap-interval 1, cap = refresh - 3)")
@@ -172,7 +191,7 @@ def main() -> int:
             vrr_cap = max(30, int(refresh) - 3)
             timing = ["--present-timing"] if renderer == "vulkan" else []
             options = ["--scenario", "pacing", "--fps", str(vrr_cap), "--swap-interval", "1",
-                       "--renderer", renderer, "--fullscreen"] + timing
+                       "--renderer", renderer] + screen + timing
         records.append(run_case(args, output, name, options))
     (output / "suite.json").write_text(json.dumps({"reference": args.reference, "vrrCap": vrr_cap, "runs": records}, indent=1),
                                        encoding="utf-8")

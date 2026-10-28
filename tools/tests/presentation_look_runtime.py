@@ -778,7 +778,11 @@ def main() -> int:
                     body += ["framePacingSnapshot hfpacing", "win_keepTimerResolution"]
                     if args.present_timing:
                         body.append("rendererPresentTiming hfpacing")
-                body += ["g_presentationClockCapture 0", "in_presentationViewProbe 0", "in_presentationViewProbeZoom 0"]
+                # A capture still short of its count when the wait ends (a slow window: occluded,
+                # throttled or behind vsync) dumps what it has: a count below the samples taken
+                # dumps on the next draw, and an already dumped capture ignores it.
+                body += ["g_presentationClockCapture 1", "waitMsec 250",
+                         "g_presentationClockCapture 0", "in_presentationViewProbe 0", "in_presentationViewProbeZoom 0"]
                 if scenario == "mploss":
                     body.append("netImpairment")
                 body += ["stopRecording", "waitMsec 500", "timeDemoQuit hf_presentation"] if scenario == "demo" else ["quit"]

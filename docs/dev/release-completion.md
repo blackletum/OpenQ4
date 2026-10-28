@@ -66,6 +66,10 @@ completed release material here and publish curated notes in `releases/`.
   vsync, variable refresh under the reported refresh, the policy cases, the
   operator's sensor session (`--scenario sensor`) and the review, and writes
   one summary.
+- [x] Reference-suite rehearsal (26 October): `--windowed` ran all 32 cases
+  end to end on the development laptop. A capture that a slow window cannot
+  fill now dumps what it has, each case gets 600 s for its fresh image
+  regeneration, and the summary lists cases it could not judge.
 - Evidence: `openq4-presentation-pacing`, `presentation_hf_contract.py
   --mutations` (8 rejected) and the runtime cases recorded in the
   [presentation owners contract](presentation-owners.md). Physical pacing on

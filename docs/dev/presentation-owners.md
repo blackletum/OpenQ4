@@ -389,6 +389,13 @@ and where the review checklist is:
 presentation_reference_suite.py --basepath <Quake 4> --output-dir <new dir> --reference
 ```
 
+`--windowed` runs every case in a window instead, a rehearsal that checks the
+procedure end to end without taking over the display; `--dry-run` prints the
+plan. Each case gets 600 s, because every client loads from a fresh save path
+and regenerates its images first. A case whose window drew too slowly to fill
+its capture still reports what it captured, and the summary lists any case it
+could not judge rather than leaving it out.
+
 An occluded window on Windows does not qualify: on 23 October 2026 the same
 client capped at 240 presented at 57 Hz on OpenGL (p99 232 ms) and 15 Hz on
 Vulkan (p99 725 ms) behind other windows on a loaded machine. HF-07 remains open
@@ -661,3 +668,22 @@ reloaded the machinegun (ammunition 40 → 31 → 23 across the shots). The
 cinematic and monitor sessions captured 512 draws each. Screenshots do not show
 the captions, because taking one re-lays out the console and clears its notify
 lines; an operator watching the session sees each caption for 8 s.
+
+### Reference-suite rehearsal, 26 October 2026
+
+The whole suite ran windowed on the development laptop (`--windowed
+--skip-sensor`, `.tmp/hf/r12-rehearsal`): 10 runs, 32 cases, with the window
+behind others on a busy machine, so none of its numbers qualify. It found three
+faults in the procedure, now fixed. With vsync on, the covered OpenGL window
+fell to about 13 Hz. The capture then never filled, never dumped, and the case
+reported nothing, although the engine's snapshot had the data. The same
+happened to Vulkan at 30 and 60. Every case now dumps a partial capture: a
+rerun captured 512 draws for each. The hidden case timed out at the harness's
+default four minutes while its fresh save path was still regenerating images.
+Two reruns finished in 158 and 88 s at 58.5 and 60.1 Hz, so the suite now gives
+each case 600 s. The summary also left out cases it could not judge; it now
+lists them. Everything else ran cleanly: no case counted gameplay in a draw or
+logged an error. The variable-refresh cases ran at 237, from the reported
+240 Hz refresh. Vulkan reported presented intervals in every case it captured.
+Through every 100 ms stall the hitch cases never stepped the view backwards,
+and the review sessions completed.

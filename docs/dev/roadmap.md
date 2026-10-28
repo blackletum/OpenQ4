@@ -308,8 +308,11 @@ Sources: [historical high-refresh scope](archive/2026-10-18/high-framerate-rende
   cannot show. `presentation_reference_suite.py --reference` runs the whole
   reference procedure (both renderers' cap matrices full screen, vsync,
   adaptive vsync, variable refresh under the reported refresh, the policy cases,
-  the sensor session and the review) and writes one summary. Physical runs on
-  the desktop reference remain.
+  the sensor session and the review) and writes one summary. A windowed
+  rehearsal of the whole suite on 26 October (32 cases) found and fixed three
+  faults in the procedure: slow windows reported nothing, image regeneration
+  outran the per-case timeout, and the summary dropped cases it could not judge.
+  Physical runs on the desktop reference remain.
 - [ ] **HF-08 — P1, qualification: late look and alternate views in play.**
   Run late look in live MP (listen host and remote client, prediction recovery),
   zoomed, on lifts and trams and through rapid turns, and measure physical
