@@ -1285,7 +1285,9 @@ jobs:
     name: Windows ARM64 Commit Validation
     runs-on: windows-11-arm
     needs: script-smoke
-    timeout-minutes: 90
+    # Match push validation: the full source-check suite and native ARM64 build
+    # exceed 90 minutes on hosted Windows runners.
+    timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       OPENQ4_VS_TARGET_ARCH: arm64
@@ -1535,7 +1537,8 @@ jobs:
     name: Linux ${{ matrix.arch_label }} ${{ matrix.compiler_label }} Wayland ${{ matrix.libdecor_label }} Commit Validation
     runs-on: ${{ matrix.runner }}
     needs: script-smoke
-    timeout-minutes: 90
+    # Leave time for the complete regression suite and fresh compiler builds.
+    timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       CC: ${{ matrix.cc }}
