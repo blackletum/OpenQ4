@@ -716,6 +716,12 @@ public:
     std::vector<idUserInterface*> controlsPublishes; std::vector<std::string> controlsRequests;
     void PublishRetainedControls(idUserInterface* gui) { controlsPublishes.push_back(gui); }
     void HandleRetainedControlsRequest(idUserInterface*, const char* request) { controlsRequests.push_back(request); }
+    // The SETTINGS page; the retained SYSTEM page it may open has its own
+    // compiled cases (check_system_settings), here it never opens.
+    idUserInterface* guiRetainedSettingsPage = nullptr; int retainedSettingsDest = 0, retainedSettingsLeft = 0, retainedSettingsAt = 0;
+    idUserInterface* RetainedSettingsPage(); bool OpenRetainedSettingsPage(const char* = nullptr);
+    void HandleRetainedSettingsPageRequest(idUserInterface*, const char*); void UpdateRetainedSettingsPage(); bool RetainedSettingsParent() const;
+    int systemOpens = 0; bool OpenSystemSettings() { ++systemOpens; return false; }
     idUserInterface* guiRetainedJoin = nullptr; idList<int> retainedJoinServers; int retainedJoinFirst = 0, retainedJoinRevision = -1;
     idStr retainedJoinAddress, retainedJoinShotMap, retainedJoinShot; idStrList retainedJoinRowAddresses;
     idUserInterface* RetainedJoinGamePage(); void OpenRetainedJoinGame(); void PublishRetainedJoinGame(idUserInterface*);
@@ -789,7 +795,7 @@ static const char* const DOCUMENTS[] = {"guis/menu/title.q4ui", "guis/menu/pause
     "guis/menu/demos.q4ui", "guis/menu/restartmenu.q4ui", "guis/menu/credits.q4ui",
     "guis/menu/arena.q4ui", "guis/menu/multiplayer.q4ui", "guis/menu/createserver.q4ui", "guis/menu/joingame.q4ui",
     "guis/menu/arena_pause.q4ui", "guis/menu/settings/audio.q4ui", "guis/menu/settings/game.q4ui",
-    "guis/menu/settings/controls.q4ui"};
+    "guis/menu/settings/controls.q4ui", "guis/menu/settings.q4ui"};
 // The documents that fell back to their stock screens, in order.
 static std::vector<std::string> Stock(const idSessionLocal& session) {
     return std::vector<std::string>(session.retainedStock.begin(), session.retainedStock.end());
@@ -933,9 +939,13 @@ int main() {
         CHECK(s.guiMainMenu->cursorX == 320 && s.guiMainMenu->cursorY == 240);
         vrInputFocus = true; s.RetainedHomeFrameEvent(); vrInputFocus = false;
         CHECK(s.guiMainMenu->cursorX == 640 && s.guiMainMenu->cursorY == 120);
-        // A stock page hand-off runs the legacy home button's own action.
+        // A stock page hand-off runs the legacy home button's own action: here
+        // SETTINGS over a main menu without the route to its settings screen,
+        // which keeps its own (the SETTINGS page has its own case).
+        legacyEventsMissing = {"openSettingsPage"};
         s.HandleRetainedSessionRequest(title, "settings");
-        CHECK(legacyActions.back() == "main_b_settings" && title->named.back() == "depart");
+        legacyEventsMissing.clear();
+        CHECK(!legacyActions.empty() && legacyActions.back() == "main_b_settings" && title->named.back() == "depart");
         // Its label carries into the page's title slot as the bands dock.
         CHECK(title->named.size() >= 2 && title->named[title->named.size() - 2] == "carry_settings");
         CHECK(s.dispatched.back() == "play main_menu_selection" && s.RetainedHomeInputBlocked());
@@ -976,7 +986,8 @@ int main() {
         idUserInterface stranger("guis/other.q4ui"); s.HandleRetainedSessionRequest(&stranger, "quit"); CHECK(commonObject.quits == 0);
         s.HandleRetainedSessionRequest(title, "resume"); CHECK(s.exits == 0); // the title has no game to resume
         s.HandleRetainedSessionRequest(title, "unknown"); CHECK(commonObject.warnings.back().find("unhandled session request") != std::string::npos);
-        legacyActionAvailable = false; s.HandleRetainedSessionRequest(title, "settings"); CHECK(!s.RetainedHomeInputBlocked());
+        legacyActionAvailable = false; legacyEventsMissing = {"openSettingsPage"};
+        s.HandleRetainedSessionRequest(title, "settings"); CHECK(!s.RetainedHomeInputBlocked()); legacyEventsMissing.clear();
         CHECK(commonObject.warnings.back().find("unavailable from the current menu") != std::string::npos);
         s.HandleRetainedSessionRequest(title, "quit"); CHECK(commonObject.quits == 1 && s.exits == 1);
         s.UpdateRetainedHome(); CHECK(s.guiRetainedHome == nullptr && !title->active); // the menu closed
@@ -2066,7 +2077,10 @@ int main() {
         CHECK(s.guiRetainedHome && std::string(s.guiRetainedHome->Name()) == "guis/menu/pause.q4ui" && s.guiRetainedHome->state["pause_level"] == "game/airdefense1");
         auto* pause = s.guiRetainedHome;
         s.HandleRetainedSessionRequest(pause, "quitToMenu"); CHECK(commands.buffered == std::vector<std::string>{"disconnect\n"});
-        s.HandleRetainedSessionRequest(pause, "settings"); CHECK(legacyActions.back() == "main_b_settings");
+        // (SETTINGS over a main menu without the route to its settings screen: its own.)
+        legacyEventsMissing = {"openSettingsPage"};
+        s.HandleRetainedSessionRequest(pause, "settings"); CHECK(!legacyActions.empty() && legacyActions.back() == "main_b_settings");
+        legacyEventsMissing.clear();
         commonObject.time += 600; legacy["desktop::active"] = 0; legacy["desktop::dest"] = 0; s.UpdateRetainedHome();
         s.HandleRetainedSessionRequest(pause, "resume"); CHECK(s.exits == 1);
         s.UpdateRetainedHome(); CHECK(s.guiRetainedHome == nullptr && !pause->active);
@@ -2555,6 +2569,84 @@ int main() {
               mp.guiMainMenu->state["retainedGame"] == "0");
         auto boxed = Session(true); idUserInterface box("guis/msg.gui"); boxed.guiMsgRestore = &box; boxed.OpenRetainedGameRoute(true);
         CHECK(boxed.guiMainMenu->named.back() == "fromMp_toGameoptionsStock" && boxed.guiMainMenu->state["retainedGame"] != "0");
+    }
+    {   // The SETTINGS page: SETTINGS hands off to it from the title, which
+        // carries its label; CONTROLS, GAME OPTIONS and AUDIO open their
+        // retained pages over it, each returning onto its section; DISPLAY,
+        // with the SYSTEM page off, sends it away and at 500 ms the stock
+        // settings screen arrives on its panel (openSettingsPage), whose Back
+        // returns the page (settingsOpen); LOAD DEFAULTS' YES runs the stock
+        // dialog's commands; BACK returns the title, from the page dock after
+        // the stock screen.
+        auto s = Session(true); s.PreloadRetainedScreens(); s.UpdateRetainedHome();
+        auto* title = s.guiRetainedHome;
+        s.HandleRetainedSessionRequest(title, "settings");
+        auto* page = s.guiRetainedSettingsPage;
+        CHECK(page && std::string(page->Name()) == "guis/menu/settings.q4ui" && legacyActions.empty() && s.retainedPagePending == page &&
+              title->named.back() == "depart" && title->named[title->named.size() - 2] == "carry_settings" &&
+              page->state["from_controls"] == "0" && page->state["from_audio"] == "0");
+        commonObject.time += 550; s.UpdateRetainedHome(); s.UpdateRetainedPage();
+        CHECK(s.guiActive == page && s.RetainedPageActive() && s.retainedPageHome == title);
+        s.HandleRetainedSessionRequest(page, "settingsControls");
+        CHECK(s.guiActive == s.guiRetainedControls && s.retainedControlsParent == page && page->state["from_controls"] == "1" &&
+              page->state["from_game"] == "0");
+        s.ReturnRetainedControls(); CHECK(s.guiActive == page);
+        s.HandleRetainedSessionRequest(page, "settingsGame");
+        CHECK(s.guiActive == s.guiRetainedGame && s.retainedGameParent == page && page->state["from_game"] == "1" &&
+              page->state["from_controls"] == "0");
+        s.ReturnRetainedGame(); CHECK(s.guiActive == page);
+        s.HandleRetainedSessionRequest(page, "settingsAudio");
+        CHECK(s.guiActive == s.guiRetainedAudio && s.retainedAudioParent == page && page->state["from_audio"] == "1");
+        s.ReturnRetainedAudio(); CHECK(s.guiActive == page);
+        const size_t sounds = s.played.size();
+        s.HandleRetainedSessionRequest(page, "settingsDisplay");
+        CHECK(s.systemOpens == 0 && page->named.back() == "depart" && s.retainedSettingsDest == 22 && page->state["from_display"] == "1" &&
+              s.played.size() == sounds + 1);
+        s.HandleRetainedSessionRequest(page, "settingsControls"); s.HandleRetainedSessionRequest(page, "settingsBack");
+        CHECK(s.guiActive == page && s.retainedSettingsDest == 22 && s.played.size() == sounds + 1);
+        commonObject.time += 499; s.UpdateRetainedSettingsPage(); CHECK(s.guiActive == page && timeRuns.empty());
+        commonObject.time += 1; s.UpdateRetainedSettingsPage();
+        CHECK(s.guiActive == s.guiMainMenu && s.retainedSettingsDest == 0 && s.retainedPageHome == nullptr && s.retainedSettingsLeft == 22);
+        CHECK(legacy["desktop::curr"] == 9 && legacy["desktop::active"] == 1 && legacy["desktop::dest"] == 22 && expressionWrites == 0 &&
+              s.guiMainMenu->named.back() == "openSettingsPage" && s.guiMainMenu->state["settingsFromRetained"] == "1" &&
+              (timeRuns == std::vector<std::string>{"guis/mainmenu.gui"}));
+        s.UpdateRetainedHome(); CHECK(s.guiRetainedHome == nullptr);  // the stock screen presents alone
+        // Its Back (settingsOpen names the panel): the page returns onto DISPLAY.
+        CHECK(s.OpenRetainedSettingsPage("display") && s.guiActive == page && page->state["from_display"] == "1" &&
+              page->state["from_controls"] == "0" && s.guiMainMenu->state["settingsFromRetained"] == "0" && s.retainedPageHome == nullptr);
+        // LOAD DEFAULTS' YES: the stock dialog's commands.
+        s.HandleRetainedSessionRequest(page, "settingsDefaults");
+        CHECK(s.played.back() == "exec cvar_restart ; play main_menu_selection ; resetdefaults ; exec s_restart" && s.guiActive == page);
+        // BACK after the stock screen: the legacy menu goes home as that
+        // screen's Back does (leaveSettingsPage clears desktop::dest) and the
+        // title follows it from the page dock.
+        s.guiMainMenu->onNamed = [](const char* name) { if (!std::strcmp(name, "leaveSettingsPage")) legacy["desktop::dest"] = 0; };
+        s.HandleRetainedSessionRequest(page, "settingsBack");
+        CHECK(s.guiActive == s.guiMainMenu && s.guiMainMenu->named.back() == "leaveSettingsPage" && legacy["desktop::curr"] == 9 &&
+              legacy["desktop::active"] == 1 && s.guiMainMenu->state["settingsFromRetained"] == "0" && s.guiRetainedHome == title &&
+              title->named.back() == "returnHome" && expressionWrites == 0);
+        // BACK before any stock screen: the title returns as from any page.
+        auto fresh = Session(true); fresh.PreloadRetainedScreens(); fresh.UpdateRetainedHome(); auto* home = fresh.guiRetainedHome;
+        fresh.HandleRetainedSessionRequest(home, "settings"); commonObject.time += 550; fresh.UpdateRetainedHome(); fresh.UpdateRetainedPage();
+        fresh.HandleRetainedSessionRequest(fresh.guiRetainedSettingsPage, "settingsBack");
+        CHECK(fresh.guiActive == fresh.guiMainMenu && home->named.back() == "returnHome");
+        // A page that cannot open its section leaves for the stock panel: a
+        // CONTROLS page that stopped drawing hands off to its panel (dest 4).
+        auto broken = Session(true); broken.PreloadRetainedScreens(); broken.UpdateRetainedHome();
+        broken.HandleRetainedSessionRequest(broken.guiRetainedHome, "settings"); commonObject.time += 550;
+        broken.UpdateRetainedHome(); broken.UpdateRetainedPage();
+        broken.HandleRetainedSessionRequest(broken.guiRetainedSettingsPage, "settingsControls"); broken.ReturnRetainedControls();
+        broken.guiRetainedControls->failed = true;
+        broken.HandleRetainedSessionRequest(broken.guiRetainedSettingsPage, "settingsControls");
+        CHECK(broken.retainedSettingsDest == 4 && broken.guiActive == broken.guiRetainedSettingsPage);
+        // Where the page cannot present, SETTINGS runs the stock button: the
+        // gate off, or a main menu without the route (quietly).
+        auto off = Session(false); CHECK(off.RetainedSettingsPage() == nullptr && !off.OpenRetainedSettingsPage());
+        auto old = Session(true); legacyEventsMissing = {"openSettingsPage"}; old.PreloadRetainedScreens(); old.UpdateRetainedHome();
+        old.HandleRetainedSessionRequest(old.guiRetainedHome, "settings");
+        CHECK(legacyActions.back() == "main_b_settings" && old.retainedPagePending == nullptr && commonObject.warnings.empty() &&
+              (Stock(old) == std::vector<std::string>{"guis/menu/settings.q4ui"}));
+        legacyEventsMissing.clear();
     }
     {   // The CONTROLS button opens the retained page as GAME OPTIONS does, a
         // wait for a key ended; the page's verbs reach the session only while
@@ -4257,15 +4349,15 @@ def check_prompt_glyphs(compiler: str, directory: Path) -> None:
             assert pad.endswith('-pad') and pad[:-len('-pad')] in groups, (path.name, pad)
         shoulders += sum(1 for group_id in groups if group_id in ('tab-previous', 'tab-next', 'prompt-tabs-0', 'prompt-tabs-1'))
     # The title, both pauses, Single Player, Campaign, the campaign difficulty
-    # page and Multiplayer, the seven pages with their own prompt bars and the
+    # page, Multiplayer and SETTINGS, the seven pages with their own prompt bars and the
     # Strogg pause's three, the loading screen, the Escape, Welcome and
     # summary cards and the Arena pause card.
-    assert documents == 22, documents
+    assert documents == 23, documents
     # The cards' tab keys take the shoulders, as do the Escape and Welcome
     # cards' Tabs prompts; every Accept and Back prompt follows Swap Confirm
     # and Back.
     assert shoulders == 10, shoulders
-    assert swapping == 43, swapping
+    assert swapping == 45, swapping
     print(f'ui_retained gate: prompt glyphs follow the active device in {documents} documents')
 
 
@@ -5064,7 +5156,7 @@ def main() -> int:
                        'guis/menu/demos.q4ui', 'guis/menu/restartmenu.q4ui', 'guis/menu/credits.q4ui', 'guis/menu/arena.q4ui',
                        'guis/menu/multiplayer.q4ui', 'guis/menu/createserver.q4ui', 'guis/menu/joingame.q4ui',
                        'guis/menu/arena_pause.q4ui', 'guis/menu/settings/audio.q4ui', 'guis/menu/settings/game.q4ui',
-                       'guis/menu/settings/controls.q4ui'}
+                       'guis/menu/settings/controls.q4ui', 'guis/menu/settings.q4ui'}
             assert path in allowed, f'{name} names an ungated retained document {path}'
     # Every retained document loads through FindRetainedGui, which falls back to
     # the stock screen; the SYSTEM page and the campaign selectors fall back too.
@@ -5178,6 +5270,32 @@ def main() -> int:
     controls_key = function_body(menu, 'bool idSessionLocal::RetainedControlsKey(')
     assert 'idKeyInput::NumBinds( binding ) >= 2 && !idKeyInput::KeyIsBoundTo( key, binding )' in controls_key
     assert 'key != K_ESCAPE && key != K_JOY7 && key != K_JOY8' in controls_key and 'idKeyInput::UnbindBinding( binding );' in controls_key
+    # The SETTINGS page: its sections are the session's table and the
+    # document's plates, each with the stock panel that stands in for it; the
+    # stock main menu's routes: openSettingsPage presents the screen on the
+    # panel, its Back returns the page (settingsOpen) while
+    # gui::settingsFromRetained holds, leaveSettingsPage and openSettingsHome
+    # go home; LOAD DEFAULTS' YES runs the stock dialog's commands.
+    import retained_settings_page
+    session_sections = re.findall(r'\{ "(settings[A-Za-z]+)",\s*"([a-z]+)",\s*(\d+) \}',
+                                  re.search(r'RETAINED_SETTINGS_SECTIONS\[\] = \{(.*?)\n\};', menu, re.S).group(1))
+    page_sections = [(verb, ident) for ident, _key, verb in retained_settings_page.SECTIONS if verb]
+    assert [(verb, ident) for verb, ident, _dest in session_sections] == page_sections
+    assert {ident: int(dest) for _verb, ident, dest in session_sections} == {'controls': 4, 'game': 21, 'display': 22, 'audio': 36}
+    settings_document = json.loads(re.sub(r'^\s*//.*$', '', (ROOT / 'content/baseoq4/pak0/guis/menu/settings.q4ui').read_text(encoding='utf-8'), flags=re.M))
+    assert {name: action['arguments']['command'] for name, action in settings_document['actions'].items()
+         if action['operation'] == 'session.menu' and not name.startswith('notice')} == \
+        {**{verb: verb for verb, _ident in page_sections}, 'back': 'settingsBack', 'settingsDefaults': 'settingsDefaults'}
+    for event in ('openSettingsPage', 'leaveSettingsPage', 'openSettingsHome'):
+        assert f'onNamedEvent {event} {{' in stock_menu, event
+    settings_out = stock_menu[stock_menu.index('windowDef anim_settingsOut'):]
+    settings_out = settings_out[:settings_out.index('windowDef', 1)]
+    assert re.search(r'if \( "gui::settingsFromRetained" == 1 \) \{\s*set "cmd" "settingsOpen" ;', settings_out)
+    assert 'if ( !idStr::Icmp( cmd, "settingsOpen" ) ) {' in main_menu
+    assert 'HandleMainMenuCommands( "exec cvar_restart ; play main_menu_selection ; resetdefaults ; exec s_restart" );' in \
+        function_body(menu, 'void idSessionLocal::HandleRetainedSettingsPageRequest(')
+    defaults_yes = re.search(r'windowDef pop_b_defaults_yes.*?onAction \{(.*?)\n\t\t\t\}', stock_menu, re.S).group(1)
+    assert re.findall(r'set "cmd" "([^"]+)"', defaults_yes) == ['exec cvar_restart ; play main_menu_selection', 'resetdefaults', 'exec s_restart']
     assert function_body(menu, 'void idSessionLocal::MenuEvent(').index('RetainedControlsKey( event )') < \
         function_body(menu, 'void idSessionLocal::MenuEvent(').index('guiActive->HandleEvent( event')
     assert 'UI_RunLegacyWindowAction( guiMainMenu, "set_b_system", false, command )' in system_route, 'a failed SYSTEM page must open the stock one'
@@ -5376,6 +5494,9 @@ def main() -> int:
     # The Join Game page's column headings, each asking for its sort.
     join_sorts = menu[menu.index('RETAINED_JOIN_SORTS[] = {'):menu.index('RETAINED_JOIN_SORT_COUNT')]
     handled |= set(re.findall(r'\{ "(join[A-Za-z]*)",', join_sorts))
+    # The SETTINGS page's sections, each asking for its page.
+    settings_sections = menu[menu.index('RETAINED_SETTINGS_SECTIONS[] = {'):menu.index('RETAINED_SETTINGS_SECTION_COUNT')]
+    handled |= set(re.findall(r'\{ "(settings[A-Za-z]*)",', settings_sections))
     assert allowlist == handled, f'allowlist {sorted(allowlist)} differs from session handlers {sorted(handled)}'
     for relative in ('content/baseoq4/pak0/guis/menu/title.q4ui', 'content/baseoq4/pak0/guis/menu/pause.q4ui',
                      'content/baseoq4/pak0/guis/menu/pause_strogg.q4ui', 'content/baseoq4/pak0/guis/loading/loading.q4ui',
@@ -5493,6 +5614,9 @@ def main() -> int:
         'void idSessionLocal::PublishRetainedAudio(', 'void idSessionLocal::HandleRetainedAudioRequest(',
         'bool idSessionLocal::RetainedGameAvailable(', 'bool idSessionLocal::OpenRetainedGame(',
         'void idSessionLocal::OpenRetainedGameRoute(', 'void idSessionLocal::ReturnRetainedGame(',
+        'bool idSessionLocal::RetainedSettingsParent(', 'idUserInterface *idSessionLocal::RetainedSettingsPage(',
+        'bool idSessionLocal::OpenRetainedSettingsPage(', 'void idSessionLocal::HandleRetainedSettingsPageRequest(',
+        'void idSessionLocal::UpdateRetainedSettingsPage(',
         'bool idSessionLocal::RetainedControlsAvailable(', 'bool idSessionLocal::OpenRetainedControls(',
         'void idSessionLocal::OpenRetainedControlsRoute(', 'void idSessionLocal::ReturnRetainedControls(',
         'idUserInterface *idSessionLocal::SelectRetainedLoadingGui(',

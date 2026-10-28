@@ -413,6 +413,11 @@ public:
 	bool				OpenRetainedMultiplayerPage( const char *section = NULL );
 	void				HandleRetainedMultiplayerPageRequest( idUserInterface *gui, const char *request );
 	void				UpdateRetainedMultiplayerPage();
+	idUserInterface *	RetainedSettingsPage();
+	bool				OpenRetainedSettingsPage( const char *section = NULL );
+	void				HandleRetainedSettingsPageRequest( idUserInterface *gui, const char *request );
+	void				UpdateRetainedSettingsPage();
+	bool				RetainedSettingsParent() const;
 	// The retained Create Server sub-page (guis/menu/createserver.q4ui), which
 	// CREATE SERVER on the Multiplayer page goes deeper to: the session owns
 	// its settings and publishes them (create.*), and CREATE SERVER starts the
@@ -789,6 +794,10 @@ public:
 	int					retainedMpPageDest;		// the stock Multiplayer page it is leaving for (0: none)
 	int					retainedMpPageLeft;		// the stock Multiplayer page it last left for, which Back returns from
 	int					retainedMpPageAt;		// presentation time that page takes over
+	idUserInterface *	guiRetainedSettingsPage;	// the retained SETTINGS page (NULL until it loads)
+	int					retainedSettingsDest;		// the stock settings panel it is leaving for (0: none)
+	int					retainedSettingsLeft;		// the stock panel it last left for, which Back returns from
+	int					retainedSettingsAt;			// presentation time that panel takes over
 	idUserInterface *	guiRetainedCreate;		// the retained Create Server sub-page (NULL until it loads)
 	struct retainedLevelshot_t {
 		idStr			name;					// a multiplayer map's path, or a picture

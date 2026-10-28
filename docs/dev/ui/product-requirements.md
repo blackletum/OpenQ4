@@ -821,6 +821,11 @@ The [CONTROLS page](retained-screens.md#the-controls-page-25-october-2026) adds
 and clear. The settings screen itself, Load Defaults, Player Setup and the
 rest of `FLOW-003` remain.
 
+The [SETTINGS page](retained-screens.md#the-settings-page-26-october-2026)
+adds `FLOW-003` evidence for the settings screen's level: its buttons, the
+return onto each, Load Defaults' question and the stock hand-off. Player
+Setup and the rest of `FLOW-003` remain.
+
 There are **121 partial, 228 pending and 0 verified requirements**, counting the
 39 superseded rows at their recorded states. `BEH-002`
 remains partial for the implemented settings transaction/service boundary.

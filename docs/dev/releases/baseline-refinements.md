@@ -101,6 +101,10 @@
   press its new key. Escape cancels, and Delete clears an action's keys.
   Settings now opens on its list of pages rather than straight into the
   controls.
+- Settings itself is now a page in the new interface, from the main menu and
+  from the pause menu: choose Controls, Game Options, Display or Audio, or
+  Load Defaults, which asks first. Back from a page returns you to the button
+  you chose.
 - In portrait windows and on 5:4 screens, the Load, Save, Demos and Join Game
   lists now grow to fill the extra height and show more entries.
 - If your controller disconnects while you are in the menus, a notice at the

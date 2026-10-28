@@ -778,8 +778,11 @@ archived provenance; new scheduling belongs here.
   followed with its 79 rows in eight sections, then the
   [CONTROLS page](ui/retained-screens.md#the-controls-page-25-october-2026)
   with its 49 bindings and key capture; the stock settings screen now arrives
-  on no panel, so its buttons choose the retained pages. The settings screen
-  itself, Load Defaults' dialog and Player Setup remain.
+  on no panel, so its buttons choose the retained pages. Progress, 26 October:
+  the [SETTINGS page](ui/retained-screens.md#the-settings-page-26-october-2026)
+  replaces the settings screen's level from the title and the pause, with
+  Load Defaults' question; DISPLAY still opens the stock panel unless the
+  SYSTEM page is on. Player Setup remains.
 - [ ] **UI-02 — P1, implementation and qualification: text, input and accessibility.**
   Finish in-field IME/composition, shaping/kerning/fallback/styles, grapheme editing,
   caret/candidate placement, binding capture, accessibility exposure and contextual

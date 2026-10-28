@@ -1419,4 +1419,5 @@
 	"#str_231543"	"CROSSHAIR"
 	"#str_231544"	"GAMEPLAY"
 	"#str_231545"	"Select an action, then press its new key. Escape cancels; Delete clears."
+	"#str_231546"	"Change your controls, game options, display and audio, or restore the defaults."
 }

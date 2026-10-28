@@ -142,6 +142,15 @@ completed release material here and publish curated notes in `releases/`.
   generation width checks, native strip checks and a capture of every family.
   Candidate player wording is in [baseline refinements](releases/baseline-refinements.md).
 
+## SETTINGS page, 26 October 2026
+
+- [x] SETTINGS on the title and the pause opens a retained page with the
+  stock screen's buttons and Load Defaults' question, returning onto each
+  button from its page and handing DISPLAY to the stock panel where the
+  SYSTEM page is off ([SETTINGS page](ui/retained-screens.md#the-settings-page-26-october-2026):
+  native page test, gate contracts, captures at 16:9 in English and German,
+  9:16, the defaults and the pause).
+
 ## CONTROLS page, 25 October 2026
 
 - [x] The settings screen's CONTROLS page in the retained interface: the 49

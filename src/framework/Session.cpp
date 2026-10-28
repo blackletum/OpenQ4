@@ -3973,6 +3973,10 @@ void idSessionLocal::Clear() {
 	retainedMpPageDest = 0;
 	retainedMpPageLeft = 0;
 	retainedMpPageAt = 0;
+	guiRetainedSettingsPage = NULL;
+	retainedSettingsDest = 0;
+	retainedSettingsLeft = 0;
+	retainedSettingsAt = 0;
 	guiRetainedCreate = NULL;
 	retainedLevelshots.Clear();
 	retainedLevelshotsFrom = 0;
