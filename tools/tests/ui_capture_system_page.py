@@ -312,13 +312,38 @@ class SystemPageOracleTests(unittest.TestCase):
         # The engine stops accumulation once the prefix reaches 1,000,000.
         self.assertLess(capture._compare_packages(Path('pak10000009.pk4'),Path('pak10000010.pk4')),0)
 
+    def test_source_size_bound_for_packages_and_loose_files(self):
+        limit=16*1024*1024  # Retained document loader's supported source size.
+        for kind in ('package','loose'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory(prefix='system-source-size-',dir=ROOT/'.tmp') as directory:
+                runtime=Path(directory); game=runtime/'baseoq4'
+                for size in (limit,limit+1):
+                    raw=b'x'*size
+                    if kind=='package': package(game/'pak0.pk4',[(capture.PAGE,raw)])
+                    else:
+                        loose=game/capture.PAGE; loose.parent.mkdir(parents=True,exist_ok=True); loose.write_bytes(raw)
+                    if size==limit: self.assertEqual(capture.staged_source(runtime)[0],raw)
+                    else:
+                        with self.assertRaisesRegex(ValueError,'size'): capture.staged_source(runtime)
+
+    def test_production_source_contract_accepts_lf_and_crlf_packages(self):
+        production=(ROOT/'content/baseoq4/pak0'/capture.PAGE).read_bytes().replace(b'\r\n',b'\n')
+        for newline in (b'\n',b'\r\n'):
+            with self.subTest(newline=newline),tempfile.TemporaryDirectory(prefix='system-source-newlines-',dir=ROOT/'.tmp') as directory:
+                root=Path(directory); runtime=root/'.install'; raw=production.replace(b'\n',newline)
+                source=root/'content/baseoq4/pak0'/capture.PAGE; source.parent.mkdir(parents=True); source.write_bytes(raw)
+                package(runtime/'baseoq4/pak0.pk4',[(capture.PAGE,raw)])
+                with patch.object(capture,'ROOT',root): result=capture.source_contract(runtime)
+                self.assertEqual(result['staged']['effective']['member_size'],len(raw))
+                self.assertEqual(result['staged']['effective']['member_sha256'],capture.hashlib.sha256(raw).hexdigest())
+
     def test_ambiguous_or_unsupported_package_candidates_fail_closed(self):
         cases=[([(capture.PAGE,b'a'),(capture.PAGE,b'b')],'Duplicate'),
                ([(capture.PAGE,b'a'),(capture.PAGE.upper(),b'b')],'Duplicate'),
                ([(capture.PAGE,b'a'),(capture.PAGE.replace('/','\\'),b'b')],'Duplicate'),
                ([(capture.PAGE.replace('/',':'),b'a')],'Ambiguous'),
                ([(capture.PAGE,b'a'),('addon.conf',b'addonDef {}')],'Addon-dependent'),
-               ([(capture.PAGE,b'x'*(8*1024*1024+1))],'size')]
+               ([(capture.PAGE,b'x'*(16*1024*1024+1))],'size')]
         for members,error in cases:
             with self.subTest(error=error,members=[name for name,_ in members]), tempfile.TemporaryDirectory(prefix='system-package-invalid-',dir=ROOT/'.tmp') as directory:
                 runtime=Path(directory); package(runtime/'baseoq4/pak0.pk4',members)

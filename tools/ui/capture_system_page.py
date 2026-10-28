@@ -23,6 +23,8 @@ from zipfile import BadZipFile, ZipFile
 
 ROOT = Path(__file__).resolve().parents[2]
 PAGE = 'guis/menu/settings/system.q4ui'
+# Match the retained document loader's source bound, including CRLF checkouts.
+MAX_SOURCE_BYTES = 16 * 1024 * 1024
 PARENT = 'guis/mainmenu.gui'
 STAGE_MARKER = 'SYSTEM_PAGE_STAGE'
 COMPLETE = 'SYSTEM_PAGE_CAPTURE_COMPLETE'
@@ -109,7 +111,7 @@ def staged_source(runtime: Path) -> tuple[bytes, dict]:
                 if not members: continue
                 if addon: raise ValueError(f'Addon-dependent SYSTEM source in {package.name}')
                 member = members[0]
-                if member.file_size > 8 * 1024 * 1024 or member.flag_bits & 1 or member.compress_type not in (0, 8):
+                if member.file_size > MAX_SOURCE_BYTES or member.flag_bits & 1 or member.compress_type not in (0, 8):
                     raise ValueError(f'Unsupported SYSTEM member encoding or size in {package.name}')
                 raw = archive.read(member)  # Also verifies the member CRC.
                 binding = {'kind':'package', 'package':str(package), 'package_sha256':digest(package),
@@ -128,6 +130,8 @@ def staged_source(runtime: Path) -> tuple[bytes, dict]:
         loose = matches[0]
     if loose is not None:
         if not loose.is_file(): raise ValueError('Loose SYSTEM override is not a regular file')
+        if loose.stat().st_size > MAX_SOURCE_BYTES:
+            raise ValueError('Unsupported loose SYSTEM source size')
         raw = loose.read_bytes()
         binding = {'kind':'loose', 'path':str(loose), 'sha256':hashlib.sha256(raw).hexdigest(), 'size':len(raw)}
         candidates.append(binding)

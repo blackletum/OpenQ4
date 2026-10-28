@@ -85,6 +85,12 @@ def validate_probe_refuses_active_vulkan() -> None:
 def validate_runtime_gate() -> None:
     """Required Vulkan coverage cannot pass by omission or disabled layers."""
     cases = matrix.build_safe_cases(("auto",))
+    for case in matrix.build_safe_cases(("auto", "gl33", "gl43", "gl45")):
+        args = case["args"]
+        expected = "vulkan" if case["id"].startswith("renderer-vk-") else "gl"
+        selections = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "r_renderApi"]
+        if selections != [expected]:
+            raise AssertionError(f"{case['id']} depends on an automatic or inherited backend: {selections}")
     startup = next(case for case in cases if case["id"] == "renderer-vk-clear-startup")
     fallback = next(case for case in cases if case["id"] == "renderer-vk-device-fallback-drill")
     runtime = ROOT / ".tmp" / "unused-vulkan-probe-test"
