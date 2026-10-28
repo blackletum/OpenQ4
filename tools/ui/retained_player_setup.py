@@ -50,7 +50,7 @@ def rail_row(doc: Document) -> tuple[dict, list[str]]:
         action = proposal(doc, f"rail{row}", "rail", value=row, expected="setup.observed_rail")
         children.append(group(ident, absolute(left=VALUE_X + 44*row, top=4, width=44, height=44), [ring, chip],
                               control={"role": "button", "label": "#str_200981", "action": action, "states": states,
-                                       "context": {"state": "setup.catalog"}}))
+                                       "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}}))
         controls.append(ident)
     return group("setup-rail", {"position": keyword("relative"), "width": length(WIDTH), "height": length(52),
                                  "flex-shrink": number(0)}, children), controls
@@ -101,7 +101,7 @@ def player_setup(doc: Document) -> dict:
                                width=WIDTH/2-6, action=action)
         button["control"]["enabled"] = True
         doc.bind(f"setup-model-{ident}.enabled",f"setup-model-{ident}","enabled",{"state":allowed})
-        button["control"]["context"] = {"state": "setup.catalog"}
+        button["control"]["context"] = {"op": "numberText", "args": [{"state": "setup.catalog"}]}
         pages.append(button)
     rows.append(group("setup-model-pages", {"position": keyword("relative"), "width": length(WIDTH), "height": length(44),
                                             "flex-shrink": number(0)}, pages))

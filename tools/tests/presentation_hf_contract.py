@@ -219,7 +219,7 @@ def check_frame_rate_policy(common: str | None = None) -> None:
     expected = {"minimum": 30, "lowpower": 30, "performance": 60, "balanced": 120, "enhanced": 120, "quality": 144, "ultra": 240}
     if caps != expected:
         raise AssertionError(f"{context}: preset caps {caps} differ from the declared {expected}")
-    require(presets, 'else if(signals.steamDeck){tier=2;', f"{context}: Steam Deck starts on performance")
+    require(presets, 'if(signals.steamDeck&&tier>2){tier=2;', f"{context}: Steam Deck is capped at performance without raising a lower tier")
 
 
 def check_present_timing(device: str | None = None) -> None:

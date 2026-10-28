@@ -186,7 +186,7 @@ public:
     struct Peer {
         std::string key, value;
         void ForwardState(const char *name, const char *stored) { key = name; value = stored; }
-    } peer, *remastered = &peer;
+    } peer, essentialPeer, *remastered = &peer, *essentialHud = &essentialPeer;
 };
 '''
 
@@ -229,6 +229,7 @@ int main() {
     gui.SetStateString("chat_line", gui.state.GetString("chat_line"));
     Check(TakeLog().empty() && Stored(gui, "chat_line", "incoming"), "storing the current value again is not logged");
     Check(gui.peer.key == "chat_line" && gui.peer.value == "incoming", "the HUD peer receives the stored value");
+    Check(gui.essentialPeer.key == "chat_line" && gui.essentialPeer.value == "incoming", "the essential HUD receives the stored value");
 
     // The typed setters read their old value as a number before the store.
     gui.state.Set("player_score", "7");
@@ -243,10 +244,12 @@ int main() {
     Check(Stored(gui, "player_score", "12") && Stored(gui, "flag_taken", "0") && Stored(gui, "notice_alpha", "0.500000"),
         "the typed setters store their values");
     Check(gui.peer.key == "notice_alpha" && gui.peer.value == "0.500000", "the HUD peer receives the typed setters' stored text");
+    Check(gui.essentialPeer.key == "notice_alpha" && gui.essentialPeer.value == "0.500000", "the essential HUD receives the typed setters' stored text");
 
     // The shared store helper finds the existing entry. Below level 4 there
     // must be no additional GetString lookup to prepare a debug log line.
     gui.remastered = nullptr;
+    gui.essentialHud = nullptr;
     gui_debugScript.value = 3;
     const int lookups = gui.state.lookups;
     gui.SetStateString("main_notice_text", "YOUR TEAM HAS THE FLAG");

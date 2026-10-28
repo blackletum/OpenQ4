@@ -22052,7 +22052,7 @@
              },
              "action": "setup.previous",
              "enabled": true,
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            },
            {
@@ -22235,7 +22235,7 @@
              },
              "action": "setup.next",
              "enabled": true,
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            }
           ]
@@ -22910,7 +22910,7 @@
               "pressed": "setup-rail-0.pressed",
               "disabled": "setup-rail-0.disabled"
              },
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            },
            {
@@ -22992,7 +22992,7 @@
               "pressed": "setup-rail-1.pressed",
               "disabled": "setup-rail-1.disabled"
              },
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            },
            {
@@ -23074,7 +23074,7 @@
               "pressed": "setup-rail-2.pressed",
               "disabled": "setup-rail-2.disabled"
              },
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            },
            {
@@ -23156,7 +23156,7 @@
               "pressed": "setup-rail-3.pressed",
               "disabled": "setup-rail-3.disabled"
              },
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            },
            {
@@ -23238,7 +23238,7 @@
               "pressed": "setup-rail-4.pressed",
               "disabled": "setup-rail-4.disabled"
              },
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            },
            {
@@ -23320,7 +23320,7 @@
               "pressed": "setup-rail-5.pressed",
               "disabled": "setup-rail-5.disabled"
              },
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            },
            {
@@ -23402,7 +23402,7 @@
               "pressed": "setup-rail-6.pressed",
               "disabled": "setup-rail-6.disabled"
              },
-             "context": {"state": "setup.catalog"}
+             "context": {"op": "numberText", "args": [{"state": "setup.catalog"}]}
             }
            }
           ]

@@ -577,7 +577,8 @@ def air_gauge(doc: HudDocument, strogg: bool, *, classic: bool = False) -> dict:
     doc.number("player_air", 100)
     amount = op("clamp", S("player_air"), 0, 100)
     palette = STROGG if strogg else MARINE
-    colour = sel(op("<=", amount, 25), rgb(palette["low"]), rgb(palette["fill"]))
+    low_air = op("<=", amount, 25)
+    colour = [sel(low_air, low, normal) for low, normal in zip(rgb(palette["low"]), rgb(palette["fill"]))]
     outline = "M2 0H123Q125 0 125 2V14Q125 16 123 16H2Q0 16 0 14V2Q0 0 2 0Z"
     track = box("air-track", u(54), u(6), u(45), u(4),
                 **{"background-color": ui.colour(rgb(palette["fill"], .2))})
@@ -592,7 +593,8 @@ def air_gauge(doc: HudDocument, strogg: bool, *, classic: bool = False) -> dict:
     value = text_box("air-value", "", face="r_strogg" if strogg else "chain", size=u(10.5),
                      colour=rgb(palette["ink"]), baseline=u(12.5), right=u(120), width=u(20))
     doc.bind("air-value.text", value["id"], "text", op("numberText", op("floor", amount)))
-    doc.bind("air-value.colour", value["id"], "color", sel(op("<=", amount, 25), rgb(palette["low"]), rgb(palette["ink"])))
+    doc.bind("air-value.colour", value["id"], "color",
+             [sel(low_air, low, normal) for low, normal in zip(rgb(palette["low"]), rgb(palette["ink"]))])
     gauge = shear_group("air-gauge", u(190 if classic else 277.5 if strogg else 278), u(397), u(125), u(16), .22,
                         [*backing_nodes(doc, "air", outline), track, fill, label, value])
     doc.show("air-gauge", AND(op("<", amount, 100), op(">", S("player_health"), 0),
