@@ -312,6 +312,9 @@ struct Host {
     bool fontFallbackReported=false;
     // Generated image ownership has its own production adapter/runtime fixture.
     struct GeneratedImages {template<class F> void Reset(F release){}} generatedImages;
+    // Model targets have their own fixture; this host owns none.
+    static constexpr unsigned ModelCapacity=0;
+    void FreeModel(unsigned){std::abort();}
     std::array<const idMaterial*,64> generatedMaterials{};
     std::uintptr_t generatedProbe=0;
     bool ShrinkGeneratedImage(unsigned){return true;}

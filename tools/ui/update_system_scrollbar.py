@@ -82,6 +82,7 @@ def compose(document):
                      'settings_fullscreen.', 'settings_borderless.', 'settings_fullscreen_policy.', 'settings_msaa.',
                      'settings_ui_scale.', 'settings_text_scale.', 'settings_reset_sizes.',
                      'settings_preset.', 'settings_autodetect.',
+                     'settings_backend.', 'settings_gpu.', 'settings_restart_renderer.',
                      'settings_brightness_number.', 'settings_ambient_number.')
     tail = [t for t in result['timelines'] if t['id'].startswith(tail_prefixes)]
     result['timelines'] = [t for t in result['timelines']

@@ -56,6 +56,7 @@ SUPPORT = r'''
 #include <sstream>
 #include <string>
 #include <vector>
+#include "src/ui/retained/PlayerSetupRequest.h"
 static int checks = 0;
 #define CHECK(x) do { ++checks; if (!(x)) { std::fprintf(stderr, "check failed line %d: %s\n", __LINE__, #x); std::abort(); } } while (false)
 #define ID_TIME_T long long
@@ -686,6 +687,18 @@ public:
     idUserInterface* guiRetainedMpPage = nullptr; int retainedMpPageDest = 0, retainedMpPageLeft = 0, retainedMpPageAt = 0;
     idUserInterface* RetainedMultiplayerPage(); bool OpenRetainedMultiplayerPage(const char* = nullptr);
     void HandleRetainedMultiplayerPageRequest(idUserInterface*, const char*); void UpdateRetainedMultiplayerPage();
+    // Count the player-setup service boundary; its codec and document have
+    // dedicated tests. Keep availability controllable to exercise both routes.
+    bool playerSetupAvailable = false, playerSetupPublishOk = true;
+    int playerSetupOpens = 0, playerSetupPublishes = 0;
+    std::vector<std::string> playerSetupRequests;
+    bool OpenRetainedPlayerSetup(idUserInterface* gui) {
+        ++playerSetupOpens;
+        if (playerSetupAvailable) gui->SetStateBool("setup.open", true);
+        return playerSetupAvailable;
+    }
+    bool PublishRetainedPlayerSetup(idUserInterface*) { ++playerSetupPublishes; return playerSetupPublishOk; }
+    void HandleRetainedPlayerSetupRequest(idUserInterface*, const char* request) { playerSetupRequests.push_back(request); }
     // Its Create Server sub-page and the maps it lists; the servers started.
     idUserInterface* guiRetainedCreate = nullptr; idList<int> retainedCreateMaps; int retainedCreateMapFirst = 0, retainedCreateMapSelected = -1;
     struct retainedLevelshot_t { idStr name; bool map = false, material = false; };
@@ -1459,7 +1472,22 @@ int main() {
         // BACK before any stock page: the title returns as from any page.
         s.HandleRetainedSessionRequest(page, "multiplayerBack");
         CHECK(s.guiActive == s.guiMainMenu && title->named.back() == "returnHome" && s.guiRetainedHome == title);
-        // Again, and PLAYER SETUP: the page leaves, and takes no other choice
+        // Available player setup stays on the retained page; its typed request
+        // is dispatched without interpreting the payload as a session verb.
+        s.HandleRetainedSessionRequest(title, "multiplayer"); commonObject.time += 550; s.UpdateRetainedHome(); s.UpdateRetainedPage();
+        s.playerSetupAvailable = true;
+        s.HandleRetainedSessionRequest(page, "multiplayerSetup");
+        CHECK(s.playerSetupOpens == 1 && page->State().GetBool("setup.open") && s.guiActive == page && s.retainedMpPageDest == 0);
+        s.UpdateRetainedMultiplayerPage();
+        CHECK(s.playerSetupPublishes == 1 && s.guiActive == page && s.retainedMpPageDest == 0);
+        s.HandleRetainedMultiplayerPageRequest(page, "playerSetupApply {\"name\":\"multiplayerBack\"}");
+        CHECK((s.playerSetupRequests == std::vector<std::string>{"{\"name\":\"multiplayerBack\"}"}) && s.guiActive == page);
+        s.HandleRetainedSessionRequest(page, "playerSetupClose");
+        CHECK(page->named.back() == "setupClose" && s.retainedMpPageDest == 0);
+        page->SetStateBool("setup.open", false); s.playerSetupAvailable = false;
+        s.HandleRetainedSessionRequest(page, "multiplayerBack");
+        // Again, with PLAYER SETUP unavailable: the page leaves for the stock
+        // fallback, and takes no other choice
         // meanwhile, the sub-pages' changes of level among them.
         s.HandleRetainedSessionRequest(title, "multiplayer"); commonObject.time += 550; s.UpdateRetainedHome(); s.UpdateRetainedPage();
         CHECK(s.guiActive == page);
@@ -1532,6 +1560,15 @@ int main() {
                   (Stock(old) == std::vector<std::string>{"guis/menu/multiplayer.q4ui"}));
             CHECK(std::find(managerObject.loads.begin(), managerObject.loads.end(), "guis/menu/multiplayer.q4ui") == managerObject.loads.end());
         }
+    }
+    {   // A preview that stops publishing hands the active setup edit to stock.
+        auto s = Session(true); s.PreloadRetainedScreens(); s.UpdateRetainedHome();
+        CHECK(s.OpenRetainedMultiplayerPage());
+        auto* page = s.guiRetainedMpPage; s.playerSetupAvailable = true;
+        s.HandleRetainedSessionRequest(page, "multiplayerSetup");
+        s.playerSetupPublishOk = false; s.UpdateRetainedMultiplayerPage();
+        CHECK(s.playerSetupPublishes == 1 && s.guiActive == s.guiMainMenu && legacy["desktop::dest"] == 18 &&
+              s.guiMainMenu->named.back() == "openMultiplayerPage");
     }
     {   // The Create Server sub-page (FLOW-050) offers all the stock page does
         // (RETAINED_CREATE_SERVER_MISSING is empty), so it is the default:
@@ -3356,13 +3393,16 @@ def stock_system_settings() -> set[str]:
 
 # Retained controls whose value is a list's selection rather than the draft
 # setting itself; the pick operation their action names writes the setting.
-RETAINED_SYSTEM_DERIVED_STATE = {'settings.display.mode.selected': 'r_mode', 'settings.display.refresh.selected': 'r_displayRefresh'}
+RETAINED_SYSTEM_DERIVED_STATE = {'settings.display.mode.selected': 'r_mode', 'settings.display.refresh.selected': 'r_displayRefresh',
+                               'settings.render.backend': 'r_renderApi', 'settings.render.selected': 'r_renderDevice'}
 # What each pick operation writes as its own choice: SystemDisplaySelectionPatch
 # for the display lists, the preset expansion for its name. A plain edit writes
 # its arguments. A control counts only for its operation's own writes.
 OPERATION_WRITES = {'settings.system.display': {'r_screen'},
                     'settings.system.displayMode': {'r_mode', 'r_customWidth', 'r_customHeight'},
                     'settings.system.displayRefresh': {'r_displayRefresh'},
+                    'settings.system.backend': {'r_renderApi'},
+                    'settings.system.renderDevice': {'r_renderDevice', 'r_renderApi'},
                     'settings.system.preset': {'com_performancePreset'}}
 # The automatic values a display or size pick also returns: a size the new
 # display lacks to Desktop Native, a rate the new choice lacks to Auto.
@@ -3433,8 +3473,14 @@ def check_retained_system_control_writes() -> None:
     display = (ROOT / 'src/ui/application/SystemDisplay.cpp').read_text(encoding='utf-8')
     patch = display[display.rindex('bool SystemDisplaySelectionPatch('):]
     patch = patch[:patch.index('\n}\n')]
-    for key in sorted(set().union(*(OPERATION_WRITES[o] | OPERATION_RESETS.get(o, set()) for o in OPERATION_WRITES if o != 'settings.system.preset'))):
+    for key in sorted(set().union(*(OPERATION_WRITES[o] | OPERATION_RESETS.get(o, set()) for o in
+                                   ('settings.system.display', 'settings.system.displayMode', 'settings.system.displayRefresh')))):
         assert f'result["{key}"]' in patch, f'SystemDisplaySelectionPatch no longer writes {key}'
+    rendering = (ROOT / 'src/ui/RenderingSettings.cpp').read_text(encoding='utf-8')
+    for operation, method in (('settings.system.backend', 'Backend'), ('settings.system.renderDevice', 'Select')):
+        body = function_body(rendering, f'bool RenderingSettings::{method}(')
+        for key in OPERATION_WRITES[operation]:
+            assert f'patch["{key}"]' in body, f'RenderingSettings::{method} no longer writes {key}'
     # Each branch writes what its operation is counted for: its own pick, and
     # the automatic values a display or size pick returns.
     device = patch[patch.index('if (list==SystemDisplayList::Device) {'):patch.index('} else if (list==SystemDisplayList::Mode) {')]
@@ -3449,9 +3495,10 @@ def check_retained_system_control_writes() -> None:
 
 
 # ApplyClassOf, statement by statement: a change applies when its setting is
-# Immediate or restarts the display, or is r_renderer or r_lightGridPreload;
+# Immediate, persists an EngineRestart preference, restarts the display, or
+# is r_renderer or r_lightGridPreload;
 # any other effect makes it Unsupported. retained_system_incomplete mirrors it.
-APPLY_CLASS_STATEMENTS = ('if (item.effects==SystemSettingImmediate) continue;',
+APPLY_CLASS_STATEMENTS = ('if (item.effects==SystemSettingImmediate || item.effects==SystemSettingEngineRestart) continue;',
                           'if (item.effects==SystemSettingDisplayRestart) display=true;',
                           'else if (item.key=="r_renderer") renderer=true;',
                           'else if (item.key=="r_lightGridPreload") deferred=true;',
@@ -3550,10 +3597,10 @@ def retained_system_incomplete(adapter: str) -> dict[str, str]:
     typed = typed_text_reaches_numbers(adapter)
 
     def applies(key: str) -> bool:
-        return effects[key] in ('Immediate', 'DisplayRestart') or key in ('r_renderer', 'r_lightgridpreload')
+        return effects[key] in ('Immediate', 'EngineRestart', 'DisplayRestart') or key in ('r_renderer', 'r_lightgridpreload')
 
     def apply_class(key: str) -> str:
-        return 'immediate' if effects[key] == 'Immediate' else 'display' if effects[key] == 'DisplayRestart' else key
+        return 'immediate' if effects[key] in ('Immediate', 'EngineRestart') else 'display' if effects[key] == 'DisplayRestart' else key
 
     targets = [target.lower() for target in preset_targets()]
     reasons = {}
@@ -5485,7 +5532,11 @@ def main() -> int:
         document = json.loads(re.sub(r'^\s*//.*$', '', text, flags=re.M))
         timelines = {item['id']: item for item in document['timelines']}
         assert timelines[event]['durationMs'] == waits['DEEPER' if event.startswith('subpageEnter') else 'BACK'], name
-        assert document['events']['onDeactivate'][0] == {'op': 'playTimeline', 'timeline': 'rest'}, name
+        deactivate = document['events']['onDeactivate']
+        if name == 'multiplayer':
+            assert deactivate[0] == {'op': 'setState', 'values': {'setup.open': False}}, name
+            deactivate = deactivate[1:]
+        assert deactivate[0] == {'op': 'playTimeline', 'timeline': 'rest'}, name
         # Rest returns everything a change moves, so a hidden document never
         # presents moved (the crumb's fitted scale rests in crumbRest).
         moved = {(track['node'], track['property']) for item in timelines.values()
@@ -5508,7 +5559,7 @@ def main() -> int:
     allowlist = cpp_allowlist(adapter)
     value_allowlist = cpp_allowlist(adapter, 'bool SessionMenuValueCommand(')
     player_settings = player_setting_rules(adapter)
-    handled = set(re.findall(r'\{ "([A-Za-z][A-Za-z0-9]*)",\s+"main_b_', menu)) | set(re.findall(r'!idStr::Icmp\( request, "([A-Za-z][A-Za-z0-9]*)" \)', menu))
+    handled = set(re.findall(r'\{ "([A-Za-z][A-Za-z0-9]*)",\s+"main_b_', menu)) | set(re.findall(r'!idStr::Icmp\(\s*request,\s*"([A-Za-z][A-Za-z0-9]*)"\s*\)', menu))
     assert 'for ( int i = 0; i < 5; ++i ) {\n            if ( !idStr::Icmp( request, va( "campaignSkill%d", i ) ) ) {' in menu.replace('\r\n', '\n')
     handled |= set(re.findall(r'!idStr::Icmpn\( request, \"(loadSelect|saveSelect|loadSave|loadDelete)\",', menu))
     handled.update(f'campaignSkill{i}' for i in range(5))
@@ -5670,7 +5721,7 @@ def main() -> int:
         source = Path(directory) / 'gate.cpp'
         binary = Path(directory) / 'gate.exe'
         source.write_text(SUPPORT + '\n'.join(bodies) + MAIN, encoding='utf-8')
-        subprocess.run([compiler, '-std=c++20', '-Wall', '-Wextra', '-Wno-unused-function', str(source), '-o', str(binary)], check=True)
+        subprocess.run([compiler, '-std=c++20', '-Wall', '-Wextra', '-Wno-unused-function', '-I', str(ROOT), str(source), '-o', str(binary)], check=True)
         result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60)
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
