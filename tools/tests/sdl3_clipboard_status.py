@@ -19,6 +19,8 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,13 +66,22 @@ def provision_source(explicit: Path | None, specification: dict[str, str], scrat
         url = specification["source_url"]
         if not url.startswith("https://"):
             raise RuntimeError("Pinned SDL source download must use HTTPS")
-        with urllib.request.urlopen(url, timeout=30) as response, archive.open("wb") as output:
-            total = 0
-            while chunk := response.read(1024 * 1024):
-                total += len(chunk)
-                if total > 128 * 1024 * 1024:
-                    raise RuntimeError("Pinned SDL archive exceeds the download bound")
-                output.write(chunk)
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(url, timeout=30) as response, archive.open("wb") as output:
+                    total = 0
+                    while chunk := response.read(1024 * 1024):
+                        total += len(chunk)
+                        if total > 128 * 1024 * 1024:
+                            raise RuntimeError("Pinned SDL archive exceeds the download bound")
+                        output.write(chunk)
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                archive.unlink(missing_ok=True)
+                if attempt == 2:
+                    raise
+                print(f"SDL source download attempt {attempt + 1} failed: {error}; retrying", flush=True)
+                time.sleep(attempt + 1)
     if not archive.is_file() or archive.stat().st_size > 128 * 1024 * 1024 or sha(archive) != expected_hash:
         raise RuntimeError("Pinned SDL archive SHA-256 does not match source_hash")
 
