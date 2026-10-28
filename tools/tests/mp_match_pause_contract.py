@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
+from game_regression_suite import RegressionTemporaryDirectory
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -372,7 +372,7 @@ def compile_deadline_harness() -> None:
 
     tmp_root = ROOT / ".tmp"
     tmp_root.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="mp-pause-contract-", dir=tmp_root) as raw:
+    with RegressionTemporaryDirectory(prefix="mp-pause-contract-", dir=tmp_root) as raw:
         temp = Path(raw)
         source = temp / "deadline_harness.cpp"
         source.write_text(
@@ -486,7 +486,7 @@ int main() {
     compiler = shutil.which("clang++") or shutil.which("g++") or shutil.which("c++")
     if compiler is None:
         raise AssertionError("client prediction clock check requires a C++ compiler")
-    with tempfile.TemporaryDirectory(prefix="mp-pause-prediction-", dir=ROOT / ".tmp") as raw:
+    with RegressionTemporaryDirectory(prefix="mp-pause-prediction-", dir=ROOT / ".tmp") as raw:
         temp = Path(raw)
         source, executable = temp / "prediction.cpp", temp / "prediction.exe"
         source.write_text(source_text, encoding="utf-8")
@@ -660,7 +660,7 @@ def compile_match_clock_harness() -> None:
 
     tmp_root = ROOT / ".tmp"
     tmp_root.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="mp-match-clock-", dir=tmp_root) as raw:
+    with RegressionTemporaryDirectory(prefix="mp-match-clock-", dir=tmp_root) as raw:
         temp = Path(raw)
         source = temp / "match_clock_harness.cpp"
         source.write_text(MATCH_CLOCK_HARNESS.lstrip(), encoding="utf-8", newline="\n")

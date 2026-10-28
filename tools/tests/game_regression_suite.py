@@ -9,8 +9,29 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class RegressionTemporaryDirectory(tempfile.TemporaryDirectory):
+    """Allow Windows to release a completed fixture executable before removal."""
+
+    def cleanup(self):
+        for attempt in range(21):
+            try:
+                super().cleanup()
+                return
+            except (PermissionError, NotADirectoryError) as error:
+                # A completed child can retain a short-lived image lock on
+                # Windows. Never suppress persistent errors or retry tests.
+                # Older tempfile versions wrap a sharing violation while
+                # trying to treat the still-locked file as a directory.
+                sharing = isinstance(error, PermissionError) or isinstance(error.__context__, PermissionError)
+                if os.name != 'nt' or not sharing or attempt == 20:
+                    raise
+                time.sleep(0.1)
 
 
 def discover():
