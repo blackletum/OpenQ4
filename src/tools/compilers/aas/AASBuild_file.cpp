@@ -305,6 +305,11 @@ bool idAASBuild::GetAreaForLeafNode( idBrushBSPNode *node, int *areaNum ) {
 	area.flags = node->GetFlags();
 	area.cluster = area.clusterAreaNum = 0;
 	area.contents = node->GetContents();
+	// Water-jump reachability tests this flag, while swim reachability reads
+	// contents. Publish both from the same compiled volume classification.
+	if ( area.contents & AREACONTENTS_WATER ) {
+		area.flags |= AREA_LIQUID;
+	}
 	area.firstFace = file->faceIndex.Num();
 	area.numFaces = 0;
 	area.reach = NULL;

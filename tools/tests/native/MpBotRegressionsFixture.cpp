@@ -1074,7 +1074,28 @@ void TestAirRecovery() {
     CHECK(chooser.RecoverInAir(&self,cmd) && cmd.rightmove<0 && airChoices==2);
     airChoice={}; gameLocal.time+=BOT_AIR_RECOVER_REPLAN_MSEC; cmd={};
     CHECK(chooser.RecoverInAir(&self,cmd) && cmd.rightmove==0 && cmd.forwardmove==0 && airChoices==3);
-    std::puts("Air recovery: a knock-caused fall over nothing is braked, through drops and pad flights it hijacks; own jumps, pad volumes and safe arcs untouched: PASS");
+    // A grounded brake may lose support on a sloping WALK rim before it
+    // stops. An unsafe, descending fall still recovers without an enemy hit.
+    Reset(); self.pfl.onGround=false; self.physics.velocity={110,52,-60};
+    auto walker=[&]() { rvBot b; b.path.Append({0,0,0}); b.path.Append({100,0,0});
+        b.pathCorner=1; b.airborneSince=gameLocal.time-16; return b; };
+    airLandingUnsafe=true;
+    rvBot slipped=walker(); cmd={};
+    CHECK(slipped.RecoverInAir(&self,cmd) && slipped.airRecovering && cmd.forwardmove<0);
+    CHECK(slipped.path.Num()==2); // retained walking goal resumes after landing
+    // A jump ahead of WALK does not own a fall before the bot presses it.
+    slipped=walker(); slipped.path.Append({200,0,0},NAVTRAVEL_JUMP); cmd={};
+    CHECK(slipped.RecoverInAir(&self,cmd));
+    slipped=walker(); slipped.airborneVoluntary=true; cmd={};
+    CHECK(!slipped.RecoverInAir(&self,cmd));
+    for(int action : {NAVTRAVEL_DROP,NAVTRAVEL_JUMPPAD,NAVTRAVEL_TELEPORT}) {
+        slipped=walker(); slipped.path.Append({200,0,0},action); cmd={};
+        CHECK(!slipped.RecoverInAir(&self,cmd));
+        slipped.pathCorner=2; CHECK(!slipped.RecoverInAir(&self,cmd));
+    }
+    slipped=walker(); self.physics.velocity.z=20; CHECK(!slipped.RecoverInAir(&self,cmd));
+    self.physics.velocity.z=-60; airLandingUnsafe=false; CHECK(!slipped.RecoverInAir(&self,cmd));
+    std::puts("Air recovery: unsafe knock/WALK falls recover; own jumps, planned departures, pad volumes and safe arcs untouched: PASS");
 }
 void TestUnexpectedPad() {
     Reset(); idPlayer self; rvJumpPad pad; idItem goal;

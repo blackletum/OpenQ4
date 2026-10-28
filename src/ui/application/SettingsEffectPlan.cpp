@@ -78,14 +78,42 @@ const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV2() {
  }();
  return catalog;
 }
+const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV3() {
+ static const auto catalog=[] {
+  auto result=SettingsEffectCatalogV2();
+  for (const auto* key:{"r_shadowMapPointSize","r_shadowMapFilterTaps","r_shadowMapPointFilterTaps",
+   "r_shadowMapFilterMode","r_shadowMapPointFilterMode","r_shadowMapAtlasSize",
+   "r_ssaoSamples","r_bloomMipCount","r_motionBlurSamples"}) result.emplace(key,SettingsEffectField{0,0});
+  result.emplace("r_shadowMapPointLights",SettingsEffectField{1,0});
+  result.emplace("r_hdrSceneTarget",SettingsEffectField{1,0});
+  result.emplace("image_picmip",SettingsEffectField{0,2});
+  result.emplace("r_shadowMapCascadeCount",SettingsEffectField{0,0});
+  for (const auto* key:{"r_shadowMapCSM","r_shadowMapProjectedCSM","r_shadowMapCascadeStabilize",
+   "r_motionBlurObjectVectors","r_shadowMapHashedAlpha","r_shadowMapTranslucentReceivers"})
+   result.emplace(key,SettingsEffectField{1,0});
+  return result;
+ }();
+ return catalog;
+}
+const std::map<std::string,SettingsEffectField>& SettingsEffectCatalogV4() {
+ static const auto catalog=[] {
+  auto result=SettingsEffectCatalogV3();
+  result.emplace("r_renderApi",SettingsEffectField{2,64});
+  result.emplace("r_renderDevice",SettingsEffectField{2,64});
+  return result;
+ }();
+ return catalog;
+}
 bool BuildSettingsEffectPlan(const StateValues& baseline, const StateValues& target,
  const std::map<std::string,std::size_t>& catalog, SettingsEffectPlan& output, std::string& error) {
  try {
-  const bool legacy=catalog.size()==SettingsEffectCatalogV1().size();
-  const auto& audited=legacy?SettingsEffectCatalogV1():SettingsEffectCatalogV2();
+  const unsigned version=catalog.size()==SettingsEffectCatalogV1().size()?1u:
+   catalog.size()==SettingsEffectCatalogV2().size()?2u:catalog.size()==SettingsEffectCatalogV3().size()?3u:4u;
+  const auto& audited=version==1?SettingsEffectCatalogV1():version==2?SettingsEffectCatalogV2():
+   version==3?SettingsEffectCatalogV3():SettingsEffectCatalogV4();
   if (catalog.size()!=audited.size() || baseline.size()!=audited.size() || target.size()!=audited.size())
    return Fail(error,"Settings effect catalog or complete snapshots changed");
-  SettingsEffectPlan candidate; candidate.version=legacy?1u:2u;
+  SettingsEffectPlan candidate; candidate.version=version;
   bool changed=false; std::size_t baselineBytes=0,targetBytes=0;
   for (const auto& [key,field]:audited) {
    const auto declared=catalog.find(key); const auto old=baseline.find(key),next=target.find(key);

@@ -971,13 +971,14 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView, int render
 	tr.guiModel->Clear();
 
 	int startTime = Sys_Milliseconds();
-	if ( tr.lastRenderTimeMsec > 0 ) {
+	const bool independent = (renderFlags & RF_INDEPENDENT_VIEW) != 0;
+	if ( !independent && tr.lastRenderTimeMsec > 0 ) {
 		const int elapsedMsec = startTime - tr.lastRenderTimeMsec;
 		tr.deltaTime = ( elapsedMsec > 0 ? elapsedMsec : 0 ) * 0.001f;
-	} else {
+	} else if ( !independent ) {
 		tr.deltaTime = 0.0f;
 	}
-	tr.lastRenderTimeMsec = startTime;
+	if (!independent) tr.lastRenderTimeMsec = startTime;
 
 	// setup view parms for the initial view
 	//
@@ -1001,7 +1002,7 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView, int render
 	// derived from the viewport below -- this view's scissor, and the viewports of
 	// any mirror or portal subviews R_RenderView spawns from it -- picks the
 	// smaller space up from the crop automatically.
-	const bool sceneResolutionScaled = tr.PushSceneResolutionScale();
+	const bool sceneResolutionScaled = !independent && tr.PushSceneResolutionScale();
 
 	// set up viewport, adjusted for resolution and OpenGL style 0 at the bottom
 	tr.RenderViewToViewport( &parms->renderView, &parms->viewport );
@@ -1022,7 +1023,7 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView, int render
 
 	// use this time for any subsequent 2D rendering, so damage blobs/etc 
 	// can use level time
-	tr.SetFrameShaderTime( parms->renderView.time );
+	if (!independent) tr.SetFrameShaderTime( parms->renderView.time );
 
 	// see if the view needs to reverse the culling sense in mirrors
 	// or environment cube sides
@@ -1043,9 +1044,11 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView, int render
 	}
 
 	// save this world for use by some console commands
-	tr.primaryWorld = this;
-	tr.primaryRenderView = *renderView;
-	tr.primaryView = parms;
+	if (!independent) {
+		tr.primaryWorld = this;
+		tr.primaryRenderView = *renderView;
+		tr.primaryView = parms;
+	}
 
 	// rendering this view may cause other views to be rendered
 	// for mirrors / portals / shadows / environment maps
@@ -1061,7 +1064,7 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView, int render
 
 	// now write delete commands for any modified-but-not-visible entities, and
 	// add the renderView command to the demo
-	if ( session->writeDemo ) {
+	if ( session->writeDemo && !independent ) {
 		WriteRenderView( renderView );
 	}
 

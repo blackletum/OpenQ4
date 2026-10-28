@@ -47,8 +47,33 @@
 #include "vk_ExecutorHooks.h"
 #include "../RendererMetrics.h"
 #include "../RendererModule.h"
+#include "../RendererDeviceCatalog.h"
+#include "VulkanBringup.h"
 
 vkDeviceContext_t vkCtx;
+
+bool VK_Device_QueryCatalog(renderDeviceCatalog_t* catalog) {
+	if (!catalog) return false;
+	*catalog = {};
+	// Never create another instance or repoint volk on the live renderer.
+	if (!vkCtx.initialized) return VK_Bringup_QueryCatalog(catalog);
+	vkDeviceSelectionApi_t api = {};
+	api.enumeratePhysicalDevices = vkEnumeratePhysicalDevices;
+	api.getProperties = vkGetPhysicalDeviceProperties;
+	api.getFeatures2 = vkGetPhysicalDeviceFeatures2;
+	api.enumerateExtensions = vkEnumerateDeviceExtensionProperties;
+	api.getQueueFamilies = vkGetPhysicalDeviceQueueFamilyProperties;
+	api.getMemoryProperties = vkGetPhysicalDeviceMemoryProperties;
+	api.getProperties2 = vkGetPhysicalDeviceProperties2;
+	if (VK_QueryDeviceCatalog(api,vkCtx.instance,*catalog)!=VK_SUCCESS) return false;
+	// The active identity belongs to the device we created, even if a later
+	// driver enumeration changes order (for example after attaching an eGPU).
+	idStr::Copynz(catalog->activeId,vkCtx.physicalDeviceId,sizeof(catalog->activeId));
+	return true;
+}
+
+static idCVar r_vkGpuPipelineStatistics( "r_vkGpuPipelineStatistics", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_INIT,
+	"enable optional projected-shadow pipeline counters in r_vkGpuPhaseProfile; set before renderer startup" );
 
 // Keep overflow outside the memset-reset device context. Resources referenced
 // by the command buffer still being recorded cannot be retired by wait-idle.
@@ -1687,11 +1712,12 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firs
 		vkGetPhysicalDeviceFeatures2, vkEnumerateDeviceExtensionProperties,
 		vkGetPhysicalDeviceQueueFamilyProperties, vkGetPhysicalDeviceSurfaceSupportKHR,
 		vkGetPhysicalDeviceSurfaceCapabilitiesKHR, vkGetPhysicalDeviceSurfaceFormatsKHR,
-		vkGetPhysicalDeviceFormatProperties
+		vkGetPhysicalDeviceFormatProperties, vkGetPhysicalDeviceMemoryProperties, vkGetPhysicalDeviceProperties2
 	};
 	vkDeviceSelection_t selected = {};
 	const int forcedDevice = r_vkDevice.GetInteger();
-	attempt.automatic = forcedDevice < 0;
+	const char *preferredDevice = cvarSystem->GetCVarString("r_bootRenderDevice");
+	attempt.automatic = forcedDevice < 0 && idStr::Cmp(preferredDevice,"auto")==0;
 	res = VK_SelectPhysicalDevice( selectionApi, vkCtx.instance, vkCtx.surface,
 			forcedDevice, selected,
 			[]( uint32_t index, const VkPhysicalDeviceProperties &properties,
@@ -1700,10 +1726,10 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firs
 						index, properties.deviceName, VK_API_VERSION_MAJOR( properties.apiVersion ),
 						VK_API_VERSION_MINOR( properties.apiVersion ), VK_API_VERSION_PATCH( properties.apiVersion ),
 						properties.limits.maxBoundDescriptorSets, reason, (int)result );
-			}, NULL, firstCandidate );
+			}, NULL, firstCandidate, preferredDevice );
 	if ( res != VK_SUCCESS ) {
 		if ( firstCandidate > 0 ) {
-			common->Warning( "Vulkan: no further compatible physical device after device %u (result=%d)",
+			common->Warning( "Vulkan: no further compatible physical device after rank %u (result=%d)",
 					firstCandidate - 1, (int)res );
 		} else {
 			common->Warning( "Vulkan: no compatible physical device (r_vkDevice=%d, result=%d)", forcedDevice, (int)res );
@@ -1713,6 +1739,7 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firs
 	}
 	vkCtx.physicalDevice = selected.device;
 	vkCtx.physicalDeviceIndex = selected.index;
+	idStr::Copynz(vkCtx.physicalDeviceId,selected.id,sizeof(vkCtx.physicalDeviceId));
 	attempt.admitted = true;
 	attempt.index = selected.index;
 	idStr::Copynz( attempt.deviceName, selected.properties.deviceName, sizeof( attempt.deviceName ) );
@@ -1894,6 +1921,11 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firs
 	features2.features.samplerAnisotropy = supported.samplerAnisotropy;
 	features2.features.depthClamp = supported.depthClamp;
 	features2.features.depthBounds = supported.depthBounds;
+	features2.features.pipelineStatisticsQuery = supported.pipelineStatisticsQuery && r_vkGpuPipelineStatistics.GetBool();
+	vkCtx.pipelineStatisticsEnabled = features2.features.pipelineStatisticsQuery == VK_TRUE;
+	if ( r_vkGpuPipelineStatistics.GetBool() ) {
+		common->Printf( "Vulkan pipeline statistics: requested=1 enabled=%d\n", vkCtx.pipelineStatisticsEnabled ? 1 : 0 );
+	}
 	// Stock Quake 4 ships BC1/BC3/BC7 art and R_BinaryImageHeaderSupportedByRenderer
 	// rejects generated .bimage files when the renderer denies compression, so the
 	// feature is enabled whenever the device has it and reported honestly downstream.

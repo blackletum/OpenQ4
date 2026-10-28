@@ -386,6 +386,7 @@ public:
 		if (width != viewportWidth || height != viewportHeight) { ++viewportGeneration; InvalidateFrame(); ClearLayerCache(); }
 		viewportWidth = width; viewportHeight = height; failed = false;
 	}
+	void ExternalPixelsChanged() { InvalidateFrame(); ClearLayerCache(); }
 	void EndFrame() {
 		if (!stack.empty()) {
 			failed = true;
@@ -1825,6 +1826,15 @@ struct Runtime::Impl {
 	Rml::ElementDocument* document = nullptr;
 	HudElement* hud = nullptr;
 	std::unique_ptr<Document> canonical;
+	struct ModelProjection { const ModelSceneSpec* spec=nullptr; VectorElement* element=nullptr; std::uint64_t lease=0; };
+	std::vector<ModelProjection> models;
+	void ReleaseModelScenes() {
+		auto retired=std::move(models); models.clear();
+		for (const auto& scene:retired) if (scene.lease) host.ReleaseModelScene(scene.lease);
+	}
+	// Immutable, JSON-escaped identity, rebuilt with each document replacement.
+	// HUD source can be several MiB; checkpoints must not escape it every time.
+	std::string snapshotDocumentIdentity;
 	Motion motion;
 	State state;
 	struct StateSource { std::string id, cvar; size_t type; };
@@ -2935,13 +2945,14 @@ void Runtime::Shutdown() {
 	}
 	impl->context = nullptr;
 	impl->document = nullptr;
+	impl->ReleaseModelScenes();
 	impl->canonicalElements.clear();
 	impl->boundsElements.clear();
 	impl->inputBranches={}; impl->modalBranches={}; impl->interactionAncestors.clear(); impl->elementIndex.clear(); impl->layoutWidgets.clear();
 	impl->hud = nullptr;
 	impl->paintDirty=true;
 	impl->changedProjections.clear();
-	impl->canonical.reset(); impl->documentFontCss.clear(); impl->inlineAuthored=false; impl->inlineOverridden.clear();
+	impl->canonical.reset(); impl->snapshotDocumentIdentity.clear(); impl->documentFontCss.clear(); impl->inlineAuthored=false; impl->inlineOverridden.clear();
 	impl->appliedInputs.clear(); impl->deferredInputs.clear(); impl->inputKeys.clear(); impl->indexedKeys = nullptr; impl->motion.Reset(DocumentModel{});
 	impl->state = {}; impl->stateSources.clear(); impl->appliedStateRevision = 0; impl->stateError.clear();
 	impl->interaction.Reset({}); impl->controls.clear(); impl->pointerPresent = impl->pointerNavigation = false;
@@ -2967,7 +2978,7 @@ void Runtime::CloseDocument() {
 	if (impl->backend) impl->backend->renderer.InvalidateFrame();
 	impl->paintDirty=true;
 	impl->changedProjections.clear();
-	impl->canonical.reset(); impl->documentFontCss.clear(); impl->inlineAuthored=false; impl->inlineOverridden.clear();
+	impl->canonical.reset(); impl->snapshotDocumentIdentity.clear(); impl->documentFontCss.clear(); impl->inlineAuthored=false; impl->inlineOverridden.clear();
 	impl->appliedInputs.clear(); impl->deferredInputs.clear(); impl->inputKeys.clear(); impl->indexedKeys = nullptr; impl->motion.Reset(DocumentModel{});
 	impl->state = {}; impl->stateSources.clear(); impl->appliedStateRevision = 0; impl->stateError.clear();
 	impl->interaction.Reset({}); impl->controls.clear(); impl->pointerPresent = impl->pointerNavigation = false;
@@ -2976,6 +2987,7 @@ void Runtime::CloseDocument() {
 	ContextClock clock(*impl->services,impl->time,impl->strictPreparation?&impl->preparationFailed:nullptr);
 	impl->document->Close();
 	impl->document = nullptr;
+	impl->ReleaseModelScenes();
 	impl->canonicalElements.clear();
 	impl->context->Update();
 }
@@ -3007,6 +3019,11 @@ bool Runtime::LoadDocument(const Document& document, const std::string& sourcePa
 }
 bool Runtime::LoadCanonical(std::unique_ptr<Document> candidate, const std::string& sourcePath, std::vector<Diagnostic>& diagnostics) {
 	if (!Mutate() || !Initialize()) return false;
+	Json::Value identity(Json::objectValue);
+	identity["version"] = 1; identity["id"] = candidate->Model().id;
+	identity["path"] = sourcePath; identity["source"] = candidate->Source();
+	Json::StreamWriterBuilder identityWriter; identityWriter["indentation"] = ""; identityWriter["precision"] = 17;
+	std::string snapshotIdentity = Json::writeString(identityWriter,identity);
 	{
 		ContextClock clock(*impl->services,impl->time,impl->strictPreparation?&impl->preparationFailed:nullptr);
 		// The document is built from the model, each node's element with its
@@ -3031,6 +3048,7 @@ bool Runtime::LoadCanonical(std::unique_ptr<Document> candidate, const std::stri
 		impl->stateSources.push_back({id,declaration.cvar,declaration.initial.index()});
 	impl->canonical = std::move(candidate);
 	impl->sourcePath = sourcePath;
+	impl->snapshotDocumentIdentity = std::move(snapshotIdentity);
 	// The build mapped every node to its element, so the load resolves each
 	// node without a search.
 	std::vector<const Node*> nodes{&impl->canonical->Model().root};
@@ -3049,6 +3067,7 @@ bool Runtime::LoadCanonical(std::unique_ptr<Document> candidate, const std::stri
 			static_cast<VectorElement*>(element)->Configure(*node,impl->host,impl->Stats());
 			static_cast<VectorElement*>(element)->SetImageSamplingInterface(&impl->backend->renderer);
 			static_cast<VectorElement*>(element)->SetLinearMaskInterface(&impl->backend->renderer);
+			if (node->model) impl->models.push_back({&*node->model,static_cast<VectorElement*>(element),0});
 		}
 		for (const auto& child : node->children) nodes.push_back(&child);
 	}
@@ -3170,9 +3189,6 @@ bool Runtime::SaveSnapshot(std::string& snapshot, std::string& error, double sec
 		const auto input = interaction.Capture();
 		Json::Value root(Json::objectValue);
 		root["format"] = "openq4-ui-instance"; root["version"] = authoredModals ? 4 : widgets.widgets.empty() ? 2 : 3;
-		auto& identity = root["document"];
-		identity["version"] = 1; identity["id"] = impl->canonical->Model().id;
-		identity["path"] = impl->sourcePath; identity["source"] = impl->canonical->Source();
 		root["application"] = Json::Value(Json::objectValue);
 		for (const auto& [id,value] : snapshotState.Variables()) if (snapshotState.Declarations().at(id).cvar.empty())
 			std::visit([&](const auto& primitive) { root["application"][id] = primitive; },value);
@@ -3234,8 +3250,18 @@ bool Runtime::SaveSnapshot(std::string& snapshot, std::string& error, double sec
 			}
 		}
 		Json::StreamWriterBuilder writer; writer["indentation"] = ""; writer["precision"] = 17;
-		std::string candidate = Json::writeString(writer,root);
-		if (candidate.size() > MaxSnapshotBytes) { error = "Instance snapshot exceeds the 128 MiB limit"; return false; }
+		const std::string dynamic = Json::writeString(writer,root);
+		const auto& identity = impl->snapshotDocumentIdentity;
+		constexpr std::size_t prefixBytes = sizeof("{\"document\":")-1;
+		if (identity.size() > MaxSnapshotBytes-prefixBytes || dynamic.size() > MaxSnapshotBytes-prefixBytes-identity.size()) {
+			error = "Instance snapshot exceeds the 128 MiB limit"; return false;
+		}
+		// Compose two independently encoded JSON objects, preserving every
+		// existing field and the exact source identity. Only member order changes.
+		std::string candidate;
+		candidate.reserve(prefixBytes+identity.size()+dynamic.size());
+		candidate = "{\"document\":"; candidate += identity; candidate += ',';
+		candidate.append(dynamic.data()+1,dynamic.size()-1);
 		snapshot.swap(candidate); return true;
 	} catch (const std::exception& problem) { error = std::string("Cannot save instance snapshot: ")+problem.what(); return false; }
 }
@@ -3634,6 +3660,32 @@ bool Runtime::Frame(const Viewport& viewport, double seconds) {
 	const auto start = statistics.Now();
 	if(!Layout(viewport,seconds))return false;
 	ContextClock clock(*impl->services,impl->time,impl->strictPreparation?&impl->preparationFailed:nullptr);
+	bool modelPixelsChanged=false;
+	for (auto& model:impl->models) {
+		if (!model.element->IsVisible(true)) continue;
+		const auto size=model.element->GetBox().GetSize(Rml::BoxArea::Border);
+		if (size.x<=0 || size.y<=0) continue;
+		Rml::Rectanglef projected;
+		if (!Rml::ElementUtilities::GetBoundingBox(projected,model.element,Rml::BoxArea::Border)) continue;
+		const double scale=std::max({1.0,double(projected.Width()/size.x),double(projected.Height()/size.y)});
+		const double width=std::ceil(size.x*scale),height=std::ceil(size.y*scale);
+		if (!std::isfinite(width) || !std::isfinite(height) || width>8192 || height>8192 || width*height>16777216) {
+			impl->host.Log(true,"Projected model scene exceeds its render-target budget"); return false;
+		}
+		ModelScene scene; std::string image,error;
+		if (!ResolveModelScene(*model.spec,impl->state.Variables(),scene,error)) { impl->host.Log(true,error); return false; }
+		if (!model.lease) model.lease=NewModelSceneLease();
+		if (!model.lease || !impl->host.RenderModelScene(model.lease,scene,int(width),int(height),
+			impl->motion.ReducedMotion()?0:impl->time,image,error) || !ValidImageSource(image)) {
+			impl->host.Log(true,error.empty()?"Model scene preparation failed":error); return false;
+		}
+		if (!model.element->SetImageSource(image)) { impl->host.Log(true,"Model scene has no retained image projection"); return false; }
+		modelPixelsChanged=true;
+	}
+	if (modelPixelsChanged) {
+		impl->paintDirty=true;
+		impl->backend->renderer.ExternalPixelsChanged();
+	}
 	const auto updated = statistics.Now();
 	impl->backend->renderer.BeginFrame(viewport.width,viewport.height);
 	const bool replayCandidate=impl->host.CanReplayFrames() && impl->canonical && !impl->paintDirty &&

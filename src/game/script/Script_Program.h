@@ -543,6 +543,13 @@ single idProgram.
 
 class idProgram {
 private:
+	friend class idCompiler;
+	// Only compiled code and operand identities contribute to this checksum.
+	mutable bool saveChecksumValid;
+	mutable int saveChecksum;
+	int GetSaveChecksum( void ) const;
+	statement_t &GetMutableStatement( int index );
+
 	idStrList									fileList;
 	idStr 										filename;
 	int											filenum;
@@ -618,7 +625,7 @@ public:
 	void										SetEntity( const char *name, idEntity *ent );
 
 	statement_t									*AllocStatement( void );
-	statement_t									&GetStatement( int index );
+	const statement_t									&GetStatement( int index ) const;
 	int											NumStatements( void ) { return statements.Num(); }
 
 	int 										GetReturnedInteger( void );
@@ -659,7 +666,13 @@ public:
 idProgram::GetStatement
 ================
 */
-ID_INLINE statement_t &idProgram::GetStatement( int index ) {
+ID_INLINE const statement_t &idProgram::GetStatement( int index ) const {
+	return statements[ index ];
+}
+
+// Compiler edits invalidate the save cache; interpreter reads stay const.
+ID_INLINE statement_t &idProgram::GetMutableStatement( int index ) {
+	saveChecksumValid = false;
 	return statements[ index ];
 }
 

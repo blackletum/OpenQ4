@@ -6,7 +6,7 @@ This guide covers openQ4's user-facing shadow-map settings, including projected-
 
 ## Quick Start
 
-The `quality` and `ultra` [performance presets](display-settings.md) turn shadow maps on for you. On any other preset, this is the recommended starting point:
+The `enhanced`, `quality` and `ultra` [performance presets](display-settings.md) turn shadow maps on for you. On any other preset, this is the recommended starting point:
 
 ```cfg
 seta r_shadows 1
@@ -143,14 +143,14 @@ vid_restart
 | Setting | Default | Range | What it does |
 |---|---:|---:|---|
 | `r_shadows` | `1` | `0..1` | Master shadow toggle. |
-| `r_useShadowMap` | `0` | `0..1` | Enables the shadow-map pipeline for supported lights. The `quality` and `ultra` performance presets set it to `1`. |
+| `r_useShadowMap` | `0` | `0..1` | Enables the shadow-map pipeline for supported lights. The `enhanced`, `quality` and `ultra` performance presets set it to `1`. |
 | `r_shadowMapCSM` | `0` | `0..1` | Enables cascaded shadow maps for projected lights. |
 | `r_shadowMapProjectedCSM` | `1` | `0..1` | Allows ordinary projected lights to use CSM when `r_shadowMapCSM` is enabled; parallel/global lights keep their dedicated large-coverage policy. |
 | `r_shadowMapConservativeCasters` | `1` | `0..1` | Keeps shadow-map caster submission separate from visible receiver scissors, so off-screen blockers can still shadow visible receivers. |
 | `r_shadowMapSkipStencilShadows` | `1` | `0..1` | Skips stencil shadow volume generation and linking for lights that will render shadow maps, removing the duplicate CPU shadow work. A light that fails a shadow-map pass automatically restores its stencil volumes on the next frame. |
 | `r_shadowMapCasterCulling` | `2` | `0..2` | Caster face culling: `0` always renders two-sided, `1` forces the material-oriented light-facing near shell, and `2` automatically uses the near shell for sealed hulls outside the light while rendering open, uncertain, or light-enclosing geometry two-sided. Automatic mode prevents front-only/open props and enclosing shells from disappearing without storing a detached far shell. Authored `twoSided`/`backSided` orientation is honored whenever one-sided culling is active; the deliberately two-sided modes override it. |
 | `r_shadowMapSize` | `1024` | `128..4096` | Base shadow-map resolution. Higher values cost more VRAM and GPU time. |
-| `r_shadowMapAtlasSize` | `4096` | `2048..8192` | Edge size of the shared projected-light shadow atlas. Cached projected lights occupy `r_shadowMapSize`-sized cells inside it (CSM lights use a 2x2 cell block), so all cached lights stay resident in one texture. |
+| `r_shadowMapAtlasSize` | `4096` | `2048..16384` | Edge size of the shared projected-light shadow atlas. Cached projected lights occupy `r_shadowMapSize`-sized cells inside it (CSM lights use a 2x2 cell block), so all cached lights stay resident in one texture. |
 | `r_shadowMapFilterRadius` | `2.0` | `0..8` | Projected-light filter radius in texels: the fixed PCF width in modes `0` and `1`, and the minimum penumbra in PCSS-lite. Increase resolution for more detail; increasing this value deliberately softens and widens the edge. |
 | `r_shadowMapFilterTaps` | `9` | `1..13` | Projected-light PCF tap budget. Values up to `1`, `5`, `9`, and `13` select progressively denser sample sets without changing the requested radius. |
 | `r_shadowMapFilterMode` | `2` | `0..2` | Projected-light filter mode: fixed PCF, stable rotated Poisson, or PCSS-lite with raw depth sampling. Profiles still holding the old `0.75`/`0` pair move to `2.0`/`2` once on upgrade; any other choice is kept. |

@@ -470,6 +470,9 @@ enum
 	RF_PORTAL_SKY				= BIT( 6 ),
 	// this the primary view - when this is rendered, we then know we can capture the screen buffer
 	RF_PRIMARY_VIEW				= BIT( 7 ),
+	// An independently composited UI model preserves the surrounding frame's
+	// clocks, primary-world identity and render-demo stream.
+	RF_INDEPENDENT_VIEW          = BIT( 8 ),
 // RAVEN END
 };
 

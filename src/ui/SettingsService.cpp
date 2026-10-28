@@ -24,6 +24,7 @@ void UI_SettingsRenderFrame::Presented() {}
 #else
 #include "application/SystemSettingsHost.h"
 #include "SettingsDisplayService.h"
+#include "RenderingSettings.h"
 #include <charconv>
 #include <chrono>
 #include <limits>
@@ -54,6 +55,8 @@ struct DisplayCatalogCache {
     SystemDisplayDescriptor pickedDescriptor;
 };
 struct Service {
+	RenderingSettings rendering;
+    bool rendererRestartQueued = false;
     SystemSettingsHost host;
     SettingsTransaction transaction{host};
     EngineSettingsDisplayHost device{host};
@@ -98,7 +101,7 @@ bool FrameOwner(const Service& service) {
         service.display.Owner() == renderFrame.owner && service.display.Request() == renderFrame.request;
 }
 bool NoArguments(const std::string& operation) {
-    return operation == "settings.system.begin" || operation == "settings.system.defaults" || operation == "settings.system.autodetect" ||
+    return operation == "settings.system.restartRenderer" || operation == "settings.system.begin" || operation == "settings.system.defaults" || operation == "settings.system.autodetect" ||
         operation == "settings.system.cancel" || operation == "settings.system.apply" ||
         operation == "settings.system.applyExit" ||
         operation == "settings.system.confirm" || operation == "settings.system.revert";
@@ -536,6 +539,11 @@ bool UI_SettingsOperation(const Action& action, std::string& error) {
         action.arguments.size()==1 && action.arguments.contains("request") && action.arguments.at("request").type==2) return true;
     if (action.operation=="settings.system.preset" && action.arguments.size()==1 &&
         action.arguments.contains("name") && action.arguments.at("name").type==2) return true;
+    if (action.operation=="settings.system.backend" && action.arguments.size()==1 &&
+        action.arguments.contains("api") && action.arguments.at("api").type==2) return true;
+    if (action.operation=="settings.system.renderDevice" && action.arguments.size()==2 &&
+        action.arguments.contains("index") && action.arguments.at("index").type==0 &&
+        action.arguments.contains("catalog") && action.arguments.at("catalog").type==2) return true;
     // A display list pick: its slot index and the list token it saw.
     if (DisplayOperation(action.operation) && action.arguments.size()==2 &&
         action.arguments.contains("index") && action.arguments.at("index").type==0 &&
@@ -574,6 +582,9 @@ bool UI_SettingsDispatch(std::uint64_t owner, const ActionInvocation& action, st
     if (action.operation != "settings.system.confirm") CancelExitIdentity(service.exitIntent,owner);
     auto& transaction = service.transaction;
     SettingsResult result;
+    if (service.rendererRestartQueued) {
+        error="Renderer restart is already queued"; service.results[owner]={SettingsCode::Busy,error}; return false;
+    }
     if (service.device.StartupActive() || (!service.display.Active() && service.device.RecoveryActive())) {
         CancelExit(service,owner);
         error="Settings startup recovery is unresolved"; service.results[owner]={SettingsCode::Busy,error}; return false;
@@ -600,7 +611,7 @@ bool UI_SettingsDispatch(std::uint64_t owner, const ActionInvocation& action, st
             result = transaction.Begin(owner);
             if (result.code == SettingsCode::Ok) {
                 service.abandon = false;
-                if (opening) service.catalog.picked = false;
+                if (opening) { service.catalog.picked = false; service.rendering.Reset(); }
                 CancelExitIdentity(service.exitReceipt,service.exitReceipt.owner);
             }
         }
@@ -621,6 +632,8 @@ bool UI_SettingsDispatch(std::uint64_t owner, const ActionInvocation& action, st
         result={SettingsCode::Busy,"The display action belongs to a completed or stale request"};
     else if (action.operation=="settings.system.preset" || action.operation=="settings.system.autodetect") {
         if(service.closing || service.abandon) result={SettingsCode::Busy,"Settings owner is closing"};
+        else if(action.operation=="settings.system.autodetect" && RenderingSettings::Pending(transaction.Draft()))
+            result={SettingsCode::Busy,"Restart with the selected backend and GPU before detecting quality"};
         else result=transaction.EditGenerated(owner,[&](StateValues& patch,std::string& diagnostic){
             const bool expanded=action.operation=="settings.system.preset" ?
                 service.host.BuildPreset(std::get<std::string>(action.arguments.at("name")),patch,diagnostic) :
@@ -631,6 +644,28 @@ bool UI_SettingsDispatch(std::uint64_t owner, const ActionInvocation& action, st
             }
             return true;
         });
+    }
+    else if (action.operation=="settings.system.backend" || action.operation=="settings.system.renderDevice") {
+        if(service.closing || service.abandon) result={SettingsCode::Busy,"Settings owner is closing"};
+        else result=transaction.EditGenerated(owner,[&](StateValues& patch,std::string& diagnostic) {
+            const bool expanded=action.operation=="settings.system.backend" ?
+                service.rendering.Backend(std::get<std::string>(action.arguments.at("api")),patch,diagnostic) :
+                service.rendering.Select(std::get<double>(action.arguments.at("index")),
+                    std::get<std::string>(action.arguments.at("catalog")),patch,diagnostic);
+            if(!expanded)return false;
+            if(!service.owners.contains(owner) || service.closing || service.abandon){
+                diagnostic="Settings owner changed during GPU observation";return false;
+            }
+            return true;
+        });
+    }
+    else if (action.operation=="settings.system.restartRenderer") {
+        std::string diagnostic;
+        if(service.closing || service.abandon || transaction.Owner()!=owner || transaction.Phase()!=SettingsPhase::Editing || transaction.Dirty())
+            result={SettingsCode::Busy,"Apply or discard changes before restarting"};
+        else if(!RenderingSettings::Pending(transaction.Draft())) result={SettingsCode::Invalid,"No renderer restart is pending"};
+        else if(!RenderingSettings::Restart(diagnostic)) result={SettingsCode::ApplyFailed,diagnostic};
+        else service.rendererRestartQueued=true;
     }
     else if (DisplayOperation(action.operation)) {
         const auto list = action.operation=="settings.system.display" ? SystemDisplayList::Device :
@@ -725,6 +760,7 @@ const std::map<std::string,std::size_t>& UI_SettingsStateSchema() {
             result.emplace("settings.draft."+key,type);
             result.emplace("settings.baseline."+key,type);
         }
+        for (const auto& [key,type] : RenderingSettings::Schema()) result.emplace(key,type);
         return result;
     }();
     return schema;
@@ -781,6 +817,8 @@ bool UI_SettingsRead(std::uint64_t owner, StateValues& values) {
     if (own) {
         LightGridStatus(service,candidate);
         RendererStatus(service,candidate);
+        service.rendering.Read(transaction.Draft(),!dirty && phase==SettingsPhase::Editing &&
+            !service.display.Active() && !service.closing && !service.abandon && !service.rendererRestartQueued,candidate);
         DisplayCatalogStatus(service,owner,candidate);
         for (const auto& [key,value] : transaction.Draft()) candidate.emplace("settings.draft."+key,value);
         for (const auto& [key,value] : transaction.Baseline()) candidate.emplace("settings.baseline."+key,value);

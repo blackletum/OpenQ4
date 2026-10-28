@@ -72,7 +72,7 @@ layout(set = 7, binding = 1, std140) uniform ShadowBlock {
     vec4 texelSize;    // x,y: 1 / atlas dimensions, z: r_shadowMapTexelBiasScale
     vec4 filterParams; // x: radius, y: taps, z: mode, w: hardware compare
     vec4 pcssParams;   // x: light radius, y: max radius, z: effective radius, w: receiver-plane bias
-    vec4 debugParams;  // x: r_shadowMapDebugMode, y: receiver fallback reason
+    vec4 debugParams;  // x: debug mode, y: fallback reason, zw: PCSS ownership UV offset
     // Translucent moments live in a separate atlas whose blocks mirror the
     // depth-atlas blocks at a uniform scale: momentUV = depthUV * x + yz.
     vec4 momentAtlas;  // x: scale (<= 0: no moments for this light), yz: bias, w: 1 / moment atlas size
@@ -271,18 +271,25 @@ float ShadowFootprintBias(int cascadeIndex) {
         * slopeBias;
 }
 
+// Fresh PCSS GLOBAL maps may store only local casters. The matching LOCAL
+// block contains global casters. All reads are NEAREST, so minimum depth here
+// is the exact union used by both blocker search and the later PCF comparisons.
+float RawShadowDepth(vec2 uv) {
+    float depth = texture(shadowRawMap, uv).r;
+    if (any(notEqual(shadow.debugParams.zw, vec2(0.0)))) {
+        depth = min(depth, texture(shadowRawMap, uv + shadow.debugParams.zw).r);
+    }
+    return depth;
+}
+
 float SampleShadowCompare(vec2 uv, float depth, int cascadeIndex,
         float tapBias) {
     float compareDepth = depth - ShadowReceiverBias(cascadeIndex) - tapBias;
     if (shadow.filterParams.w > 0.5) {
         return texture(shadowCompareMap, vec3(uv, compareDepth));
     }
-    float storedDepth = texture(shadowRawMap, uv).r;
+    float storedDepth = RawShadowDepth(uv);
     return compareDepth <= storedDepth ? 1.0 : 0.0;
-}
-
-float RawShadowDepth(vec2 uv) {
-    return texture(shadowRawMap, uv).r;
 }
 
 float ProjectedPCSSRadius(vec2 uv, float depth, int cascadeIndex,

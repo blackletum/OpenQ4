@@ -1,5 +1,15 @@
 # UI product requirement register
 
+28 October 2026: the [model-scene foundation](document-format.md#model-scenes)
+adds bounded implementation evidence to `INV-013`: typed body/head/weapon
+scenes, separate skins, native colour/depth targets and an internal coverage
+resolve. Seven selected native UI suites and 36 actual Vulkan compiler cases
+pass; GL/Vulkan gameplay pose captures pass, including Vulkan language/video
+recreation. Failed fixture views, late precache warnings and unsupported/
+unqualified native cases remain explicit. Player Setup and both production
+previews remain outstanding; no requirement status, resource acceptance or
+final gate changes.
+
 25 October 2026: [tall views](retained-screens.md#tall-views-grow-the-lists-25-october-2026)
 add bounded UI-02 evidence to `LAY-021`. Load and Save Game, Demos and Join Game
 give a tall view's extra height to their list. The increment is audited against `137bd8d4bf2c08fabf5dc1e2ddd7ab44e36160fb`. No requirement status,
@@ -191,9 +201,9 @@ remain the detailed acceptance records: consolidation does not change any
 requirement ID, dependency, status, evidence or migration acceptance. The
 [visual specification](../ui-visual-design.md) remains normative.
 
-9 September 2026, revised through 21 October 2026. The
-[machine-readable register](product-requirements.json) contains **349
-requirements** for the complete UI product: 310 that define acceptance and 39
+9 September 2026, revised through 28 October 2026. The
+[machine-readable register](product-requirements.json) contains **350
+requirements** for the complete UI product: 311 that define acceptance and 39
 superseded rows kept for history. It expands
 the [archived completion scope](../archive/2026-10-18/plans/ui-product-completion.md), the
 [archived original delivery scope](../archive/2026-10-18/plans/idtech5-ui.md) and the normative
@@ -820,6 +830,20 @@ The [CONTROLS page](retained-screens.md#the-controls-page-25-october-2026) adds
 `FLOW-003` evidence for the bindings: every stock binding, its key capture
 and clear. The settings screen itself, Load Defaults, Player Setup and the
 rest of `FLOW-003` remain.
+
+The [SETTINGS page](retained-screens.md#the-settings-page-26-october-2026)
+adds `FLOW-003` evidence for the settings screen's level: its buttons, the
+return onto each, Load Defaults' question and the stock hand-off. Player
+Setup and the rest of `FLOW-003` remain.
+
+On 28 October the SETTINGS hub was recovered into the main checkout, including
+the correction that keeps its Strogg-pause route out of the Load Game slot.
+The [acceptance-tool review](acceptance-transition.md) also adds tooling
+evidence to `QUAL-006`: committed records, actual image evidence and earlier
+binary/capture bindings are enforced. The checkpoint preserves all requirement
+statuses, every migration record and every gate. Earlier Vulkan front-end runs
+with unexpected early exits remain failed evidence; both cases subsequently
+pass in a coordinated runtime window without establishing the earlier cause.
 
 There are **121 partial, 229 pending and 0 verified requirements**, counting the
 39 superseded rows at their recorded states. `BEH-002`

@@ -1938,6 +1938,9 @@ int main(int argc, char** argv) {
 		host.cvars["ui_retainedScale"] = 1.5;
 		Check(second.LoadDocument(bindingSource+"\n","snapshot-bindings.q4ui",diagnostics),"load source revision with unchanged IDs");
 		Check(!second.RestoreSnapshot(snapshot,error,30),"exact source changes require an explicit snapshot migration");
+		std::string replacementSnapshot;
+		Check(second.SaveSnapshot(replacementSnapshot,error,30) && second.RestoreSnapshot(replacementSnapshot,error,31),
+			"document replacement refreshes cached snapshot source identity");
 		Check(second.LoadMarkup("<rml><body/></rml>","raw.rml"),"load raw markup snapshot exclusion fixture");
 		std::string unchanged="unchanged";
 		Check(!second.SaveSnapshot(unchanged,error,30) && unchanged=="unchanged" && !second.RestoreSnapshot(snapshot,error,30),"raw markup cannot claim canonical snapshot support");

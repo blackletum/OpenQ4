@@ -78,12 +78,15 @@ typedef struct vkDeviceContext_s {
 	VkPhysicalDevice	physicalDevice;
 	// enumeration index of the admitted device (r_vkDevice uses the same order)
 	uint32_t			physicalDeviceIndex;
+	char				physicalDeviceId[33];
 	VkPhysicalDeviceProperties deviceProperties;
 	// Fixed for the device lifetime. Zero retains the driver's native pattern.
 	// All multisample pipelines and depth-image transitions use the same pattern.
 	VkSampleCountFlags sampleLocationCounts;
 	bool				depthClampSupported;
 	bool				depthBoundsSupported;
+	// Opt-in diagnostic feature, fixed for the device lifetime.
+	bool				pipelineStatisticsEnabled;
 	// line widths and point sizes other than 1, for the debug tools
 	// (glLineWidth / glPointSize); both optional, 1 when missing
 	bool				wideLinesSupported;
@@ -220,14 +223,14 @@ bool	VK_Device_InitLoader( void );
 // admission (loader, instance, surface, no candidate) is not specific to a GPU.
 typedef struct vkDeviceAttempt_s {
 	bool				admitted;
-	bool				automatic;		// r_vkDevice -1
+	bool				automatic;		// no diagnostic index or explicit UUID preference
 	uint32_t			index;
 	char				deviceName[ VK_MAX_PHYSICAL_DEVICE_NAME_SIZE ];
 } vkDeviceAttempt_t;
 
 // full bring-up through the window services: instance (+validation when
 // r_vkValidation), surface, device selection honoring r_vkDevice, queues,
-// swapchain, per-frame sync. Automatic selection starts at firstCandidate.
+// swapchain, per-frame sync. firstCandidate is a high-performance preference rank.
 // Returns false with everything torn down on any failure so the loader's
 // fail-closed ladder stays reachable; attempt says how far it got.
 bool	VK_Device_Init( const renderWindowServices_s *windowServices, uint32_t firstCandidate,

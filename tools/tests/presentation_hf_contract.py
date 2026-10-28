@@ -141,7 +141,7 @@ def check_engine(usercmd_h: str, usercmd_cpp: str, game_h: str, common_cpp: str)
     require(console, "if ( Usercmd_ConsumeLatencyFlash() && com_latencyFlash.GetBool() ) {", "latency flash consumed every frame, drawn when enabled")
     require(console, '"latencyFlashTest", Con_LatencyFlashTest_f, CMD_FL_SYSTEM | CMD_FL_CHEAT', "latency flash test is cheat-gated")
 
-    require(game_h, "const int GAME_API_VERSION\t\t= 55;", "game ABI v55")
+    require(game_h, "const int GAME_API_VERSION\t\t= 57;", "game ABI v57")
     require(game_h, "idUsercmdGen *\t\t\t\tusercmdGen;", "gameImport_t carries the generator")
     require(common_cpp, "gameImport.usercmdGen\t\t\t\t= ::usercmdGen;", "engine hands the generator to the game")
 
@@ -216,10 +216,10 @@ def check_frame_rate_policy(common: str | None = None) -> None:
     caps = {}
     for name, fps in re.findall(r'\{ "(\w+)", \d+, "[\w-]+",\s*\d+, \d+, \d+, (\d+),', presets):
         caps[name] = int(fps)
-    expected = {"minimum": 30, "lowpower": 30, "performance": 60, "balanced": 120, "quality": 144, "ultra": 240}
+    expected = {"minimum": 30, "lowpower": 30, "performance": 60, "balanced": 120, "enhanced": 120, "quality": 144, "ultra": 240}
     if caps != expected:
         raise AssertionError(f"{context}: preset caps {caps} differ from the declared {expected}")
-    require(presets, 'else if(signals.steamDeck){name="performance";', f"{context}: Steam Deck starts on performance")
+    require(presets, 'else if(signals.steamDeck){tier=2;', f"{context}: Steam Deck starts on performance")
 
 
 def check_present_timing(device: str | None = None) -> None:

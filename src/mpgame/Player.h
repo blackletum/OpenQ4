@@ -6,6 +6,8 @@
 #ifndef __GAME_PLAYER_H__
 #define __GAME_PLAYER_H__
 
+#include "PlayerAirReadout.h"
+
 /*
 ===============================================================================
 
@@ -327,6 +329,7 @@ public:
 		EVENT_EMOTE,
 		EVENT_JUMP,
 		EVENT_SPECTATOR_FOLLOW,
+		EVENT_AIR_READOUT,
  		EVENT_MAXEVENTS
  	};
 
@@ -948,6 +951,9 @@ public:
 
 	// openQ4: the air reservoir, out of pm_airTics; a bot reads it before it dives.
 	int						GetAirTics( void ) const { return airTics; }
+	int						GetAirReadoutPercent( void ) const;
+	int						GetAirReadoutServerTime( void ) const { return airReadout.serverTime; }
+	void					WriteAirReadoutMessage( idBitMsg &msg, bool reliable ) const;
 
 protected:
 	void					SetupHead( const char* modelKeyName = "", idVec3 headOffset = idVec3(0, 0, 0) );
@@ -1024,6 +1030,8 @@ private:
 
 	bool					airless;
 	int						airTics;				// set to pm_airTics at start, drops in vacuum
+	mpAirReadoutState		airReadout;
+	mpAirPublishClock		airPublishClock;
 	int						lastAirDamage;
 
 // openQ4 BEGIN

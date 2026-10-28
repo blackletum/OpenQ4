@@ -12,6 +12,7 @@
 #include "retained/Runtime.h"
 #include "retained/Input.h"
 #include "retained/TextEditCommand.h"
+#include "retained/PlayerSetupRequest.h"
 #include "../sys/KeyEventMetadata.h"
 #include "application/SettingsTransaction.h"
 #include "../framework/ParallelJobSystem.h"
@@ -224,7 +225,7 @@ bool SessionMenuCommand(const std::string& command) {
         "arenaBack","arenaTier0","arenaTier1","arenaTier2","arenaTier3","arenaTier4","arenaMatch0","arenaMatch1",
         "arenaMatch2","arenaMatch3","arenaTierPrevious","arenaTierNext","arenaEasier","arenaHarder","arenaStart",
         "arenaReset","arenaResetConfirm","arenaResetCancel","arenaRetry","arenaDismiss",
-        "multiplayerJoin","multiplayerCreate","multiplayerSetup","multiplayerBack",
+        "multiplayerJoin","multiplayerCreate","multiplayerSetup","multiplayerBack","playerSetupClose",
         "createBack","createMap","createStart","createName","createMapCycle","createPassword","createRconPassword",
         "createMapsNewer","createMapsOlder","createBanList","createBanPick","createBanRemove",
         "joinBack","joinPick","joinServer","joinNewer","joinOlder","joinRefresh","joinNewList","joinSourceInternet",
@@ -232,6 +233,7 @@ bool SessionMenuCommand(const std::string& command) {
         "joinSortGameType","joinSortMap","joinSortDedicated","joinSortRepeater","joinFavorite","joinModPrevious","joinModNext",
         "joinFilterFull","joinFilterEmpty","joinFilterPassword","joinGameTypePrevious","joinGameTypeNext","joinClearFilters",
         "noticeAction0","noticeAction1","noticeAction2","audioBack","gameBack","controlsBind","controlsClear","controlsBack",
+        "settingsBack","settingsControls","settingsGame","settingsDisplay","settingsAudio","settingsDefaults",
         "joinConnect","joinSearch","joinSearchClear","joinSortNext",
         "mpClose","mpMainMenu","mpDisconnect","mpStockPage","mpTeamAction",
         "mpSelectPlayer","mpMute","mpFriend","mpWelcomeAction","mpVoteYes","mpVoteNo","mpCallVote",
@@ -389,6 +391,7 @@ std::optional<int> SessionMenuValue(const std::string& command, const StateValue
 }
 
 bool ValidOperation(const Action& action) {
+	if (action.operation == "player.setup.apply") return ValidPlayerSetupAction(action);
 	if (action.operation.starts_with("settings.system.")) { std::string error; return UI_SettingsOperation(action,error); }
 	if (action.operation == "ui.dismiss" || action.operation == "ui.numberDrafts.focus") return action.arguments.empty();
 	if (action.operation == "ui.state.set") {
@@ -448,6 +451,9 @@ bool ValidOperation(const Action& action) {
 }
 
 bool ValidInvocation(const ActionInvocation& invocation, std::string& error) {
+	if (invocation.operation == "player.setup.apply") {
+		PlayerSetupRequest request; return ResolvePlayerSetupRequest(invocation.arguments,request,error);
+	}
 	if (invocation.operation.starts_with("settings.system.")) return UI_SettingsInvocation(invocation,error);
 	if ((invocation.operation == "ui.dismiss" || invocation.operation == "ui.numberDrafts.focus") && invocation.arguments.empty()) return true;
 	if (invocation.operation == "ui.state.set") {
@@ -717,11 +723,11 @@ struct idUserInterfaceRetained::Impl {
 	// Accepted session.menu verbs, in order, for the session to take after a
 	// dispatch; they never survive a source, save or resource replacement.
 	std::vector<std::string> sessionRequests;
-	// A number field's value sent to the session comes back through the
+	// A number or text field's value sent to the session comes back through the
 	// field's bound state a frame or two later. The runtime accepts a number
 	// only once it reads it back, so its proposal is acknowledged then, and
 	// refused if the value has not come back within a second.
-	struct SessionNumberProposal { std::string control; std::uint64_t token = 0; double value = 0, deadline = 0; };
+	struct SessionNumberProposal { std::string control; std::uint64_t token = 0; StateValue value = 0.0; double deadline = 0; };
 	std::vector<SessionNumberProposal> sessionNumbers;
 	void SettleSessionNumbers() {
 		auto* runtime = RuntimeView();
@@ -730,7 +736,7 @@ struct idUserInterfaceRetained::Impl {
 		for (auto it = sessionNumbers.begin(); it != sessionNumbers.end();) {
 			const auto widget = runtime->GetWidgetState(it->control);
 			const bool current = widget && widget->proposalToken == it->token;
-			const bool readBack = current && std::holds_alternative<double>(widget->accepted) && std::get<double>(widget->accepted) == it->value;
+			const bool readBack = current && widget->accepted == it->value;
 			if (current && !readBack && now < it->deadline) { ++it; continue; }
 			if (current) runtime->AcknowledgeControlProposal(it->control,it->token,readBack);
 			it = sessionNumbers.erase(it);
@@ -868,6 +874,7 @@ struct idUserInterfaceRetained::Impl {
 		const auto& operation = pending.invocation.operation;
 		if (operation == "settings.system.apply" || operation == "settings.system.applyExit" || operation == "settings.system.defaults" ||
             operation == "settings.system.preset" || operation == "settings.system.autodetect" ||
+            operation == "settings.system.backend" || operation == "settings.system.renderDevice" || operation == "settings.system.restartRenderer" ||
             operation == "settings.system.display" || operation == "settings.system.displayMode") return true;
 		if (operation != "settings.system.edit") return false;
 		// A sibling slider or toggle shares the Number's typed setting keys.
@@ -1644,6 +1651,21 @@ bool idUserInterfaceRetained::DispatchApplicationActions(const char* command, bo
 			if (accepted && event != invocation.arguments.end()) impl->RunEvent(std::get<std::string>(event->second));
 			if (cvarSystem->GetCVarBool("ui_retainedTrace")) common->Printf("RETAINED_GUI_STATE path=%s key=%s accepted=%d\n",
 				Name(),key.c_str(),accepted ? 1 : 0);
+			continue;
+		}
+		if (invocation.operation == "player.setup.apply") {
+			std::string payload,error;
+			const bool encoded=EncodePlayerSetupRequest(invocation.arguments,payload,error);
+			const auto widget = pending.proposalToken ? impl->RuntimeView()->GetWidgetState(pending.control) : std::optional<WidgetViewState>{};
+			const bool awaitReadback = pending.proposalToken && widget && widget->role==ControlRole::Number;
+			const bool accepted=encoded && impl->sessionRequests.size()<64 && (!awaitReadback || impl->sessionNumbers.size()<64);
+			if (accepted) impl->sessionRequests.push_back(std::string(PlayerSetupRequestPrefix)+payload);
+			else impl->Error(error.empty() ? "Session menu request queue exceeded 64 requests" : error);
+			if (accepted && awaitReadback) impl->sessionNumbers.push_back({pending.control,pending.proposalToken,
+				invocation.arguments.at("value"),RetainedUI_PresentationTime()+1});
+			else if (pending.proposalToken) impl->RuntimeView()->AcknowledgeControlProposal(pending.control,pending.proposalToken,accepted);
+			if (cvarSystem->GetCVarBool("ui_retainedTrace")) common->Printf("RETAINED_GUI_PLAYER_SETUP field=%s accepted=%d\n",
+				std::get<std::string>(invocation.arguments.at("field")).c_str(),accepted ? 1 : 0);
 			continue;
 		}
 		if (invocation.operation == "session.menuValue") {

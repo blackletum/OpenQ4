@@ -4,6 +4,9 @@
 
 ## Highlights
 
+- **Weapons remain visible after seeking while paused.** Following a living
+  player in a multi-view demo now shows their weapon immediately after a seek,
+  instead of leaving it below the camera until playback resumes.
 - **Your inputs reach the server on time again.** Since 0.13.0 a client on a
   server could settle a frame behind it, so the server received each of your
   inputs late and repeated the previous one. Clients now stay ahead of the
@@ -26,6 +29,11 @@
 - **Interrupted demo recordings can be saved.** `mvdRecover` turns the complete
   part of a recording that stopped unexpectedly into a new, playable demo,
   without changing the original file.
+- **Bound demo recording storage without deleting match evidence.** Server
+  operators can set `mvd_libraryQuotaMB` and inspect `mvdLibrary`. A full library
+  refuses new recordings; a recording that reaches its remaining budget keeps
+  a recoverable partial file. The limit is off by default and never prunes
+  existing recordings. Archive files explicitly to make room.
 - **Follow any player in a demo.** Step back to the previous player, or follow
   one by name or slot, with `demoFollow prev`, `demoFollow <name>` or
   `demoFollow <slot>`. The playback overlay names the player you follow.
@@ -49,6 +57,15 @@
 
 ## Change log
 
+- Bots can recover from an unplanned walking fall as well as an enemy knock.
+  A sloping platform rim could lose support just as the bot braked, leaving it
+  steering toward its walking goal through the void. Deliberate jumps, drops
+  and pad flights keep their existing movement controls.
+- Custom-map AAS compilation now marks water areas consistently, allowing its
+  existing water-jump builder to generate exit links. Rebuild affected navigation
+  files with the updated compiler; this does not add swimming monster behavior.
+- `lagCompStatus` no longer reports a bias-only rewind for bots or the listen
+  host when no remote connection delay was measured.
 - With a positive `net_mpLagCompBiasMS`, experimental lag compensation no
   longer rewinds the world for bots, a listen server's own player or a
   connection the server has not measured yet. The bias only adjusts measured

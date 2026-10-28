@@ -508,7 +508,7 @@ void idInterpreter::Error( const char *fmt, ... ) const {
 	StackTrace();
 
 	if ( ( instructionPointer >= 0 ) && ( instructionPointer < gameLocal.program.NumStatements() ) ) {
-		statement_t &line = gameLocal.program.GetStatement( instructionPointer );
+		const statement_t &line = gameLocal.program.GetStatement( instructionPointer );
 		common->Error( "%s(%d): Thread '%s': %s\n", gameLocal.program.GetFilename( line.file ), line.linenumber, thread->GetThreadName(), text );
 	} else {
 		common->Error( "Thread '%s': %s\n", thread->GetThreadName(), text );
@@ -531,7 +531,7 @@ void idInterpreter::Warning( const char *fmt, ... ) const {
 	va_end( argptr );
 
 	if ( ( instructionPointer >= 0 ) && ( instructionPointer < gameLocal.program.NumStatements() ) ) {
-		statement_t &line = gameLocal.program.GetStatement( instructionPointer );
+		const statement_t &line = gameLocal.program.GetStatement( instructionPointer );
 		common->Warning( "%s(%d): Thread '%s': %s", gameLocal.program.GetFilename( line.file ), line.linenumber, thread->GetThreadName(), text );
 	} else {
 		common->Warning( "Thread '%s' : %s", thread->GetThreadName(), text );
@@ -726,7 +726,7 @@ void idInterpreter::LeaveFunction( idVarDef *returnDef ) {
 	assert( localstackUsed == localstackBase );
 
 	if ( debug ) {
-		statement_t &line = gameLocal.program.GetStatement( instructionPointer );
+		const statement_t &line = gameLocal.program.GetStatement( instructionPointer );
 		gameLocal.Printf( "%d: %s(%d): exit %s", gameLocal.time, gameLocal.program.GetFilename( line.file ), line.linenumber, currentFunction->Name() );
 		if ( callStackDepth > 1 ) {
 			gameLocal.Printf( " return to %s(line %d)\n", callStack[ callStackDepth - 1 ].f->Name(), gameLocal.program.GetStatement( callStack[ callStackDepth - 1 ].s ).linenumber );
@@ -1025,7 +1025,7 @@ bool idInterpreter::Execute( void ) {
 	varEval_t	var_b;
 	varEval_t	var_c;
 	varEval_t	var;
-	statement_t	*st;
+	const statement_t	*st;
 	int 		runaway;
 	idThread	*newThread;
 	float		floatVal;

@@ -258,6 +258,14 @@ if not build_engine and not build_games
 endif
 
 if get_option('build_native_tests')
+  frame_work_profile_test = executable('openq4-frame-work-profile-test',
+    files('tools/tests/native/FrameWorkProfileTest.cpp'),
+    include_directories: root_include_dir, install: false)
+  test('openq4-frame-work-profile', frame_work_profile_test, timeout: 30)
+  bse_particle_order_test = executable('openq4-bse-particle-order-test',
+    files('tools/tests/native/BSEParticleOrderTest.cpp'),
+    include_directories: root_include_dir, install: false)
+  test('openq4-bse-particle-order', bse_particle_order_test, timeout: 30)
   objective_marker_layout_test = executable('openq4-objective-marker-layout-test',
     files('tools/tests/native/ObjectiveMarkerLayoutTest.cpp'),
     include_directories: root_include_dir, install: false)
@@ -289,6 +297,82 @@ if get_option('build_native_tests')
     install: false,
   )
   test('openq4-file-memory', openq4_file_memory_test, timeout: 30)
+
+  openq4_crc32_test = executable(
+    'openq4-crc32-test', files('tools/tests/native/Crc32Test.cpp'),
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-crc32', openq4_crc32_test, timeout: 30)
+
+  openq4_save_dict_under_test = custom_target(
+    'openq4-save-dict-under-test', input: files('src/game/gamesys/SaveGame.cpp', 'src/mpgame/gamesys/SaveGame.cpp'),
+    output: 'SaveDictUnderTest.inc',
+    command: [py, files('tools/tests/generate_save_dict_test.py'), '@INPUT0@', '@INPUT1@', '@OUTPUT@'],
+  )
+  openq4_save_dict_test = executable(
+    'openq4-save-dict-test', [files('tools/tests/native/SaveDictTest.cpp'), openq4_save_dict_under_test],
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-save-dict', openq4_save_dict_test, timeout: 30)
+
+  dict_identity_source = custom_target(
+    'openq4-dict-identity-source', input: files('src/idlib/Dict.cpp'),
+    output: 'DictIdentityUnderTest.inc',
+    command: [py, files('tools/tests/generate_dict_identity_test.py'), '@INPUT@', '@OUTPUT@'],
+  )
+  dict_identity_test = executable(
+    'openq4-dict-identity-test', [files('tools/tests/native/DictIdentityTest.cpp'), dict_identity_source],
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-dict-identity', dict_identity_test, timeout: 30)
+
+  openq4_capture_resample_under_test = custom_target(
+    'openq4-capture-resample-under-test', input: files('src/renderer/RenderSystem.cpp'),
+    output: 'CaptureResampleUnderTest.inc',
+    command: [py, files('tools/tests/generate_capture_resample_test.py'), '@INPUT@', '@OUTPUT@'],
+  )
+  openq4_capture_resample_test = executable(
+    'openq4-capture-resample-test',
+    [files('tools/tests/native/CaptureResampleTest.cpp'), openq4_capture_resample_under_test],
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-capture-resample', openq4_capture_resample_test, timeout: 30)
+  openq4_checkpoint_preview_under_test = custom_target(
+    'openq4-checkpoint-preview-source',
+    input: files('src/framework/Session.cpp'), output: 'CheckpointPreviewUnderTest.inc',
+    command: [py, files('tools/tests/generate_checkpoint_preview_test.py'), '@INPUT@', '@OUTPUT@'],
+  )
+  openq4_checkpoint_preview_test = executable(
+    'openq4-checkpoint-preview-test',
+    [files('tools/tests/native/CheckpointPreviewStorageTest.cpp'), openq4_checkpoint_preview_under_test],
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-checkpoint-preview', openq4_checkpoint_preview_test, timeout: 30)
+
+  checkpoint_storage_source = custom_target(
+    'openq4-checkpoint-storage-source',
+    input: files('src/framework/Session.cpp'), output: 'CheckpointStorageUnderTest.inc',
+    command: [py, files('tools/tests/generate_checkpoint_storage_test.py'), '@INPUT@', '@OUTPUT@'],
+  )
+  checkpoint_storage_test = executable(
+    'openq4-checkpoint-storage-test',
+    [files('tools/tests/native/CheckpointStorageTest.cpp'), checkpoint_storage_source],
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-checkpoint-storage', checkpoint_storage_test, timeout: 30)
+
+  checkpoint_commit_source = custom_target(
+    'openq4-checkpoint-commit-source', input: files('src/framework/Session.cpp'),
+    output: ['CheckpointCommitUnderTest.inc', 'CheckpointRecoveryUnderTest.inc', 'CheckpointPendingUnderTest.inc'],
+    command: [py, files('tools/tests/generate_checkpoint_commit_test.py'), '@INPUT@', '@OUTPUT0@', '@OUTPUT1@', '@OUTPUT2@'],
+  )
+  checkpoint_commit_test = executable(
+    'openq4-checkpoint-commit-test', [files('tools/tests/native/CheckpointCommitTest.cpp'), checkpoint_commit_source],
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-checkpoint-commit', checkpoint_commit_test,
+    args: [meson.project_source_root() / '.tmp' / 'checkpoint-commit-test'], timeout: 30)
+
 
   openq4_idlist_test = executable(
     'openq4-idlist-test', files('tools/tests/native/IdListTest.cpp'),
@@ -587,6 +671,23 @@ if get_option('build_native_tests')
   test('openq4-imported-game-regressions', py,
     args: [files('tools/tests/game_regression_suite.py'), '--log-dir', meson.project_build_root() / 'game-regression-logs'],
     timeout: 600, is_parallel: false)
+  test('openq4-mvd-seek-weapon', py,
+    args: [files('tools/tests/mvd_seek_weapon_state.py')], timeout: 60)
+  test('openq4-aas-liquid-area', py,
+    args: [files('tools/tests/aas_liquid_area_state.py')], timeout: 60)
+  test('openq4-player-air-readout', py,
+    args: [files('tools/tests/player_air_readout_state.py')], timeout: 60)
+  bot_frame_profile_test = executable(
+    'openq4-bot-frame-profile-test', files('tools/tests/native/BotFrameProfileTest.cpp'),
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-bot-frame-profile', bot_frame_profile_test, timeout: 30)
+  mvd_storage_budget_test = executable(
+    'openq4-mvd-storage-budget-test', files('tools/tests/native/MvdStorageBudgetTest.cpp'),
+    include_directories: root_include_dir, install: false,
+  )
+  test('openq4-mvd-storage-budget', py,
+    args: [files('tools/tests/mvd_storage_budget.py'), mvd_storage_budget_test.full_path()], timeout: 60)
   game_probe_cpp = meson.get_compiler('cpp')
   foreach probe : ['string_allocation', 'binary_token_signed_char']
     probe_args = []
@@ -722,6 +823,7 @@ if get_option('build_native_tests')
     include_directories: root_include_dir,
     install: false,
   )
+
   test(
     'openq4-gpu-frame-timing',
     openq4_gpu_frame_timing_test,
@@ -910,6 +1012,8 @@ if build_engine or get_option('build_native_tests')
     'openq4-retained-ui',
     files('src/ui/retained/Runtime.cpp', 'src/ui/retained/Document.cpp', 'src/ui/retained/DocumentEdit.cpp', 'src/ui/retained/Presentation.cpp', 'src/ui/retained/Behavior.cpp', 'src/ui/retained/State.cpp', 'src/ui/retained/Motion.cpp', 'src/ui/retained/Interaction.cpp', 'src/ui/retained/ValueControlView.cpp', 'src/ui/retained/NumberControlView.cpp', 'src/ui/retained/Input.cpp', 'src/ui/retained/TextInput.cpp', 'src/ui/retained/TextEdit.cpp', 'src/ui/retained/TextEditCommand.cpp', 'src/ui/retained/TextInputBroker.cpp', 'src/ui/retained/TextRun.cpp', 'src/ui/retained/Vector.cpp', 'src/ui/retained/VectorElement.cpp', 'src/ui/retained/HudElement.cpp', 'src/ui/application/SettingsTransaction.cpp', 'src/ui/application/SettingsJournal.cpp', 'src/ui/application/SettingsEffectPlan.cpp', 'src/ui/application/SettingsDisplayController.cpp'),
     files('src/ui/retained/TextInputBrokerWire.cpp'),
+    files('src/ui/retained/ModelScene.cpp'),
+    files('src/ui/retained/PlayerSetupRequest.cpp'),
     files('src/ui/retained/NativeTextDocument.cpp'),
     files('src/ui/retained/NativeTextEditor.cpp'),
     files('src/ui/retained/ScrollGeometry.cpp'),
@@ -1227,6 +1331,10 @@ if build_engine or get_option('build_native_tests')
         meson.project_source_root() / 'content/baseoq4/pak0/strings'], timeout: 900)
     test('openq4-ui-system-presets-source', py,
       args: [meson.project_source_root() / 'tools/tests/ui_system_presets.py'], timeout: 30)
+    test('openq4-ui-rendering-settings', py,
+      args: [meson.project_source_root() / 'tools/tests/ui_rendering_settings.py'], timeout: 120)
+    test('openq4-renderer-selection-startup', py,
+      args: [meson.project_source_root() / 'tools/tests/renderer_selection_startup.py'], timeout: 120)
     openq4_ui_settings_exact_test = executable(
       'openq4-ui-settings-exact-test', files('tools/tests/native/UiSettingsExactValueTest.cpp'),
       include_directories: root_include_dir, dependencies: openq4_retained_dep, install: false,
@@ -1355,6 +1463,9 @@ if build_engine or get_option('build_native_tests')
       args: ['--view-effects', meson.project_source_root() / 'content/baseoq4/pak0/guis/hud/view_effects.q4ui'], timeout: 60)
     test('openq4-ui-subtitles', openq4_ui_retained_screens_test,
       args: ['--subtitles', meson.project_source_root() / 'content/baseoq4/pak0/guis/hud/subtitles.q4ui'], timeout: 60)
+    # The retained SETTINGS page (UI-01).
+    test('openq4-ui-retained-settings', openq4_ui_retained_screens_test,
+      args: ['--settings', meson.project_source_root() / 'content/baseoq4/pak0/guis/menu/settings.q4ui'], timeout: 120)
     # The retained CONTROLS settings page (UI-01).
     test('openq4-ui-retained-controls', openq4_ui_retained_screens_test,
       args: ['--controls', meson.project_source_root() / 'content/baseoq4/pak0/guis/menu/settings/controls.q4ui'], timeout: 120)
@@ -1503,6 +1614,16 @@ if build_engine or get_option('build_native_tests')
       test('openq4-ui-system-dimensions-' + locale, openq4_ui_system_dimensions_test,
         args: [files('content/baseoq4/pak0/guis/menu/settings/system.q4ui'), meson.current_source_dir() / 'content/baseoq4/pak0/strings', locale], timeout: 600)
     endforeach
+    openq4_ui_model_scene_test = executable('openq4-ui-model-scene-test',
+      files('tools/tests/native/UiModelSceneTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')], install: false)
+    test('openq4-ui-model-scene', openq4_ui_model_scene_test, timeout: 30)
+    openq4_ui_player_setup_request_test = executable('openq4-ui-player-setup-request-test',
+      files('tools/tests/native/UiPlayerSetupRequestTest.cpp'),
+      include_directories: root_include_dir,
+      dependencies: [openq4_retained_dep, jsoncpp_project.get_variable('jsoncpp_dep')], install: false)
+    test('openq4-ui-player-setup-request', openq4_ui_player_setup_request_test, timeout: 30)
     openq4_ui_value_runtime_test = executable(
       'openq4-ui-value-runtime-test',
       files('tools/tests/native/UiValueRuntimeTest.cpp'),

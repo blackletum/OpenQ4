@@ -23,6 +23,7 @@ LANGUAGES = ("english", "brazilian", "czech", "french", "german", "hungarian", "
 
 # key: (english, brazilian, czech, french, german, hungarian, italian, polish, russian, spanish, turkish, ukrainian)
 ENTRIES = {
+    "#str_231326": ("AIR", "AR", "VZDUCH", "AIR", "LUFT", "LEVEGŐ", "ARIA", "POWIETRZE", "ВОЗДУХ", "AIRE", "HAVA", "ПОВІТРЯ"),
     "#str_231325": ("%d m", "%d m", "%d m", "%d m", "%d m", "%d m", "%d m", "%d m", "%d м", "%d m", "%d m", "%d м"),
     "#str_231200": ("TIED", "EMPATE", "REMÍZA", "ÉGALITÉ", "GLEICHSTAND", "DÖNTETLEN", "PARI", "REMIS", "НИЧЬЯ", "EMPATE",
                     "BERABERE", "НІЧИЯ"),

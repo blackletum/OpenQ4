@@ -3927,7 +3927,7 @@ static const int SHADOWMAP_ATLAS_MAX_GRID = 8;
 static int RB_ShadowMapAtlasSizeValue( void ) {
 	const int maxTextureSize =
 		glConfig.maxTextureSize > 0 ? glConfig.maxTextureSize : 4096;
-	return Min( idMath::ClampInt( 2048, 8192,
+	return Min( idMath::ClampInt( 2048, 16384,
 		r_shadowMapAtlasSize.GetInteger() ), maxTextureSize );
 }
 

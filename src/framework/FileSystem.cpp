@@ -7681,7 +7681,8 @@ idFile *idFileSystemLocal::OpenExplicitFileRead( const char *OSPath ) {
 		common->Printf( "idFileSystem::OpenExplicitFileRead: %s\n", OSPath );
 	}
 
-	common->DPrintf( "idFileSystem::OpenExplicitFileRead - reading from: %s\n", OSPath );
+	// The fs_debug trace above is sufficient. Checkpoint recovery probes this
+	// path repeatedly; developer logging must not flush each existence check.
 
 	f = new idFile_Permanent();
 	f->o = OpenOSFile( OSPath, "rb" );

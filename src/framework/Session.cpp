@@ -57,6 +57,29 @@ If you have questions concerning this license or the applicable additional terms
 #include "../ui/SettingsService.h"
 #include "../ui/UserInterfaceManaged.h"
 #include "../ui/UserInterfaceRetained.h"
+#include <functional>
+#include <memory>
+#include <chrono>
+#include "DurableFile.h"
+#include "SaveGameTransaction.h"
+#include <filesystem>
+#if defined( USE_SDL3 )
+#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_error.h>
+#endif
+#include "ParallelJobSystem.h"
+
+struct sessionSaveStorageJob_t;
+struct sessionSavePreviewJob_t;
+struct sessionSaveCommitJob_t;
+static std::function<bool()> sessionPendingCheckpoint;
+static std::shared_ptr<sessionSaveStorageJob_t> sessionPendingCheckpointStorage;
+static std::shared_ptr<sessionSavePreviewJob_t> sessionPendingCheckpointPreviewStorage;
+static std::shared_ptr<sessionSaveCommitJob_t> sessionPendingCheckpointCommit;
+static bool sessionFinishingPendingSave = false;
+static idStr sessionPendingCheckpointPreview;
+static int sessionPendingCheckpointSince = 0;
+static bool sessionPendingCheckpointPreviewReady = false;
 
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar	idSessionLocal::com_minTics( "com_minTics", "1", CVAR_SYSTEM, "" );
@@ -76,6 +99,9 @@ idCVar	com_skipLoadingContinue( "com_skipLoadingContinue", "0", CVAR_SYSTEM | CV
 static idCVar ui_testGuiInGame( "ui_testGuiInGame", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_CHEAT, "draw the loaded game behind testGUI for transparent overlay validation" );
 idCVar	com_minLoadingGuiMsec( "com_minLoadingGuiMsec", "250", CVAR_SYSTEM | CVAR_INTEGER, "minimum time to show the loading GUI before blocking map work starts", 0, 2000, idCmdSystem::ArgCompletion_Integer<0,2000> );
 idCVar	com_showLevelLoadTimes( "com_showLevelLoadTimes", "1", CVAR_SYSTEM | CVAR_BOOL, "print detailed phase timings for level loads" );
+static idCVar com_saveGameProfile( "com_saveGameProfile", "0", CVAR_SYSTEM | CVAR_INTEGER, "save profiling: 0 off, 1 phase timings, 2 per-class detail, 3 dictionary and commit detail", 0, 3 );
+static idCVar com_saveGameCommitOnWorker( "com_saveGameCommitOnWorker", "0", CVAR_SYSTEM | CVAR_BOOL, "experimental checkpoint file transaction on a worker; frame-time qualification pending" );
+static idCVar com_saveGameCopyOnWorker( "com_saveGameCopyOnWorker", "0", CVAR_SYSTEM | CVAR_BOOL, "experimental checkpoint copy on storage worker; overall frame-time qualification pending" );
 idCVar	com_skipLogoVideos( "com_skipLogoVideos", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "skip startup logo videos and go straight to the main menu" );
 idCVar	com_showLevelshotBounds( "com_showLevelshotBounds", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "draw a centered 4:3 frame guide for levelshot composition" );
 idCVar	s_muteUnfocused( "s_muteUnfocused", "1", CVAR_ARCHIVE | CVAR_BOOL, "mute all audio when the application is out of focus" );
@@ -867,7 +893,17 @@ static bool Session_CalculateSaveGameChecksum( idFile *file, int protectedLength
 }
 
 // layoutBuild, when given, receives the build the payload's layout is read as.
-static bool Session_ValidateSaveGamePayload( idFile *file, const idStr &savePath, bool allowLegacyPayload, int *layoutBuildOut = NULL ) {
+// A joined checkpoint worker supplies this only for the immutable memory view
+// of the exact bytes it wrote and read back. Bind the checksum to that view and
+// length; loads, recovery and synchronous saves always calculate their own CRC.
+struct sessionVerifiedSaveChecksum_t {
+	const idFile *file;
+	int protectedLength;
+	unsigned int checksum;
+};
+
+static bool Session_ValidateSaveGamePayload( idFile *file, const idStr &savePath, bool allowLegacyPayload, int *layoutBuildOut = NULL,
+		const sessionVerifiedSaveChecksum_t *verifiedChecksum = NULL ) {
 	if ( layoutBuildOut != NULL ) {
 		*layoutBuildOut = BUILD_NUMBER;
 	}
@@ -1009,8 +1045,13 @@ static bool Session_ValidateSaveGamePayload( idFile *file, const idStr &savePath
 		}
 
 		unsigned int calculatedChecksum = 0;
-		if ( valid && !Session_CalculateSaveGameChecksum( file, savedProtectedLength, calculatedChecksum, savePath ) ) {
-			valid = false;
+		if ( valid ) {
+			if ( verifiedChecksum != NULL && verifiedChecksum->file == file &&
+					verifiedChecksum->protectedLength == savedProtectedLength ) {
+				calculatedChecksum = verifiedChecksum->checksum;
+			} else if ( !Session_CalculateSaveGameChecksum( file, savedProtectedLength, calculatedChecksum, savePath ) ) {
+				valid = false;
+			}
 		}
 		if ( valid && calculatedChecksum != savedChecksum ) {
 			common->Warning( "Savegame '%s' failed its integrity check (stored 0x%08x, calculated 0x%08x)",
@@ -1299,21 +1340,15 @@ static bool Session_CommitStagedSaveFiles( sessionStagedSaveFile_t *files, int n
 	return true;
 }
 
-static bool Session_ValidateStagedSaveGameHeader( const idStr &savePath ) {
+static bool Session_ValidateSaveGameHeader( idFile *file, const idStr &savePath,
+		const sessionVerifiedSaveChecksum_t *verifiedChecksum = NULL ) {
 	idStr gamename;
 	idStr saveMap;
 	idStr entityFilter;
 	int version = 0;
 
-	idStr gameDir = cvarSystem->GetCVarString( "fs_game" );
-	idFile *file = fileSystem->OpenFileRead( savePath.c_str(), true, gameDir.Length() ? gameDir.c_str() : NULL );
-	if ( file == NULL ) {
-		common->Warning( "Failed to reopen staged savegame '%s' for validation", savePath.c_str() );
-		return false;
-	}
 	int stagedFileLength = -1;
 	if ( !Session_GetBoundedSaveGameLength( file, savePath, "staged validation", stagedFileLength ) ) {
-		fileSystem->CloseFile( file );
 		return false;
 	}
 
@@ -1335,9 +1370,20 @@ static bool Session_ValidateStagedSaveGameHeader( const idStr &savePath ) {
 		valid = false;
 	}
 	if ( valid ) {
-		valid = Session_ValidateSaveGamePayload( file, savePath, false );
+		valid = Session_ValidateSaveGamePayload( file, savePath, false, NULL, verifiedChecksum );
 	}
 
+	return valid;
+}
+
+static bool Session_ValidateStagedSaveGameHeader( const idStr &savePath ) {
+	idStr gameDir = cvarSystem->GetCVarString( "fs_game" );
+	idFile *file = fileSystem->OpenFileRead( savePath.c_str(), true, gameDir.Length() ? gameDir.c_str() : NULL );
+	if ( file == NULL ) {
+		common->Warning( "Failed to reopen staged savegame '%s' for validation", savePath.c_str() );
+		return false;
+	}
+	const bool valid = Session_ValidateSaveGameHeader( file, savePath );
 	fileSystem->CloseFile( file );
 	return valid;
 }
@@ -1444,13 +1490,13 @@ static void Session_RestoreGeneratedSaveState( idSessionLocal &session, bool gen
 
 class sessionSaveOperationGuard_t {
 public:
-	sessionSaveOperationGuard_t( idSessionLocal &session, idFile *&openFile,
+	sessionSaveOperationGuard_t( idSessionLocal &session, const std::shared_ptr<idFile *> &openFileOwner,
 		const idStr &tempGameFile, const idStr &tempDescriptionFile, const idStr &tempPreviewFile,
 		bool generatedSaveName, saveType_t saveType, const idStr &previousLastQuicksave, int previousLastCheckPoint ) :
-		session( session ), openFile( openFile ), tempGameFile( tempGameFile ),
+		session( session ), openFileOwner( openFileOwner ), openFile( *openFileOwner ), tempGameFile( tempGameFile ),
 		tempDescriptionFile( tempDescriptionFile ), tempPreviewFile( tempPreviewFile ),
 		generatedSaveName( generatedSaveName ), saveType( saveType ),
-		previousLastQuicksave( previousLastQuicksave ), previousLastCheckPoint( previousLastCheckPoint ), complete( false ) {
+		previousLastQuicksave( previousLastQuicksave ), previousLastCheckPoint( previousLastCheckPoint ), complete( false ), preserveRecovery( false ) {
 	}
 
 	~sessionSaveOperationGuard_t() {
@@ -1459,7 +1505,8 @@ public:
 			openFile = NULL;
 		}
 		if ( !complete ) {
-			Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+			if ( renderSystem != NULL ) renderSystem->CancelSavePreview();
+			if ( !preserveRecovery ) Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
 			Session_RestoreGeneratedSaveState( session, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
 			session.syncNextGameFrame = true;
 			if ( soundSystem != NULL ) {
@@ -1472,8 +1519,11 @@ public:
 		complete = true;
 	}
 
+	void PreserveRecovery() { preserveRecovery = true; }
+
 private:
 	idSessionLocal &session;
+	std::shared_ptr<idFile *> openFileOwner;
 	idFile *&openFile;
 	idStr tempGameFile;
 	idStr tempDescriptionFile;
@@ -1483,6 +1533,7 @@ private:
 	idStr previousLastQuicksave;
 	int previousLastCheckPoint;
 	bool complete;
+	bool preserveRecovery;
 };
 
 class sessionRenderCropGuard_t {
@@ -3973,6 +4024,13 @@ void idSessionLocal::Clear() {
 	retainedMpPageDest = 0;
 	retainedMpPageLeft = 0;
 	retainedMpPageAt = 0;
+	retainedSetupModels.Clear(); retainedSetupNames.Clear();
+	retainedSetupCvar.Clear(); retainedSetupValue.Clear(); retainedSetupLanguage.Clear();
+	retainedSetupCatalog = 0; retainedSetupFirst = 0; retainedSetupDeclCount = -1; retainedSetupRotation = 200;
+	guiRetainedSettingsPage = NULL;
+	retainedSettingsDest = 0;
+	retainedSettingsLeft = 0;
+	retainedSettingsAt = 0;
 	guiRetainedCreate = NULL;
 	retainedLevelshots.Clear();
 	retainedLevelshotsFrom = 0;
@@ -4199,6 +4257,7 @@ idSessionLocal::Shutdown
 ===============
 */
 void idSessionLocal::Shutdown() {
+	FinishPendingSave( true );
 	int i;
 
 	if ( aviCaptureMode ) {
@@ -6092,6 +6151,7 @@ Exits with mapSpawned = false
 ===============
 */
 void idSessionLocal::UnloadMap() {
+	FinishPendingSave( true );
 	RetainedUI_Close();
 	// Parses a level's loads never took.
 	UI_RetainedPrefetchClear();
@@ -7306,6 +7366,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	fileSystem->BeginLevelLoadCache( fullMapName.c_str(), levelLoadGameMode,
 		filterString.c_str(), levelLoadCacheSettings.c_str() );
 
+	RetainedUI_ClearModelWorlds();
 	if ( !reloadingSameMap && com_SingleDeclFile.GetBool() ) {
 		declManager->FlushDecls();
 		declManager->StartLoadingDecls();
@@ -7882,6 +7943,254 @@ void idSessionLocal::ScrubSaveGameFileName( idStr &saveFileName ) const {
 	}
 }
 
+struct sessionSaveStorageJob_t {
+	std::string path, payload, descriptionPath, description, error;
+	// Destroy/join jobs before releasing the immutable source. The worker only
+	// reads snapshotData; it never calls idFile, VFS or game interfaces.
+	std::unique_ptr<idFile> snapshot;
+	const char *snapshotData = nullptr;
+	bool success = false;
+	unsigned int protectedLength = 0;
+	unsigned int checksum = 0;
+	double msec = 0.0;
+	std::unique_ptr<idJobList> jobs;
+};
+
+// No game, VFS, console or CVar calls are made by commit workers. SDL's exact
+// rename/remove operations are thread-safe; metadata inspection also rejects
+// nonregular leaf paths and distinguishes a missing file from an access error.
+struct sessionSaveCommitFileOps_t {
+	bool Exists( const std::string& path, bool& exists, std::string& error ) {
+		std::error_code code;
+		const auto status = std::filesystem::symlink_status( std::filesystem::u8path( path ), code );
+		if ( status.type() == std::filesystem::file_type::not_found ) { exists = false; return true; }
+		if ( code || !std::filesystem::is_regular_file( status ) ) {
+			error = "cannot inspect regular save file: " + path;
+			return false;
+		}
+		exists = true;
+		return true;
+	}
+	bool Move( const std::string& from, const std::string& to, std::string& error ) {
+		bool source = false, destination = false;
+		if ( !Exists( from, source, error ) || !Exists( to, destination, error ) ) return false;
+		if ( !source || destination ) { error = "save rename source missing or destination occupied"; return false; }
+#if defined( USE_SDL3 )
+		if ( SDL_RenamePath( from.c_str(), to.c_str() ) ) return true;
+		error = SDL_GetError();
+#else
+		std::error_code code;
+		std::filesystem::rename( std::filesystem::u8path( from ), std::filesystem::u8path( to ), code );
+		if ( !code ) return true;
+		error = code.message();
+#endif
+		return false;
+	}
+	bool Remove( const std::string& path, std::string& error ) {
+		bool exists = false;
+		if ( !Exists( path, exists, error ) ) return false;
+		if ( !exists ) return true;
+#if defined( USE_SDL3 )
+		if ( SDL_RemovePath( path.c_str() ) ) return true;
+		error = SDL_GetError();
+#else
+		std::error_code code;
+		std::filesystem::remove( std::filesystem::u8path( path ), code );
+		if ( !code ) return true;
+		error = code.message();
+#endif
+		return false;
+	}
+};
+
+struct sessionSaveCommitJob_t {
+	std::array<openq4::SaveGameTransactionFile, 3> files;
+	openq4::SaveGameTransactionResult result;
+	bool removePreview = false;
+	double msec = 0.0;
+	// Join before releasing any strings/state read by the worker.
+	std::unique_ptr<idJobList> jobs;
+};
+
+#ifndef ID_DEDICATED
+static void Session_CommitCheckpointFiles( const idJobContext& context ) {
+	auto& commit = *static_cast<sessionSaveCommitJob_t*>( context.data );
+	const auto begin = std::chrono::steady_clock::now();
+	try {
+		sessionSaveCommitFileOps_t ops;
+		commit.result = openq4::CommitSaveGame( commit.files, ops, commit.removePreview );
+	} catch ( const std::exception& error ) {
+		// The exact paths and recovery sentinels must survive an interrupted job.
+		commit.result.recoveryNeeded = true;
+		commit.result.error = error.what();
+	}
+	commit.msec = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - begin ).count();
+}
+
+static bool Session_QueueCheckpointCommit( sessionSaveCommitJob_t& commit ) {
+	commit.jobs = jobSystem.CreateJobList( "checkpoint-commit", 1, 0, idJobPriority::LOW );
+	if ( commit.jobs && commit.jobs->AddJob( Session_CommitCheckpointFiles, &commit ) ) {
+		const auto submitted = commit.jobs->Submit();
+		if ( submitted == idJobSubmitResult::ACCEPTED || submitted == idJobSubmitResult::EXECUTED_SYNCHRONOUSLY ) return true;
+	}
+	commit.jobs.reset();
+	return false;
+}
+#endif
+
+struct sessionSavePreviewJob_t {
+	std::string path, error;
+	std::unique_ptr<idJobList> jobs;
+	bool success = false;
+	double msec = 0.0;
+};
+
+// PollSavePreview has closed the renderer's small TGA before this job starts.
+// Persist and verify that exact image off the game thread; ordinary saves and
+// unavailable/disabled workers retain the existing checked synchronous path.
+static void Session_PersistCheckpointPreview( const idJobContext &context ) {
+	sessionSavePreviewJob_t &preview = *static_cast<sessionSavePreviewJob_t *>( context.data );
+	const auto begin = std::chrono::steady_clock::now();
+	constexpr size_t thumbnailBytes = 18 + 320 * 240 * 4;
+	std::string bytes;
+	if ( openq4::DurableReadExact( preview.path, thumbnailBytes, bytes, preview.error ) == openq4::DurableReadResult::Present &&
+		bytes.size() == thumbnailBytes ) {
+		const unsigned char *header = reinterpret_cast<const unsigned char *>( bytes.data() );
+		// This proof is deliberately limited to the renderer's uncompressed,
+		// bottom-up 320x240 BGRA output, not arbitrary save-menu images.
+		const bool valid = header[0] == 0 && header[1] == 0 && header[2] == 2 &&
+			( header[12] | ( header[13] << 8 ) ) == 320 &&
+			( header[14] | ( header[15] << 8 ) ) == 240 && header[16] == 32 && header[17] == 0;
+		if ( valid && openq4::DurableReplaceExact( preview.path, bytes, preview.error ) ) {
+			std::string verified;
+			preview.success = openq4::DurableReadExact( preview.path, thumbnailBytes, verified, preview.error ) == openq4::DurableReadResult::Present &&
+				verified == bytes;
+		}
+	}
+	if ( !preview.success && preview.error.empty() ) preview.error = "checkpoint preview validation or readback failed";
+	preview.msec = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - begin ).count();
+}
+
+static void Session_QueueCheckpointPreview( sessionSavePreviewJob_t &preview ) {
+	if ( !jobSystem.IsInitialized() || jobSystem.IsSynchronous() ) return;
+	preview.jobs = jobSystem.CreateJobList( "checkpoint-preview", 1, 0, idJobPriority::LOW );
+	if ( preview.jobs && preview.jobs->AddJob( Session_PersistCheckpointPreview, &preview ) ) {
+		const idJobSubmitResult submitted = preview.jobs->Submit();
+		if ( submitted == idJobSubmitResult::ACCEPTED || submitted == idJobSubmitResult::EXECUTED_SYNCHRONOUSLY ) return;
+	}
+	preview.jobs.reset();
+}
+
+// No VFS, console, game, renderer or CVar access on this worker. Its exact path
+// and immutable bytes are owned until the job is joined. DurableFile supplies
+// checked writes, sync and native Unicode paths on each supported platform.
+#ifndef ID_DEDICATED
+static void Session_WriteCheckpointPayload( const idJobContext &context ) {
+	sessionSaveStorageJob_t &storage = *static_cast<sessionSaveStorageJob_t *>( context.data );
+	const auto begin = std::chrono::steady_clock::now();
+	if ( storage.snapshotData != nullptr ) {
+		storage.payload.assign( storage.snapshotData, storage.protectedLength );
+	}
+	const unsigned int size = static_cast<unsigned int>( storage.payload.size() );
+	const unsigned int checksum = CRC32_BlockChecksum( storage.payload.data(), static_cast<int>( size ) );
+	storage.protectedLength = size;
+	storage.checksum = checksum;
+	const unsigned int trailer[] = { SESSION_OPENQ4_SAVEGAME_INTEGRITY_MAGIC,
+		SESSION_OPENQ4_SAVEGAME_INTEGRITY_VERSION, size, checksum };
+	for ( unsigned int value : trailer ) {
+		for ( int shift = 0; shift < 32; shift += 8 ) storage.payload.push_back( static_cast<char>( value >> shift ) );
+	}
+	if ( openq4::DurableReplaceExact( storage.path, storage.payload, storage.error ) ) {
+		std::string verified;
+		if ( openq4::DurableReadExact( storage.path, storage.payload.size(), verified, storage.error ) == openq4::DurableReadResult::Present ) {
+			storage.success = verified == storage.payload;
+			if ( !storage.success ) storage.error = "checkpoint payload readback differs from its snapshot";
+		}
+	}
+	if ( storage.success ) {
+		storage.success = openq4::DurableReplaceExact( storage.descriptionPath, storage.description, storage.error );
+		if ( storage.success ) {
+			std::string verified;
+			storage.success = openq4::DurableReadExact( storage.descriptionPath, storage.description.size(), verified, storage.error ) == openq4::DurableReadResult::Present &&
+				verified == storage.description;
+			if ( !storage.success && storage.error.empty() ) storage.error = "checkpoint description readback differs from its snapshot";
+		}
+	}
+	storage.msec = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - begin ).count();
+}
+
+static bool Session_QueueCheckpointStorage( sessionSaveStorageJob_t &storage, idFile *&fileOut, bool copyOnWorker ) {
+	storage.jobs = jobSystem.CreateJobList( "checkpoint-storage", 1, 0, idJobPriority::LOW );
+	if ( copyOnWorker ) {
+		storage.protectedLength = static_cast<unsigned int>( fileOut->Length() );
+		storage.snapshotData = fileOut->GetDataPtr();
+		storage.snapshot.reset( fileOut );
+		fileOut = NULL;
+	} else {
+		storage.payload.assign( fileOut->GetDataPtr(), fileOut->Length() );
+	}
+	if ( storage.jobs && storage.jobs->AddJob( Session_WriteCheckpointPayload, &storage ) ) {
+		const idJobSubmitResult submitted = storage.jobs->Submit();
+		if ( submitted == idJobSubmitResult::ACCEPTED || submitted == idJobSubmitResult::EXECUTED_SYNCHRONOUSLY ) return true;
+	}
+	// No job was accepted. Return ownership to the checked synchronous
+	// fallback without losing or copying the completed snapshot.
+	if ( storage.snapshot ) fileOut = storage.snapshot.release();
+	storage.snapshotData = nullptr;
+	return false;
+}
+#endif
+
+// Game serializers issue many small writes and query the offset for each field.
+// Keep those operations in memory; stdio ftell can query the OS even while its
+// write buffer is populated. The committed bytes and transaction stay identical.
+class sessionSaveSnapshot_t : public idFile_Memory {
+public:
+	explicit sessionSaveSnapshot_t( const char *name ) : idFile_Memory( name ) {
+		// Most checkpoints fit the bounded background-storage payload. Allocate
+		// that much on the first write instead of repeatedly copying live-state
+		// bytes while the game thread builds its snapshot.
+		SetGranularity( static_cast<int>( openq4::DurableFileMaxBytes ) );
+	}
+	virtual int Write( const void *buffer, int length ) {
+		const int limit = SESSION_MAX_SAVEGAME_BYTES - SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES;
+		if ( length > 0 && length > limit - Tell() ) {
+			common->Error( "Savegame snapshot exceeds maximum size %d", limit );
+			return 0;
+		}
+		return idFile_Memory::Write( buffer, length );
+	}
+};
+
+class sessionSaveProfile_t {
+public:
+	sessionSaveProfile_t() : enabled( com_saveGameProfile.GetBool() ), count( 0 ), last( enabled ? Sys_GetClockTicks() : 0.0 ) {}
+	void Mark( const char *name ) {
+		if ( enabled && count < 24 ) {
+			const double now = Sys_GetClockTicks();
+			names[count] = name;
+			msec[count++] = ( now - last ) * 1000.0 / Sys_ClockTicksPerSecond();
+			last = now;
+		}
+	}
+	void Report( const char *slot ) const {
+		if ( !enabled ) return;
+		double total = 0.0;
+		for ( int i = 0; i < count; ++i ) {
+			common->Printf( "Save profile: slot=%s phase=%s ms=%.3f\n", slot, names[i], msec[i] );
+			total += msec[i];
+		}
+		common->Printf( "Save profile: slot=%s phase=total ms=%.3f\n", slot, total );
+	}
+	void Resume() { if ( enabled ) last = Sys_GetClockTicks(); }
+private:
+	bool enabled;
+	int count;
+	double last;
+	const char *names[24];
+	double msec[24];
+};
+
 /*
 ===============
 idSessionLocal::SaveGame
@@ -7892,9 +8201,12 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 	common->Printf( "Dedicated servers cannot save games.\n" );
 	return false;
 #else
+	FinishPendingSave( true );
+	sessionSaveProfile_t profile;
 	int i;
 	idStr gameFile, previewFile, descriptionFile, tempGameFile, tempPreviewFile, tempDescriptionFile, mapName, saveSlotName, saveSlotFileName;
-	idFile *fileOut = NULL;
+	const std::shared_ptr<idFile *> fileState( new idFile *( NULL ) );
+	idFile *&fileOut = *fileState;
 	const idStr previousLastQuicksave = com_lastQuicksave.GetString();
 	const int previousLastCheckPoint = lastCheckPoint;
 	bool generatedSaveName = false;
@@ -7915,11 +8227,15 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 		return false;
 	}
 
+	if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "setup-health" );
+
 	if ( Sys_GetDriveFreeSpace( cvarSystem->GetCVarString( "fs_savepath" ) ) < 25 ) {
 		MessageBox( MSG_OK, common->GetLanguageDict()->GetString ( "#str_104313" ), common->GetLanguageDict()->GetString ( "#str_104314" ), true );
 		common->Printf( "Not enough drive space to save the game\n" );
 		return false;
 	}
+
+	if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "setup-space" );
 
 	if ( objectiveFailed ) {
 		MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_107654" ), common->GetLanguageDict()->GetString( "#str_104312" ), true );
@@ -7967,9 +8283,11 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 	tempPreviewFile += ".tmp";
 	tempDescriptionFile = descriptionFile;
 	tempDescriptionFile += ".tmp";
-	sessionSaveOperationGuard_t operationGuard( *this, fileOut,
+	const std::shared_ptr<sessionSaveOperationGuard_t> operationGuard( new sessionSaveOperationGuard_t( *this, fileState,
 		tempGameFile, tempDescriptionFile, tempPreviewFile,
-		generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+		generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint ) );
+
+	if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "setup-paths" );
 
 	if ( !Session_RecoverInterruptedSaveFiles( gameFile, descriptionFile, previewFile ) ) {
 		common->Warning( "Could not recover interrupted save files for '%s'", gameFile.c_str() );
@@ -7978,10 +8296,13 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 		soundSystem->SetMute( insideExecuteMapChange );
 		return false;
 	}
+	if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "setup-recovery" );
 	Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+	if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "setup-cleanup" );
 
-	// Open savegame file
-	fileOut = fileSystem->OpenFileWrite( tempGameFile );
+	// Snapshot live game state on the game thread before touching the payload
+	// file. Only the completed, bounded snapshot is written to staged storage.
+	fileOut = new sessionSaveSnapshot_t( tempGameFile.c_str() );
 	if ( fileOut == NULL ) {
 		common->Warning( "Failed to open save file '%s'\n", tempGameFile.c_str() );
 		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
@@ -7990,8 +8311,12 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 		return false;
 	}
 
+	profile.Mark( "setup" );
 	// Write screenshot
-	if ( saveType != ST_AUTO ) {
+	const bool deferredPreview = saveType == ST_CHECKPOINT && renderSystem->BeginSavePreview();
+	const auto previewStorage = deferredPreview ? std::make_shared<sessionSavePreviewJob_t>() : nullptr;
+	if ( previewStorage ) previewStorage->path = fileSystem->RelativePathToOSPath( tempPreviewFile.c_str(), "fs_savepath" );
+	if ( saveType != ST_AUTO && !deferredPreview ) {
 		if ( rw ) {
 			rw->PushMarkedDefs();
 		}
@@ -8007,21 +8332,13 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 		renderSystem->CaptureRenderToFile( tempPreviewFile, true, 320, 240 );
 	}
 
+	profile.Mark( "preview" );
 	mapName = mapSpawnData.serverInfo.GetString( "si_map" );
 
 	// Write the retail-style description sidecar:
 	// slot name, menu display label, preview material, optional no-overwrite marker.
-	idFile *fileDesc = fileSystem->OpenFileWrite( tempDescriptionFile );
-	if ( fileDesc == NULL ) {
-		common->Warning( "Failed to open description file '%s'\n", tempDescriptionFile.c_str() );
-		fileSystem->CloseFile( fileOut );
-		fileOut = NULL;
-		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
-		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
-		syncNextGameFrame = true;
-		soundSystem->SetMute( insideExecuteMapChange );
-		return false;
-	}
+	const auto descriptionSnapshot = std::make_shared<idFile_Memory>( tempDescriptionFile.c_str() );
+	idFile *fileDesc = descriptionSnapshot.get();
 
 	idStr escapedSlotName = saveSlotName;
 	Session_EscapeSaveDescription( escapedSlotName );
@@ -8062,12 +8379,7 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 	if ( saveType == ST_AUTO || saveType == ST_CHECKPOINT ) {
 		descriptionWritten = descriptionWritten && Session_WriteSaveTextLine( fileDesc, SESSION_SAVEGAME_NO_OVERWRITE_TOKEN, false, "description no-overwrite marker", tempDescriptionFile.c_str() );
 	}
-	if ( descriptionWritten && !fileDesc->Sync() ) {
-		common->Warning( "Failed to persist description file '%s'", tempDescriptionFile.c_str() );
-		descriptionWritten = false;
-	}
 
-	fileSystem->CloseFile( fileDesc );
 	if ( !descriptionWritten ) {
 		common->Warning( "Failed to write description file '%s'\n", tempDescriptionFile.c_str() );
 		fileSystem->CloseFile( fileOut );
@@ -8078,17 +8390,8 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 		soundSystem->SetMute( insideExecuteMapChange );
 		return false;
 	}
-	if ( !Session_ValidateStagedSaveDescription( tempDescriptionFile, saveSlotFileName, saveType ) ) {
-		common->Warning( "Staged save description '%s' failed validation", tempDescriptionFile.c_str() );
-		fileSystem->CloseFile( fileOut );
-		fileOut = NULL;
-		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
-		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
-		syncNextGameFrame = true;
-		soundSystem->SetMute( insideExecuteMapChange );
-		return false;
-	}
 
+	profile.Mark( "description" );
 	// Write SaveGame Header:
 	// Game Name / Version / Map Name / Entity Filter / Persistent Player Info
 	bool headerWritten = true;
@@ -8115,97 +8418,281 @@ bool idSessionLocal::SaveGame( const char *saveName, saveType_t saveType ) {
 	}
 
 	game->SaveGame( fileOut, saveType );
-	int stagedProtectedLength = -1;
-	const bool stagedSizeValid = Session_GetBoundedSaveGameLength( fileOut, tempGameFile, "staged write", stagedProtectedLength ) &&
-		stagedProtectedLength <= SESSION_MAX_SAVEGAME_BYTES - SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES;
-	if ( !stagedSizeValid ) {
-		if ( stagedProtectedLength > SESSION_MAX_SAVEGAME_BYTES - SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES &&
-			 stagedProtectedLength <= SESSION_MAX_SAVEGAME_BYTES ) {
-			common->Warning( "Staged savegame '%s' is %d bytes before its %d-byte integrity trailer (maximum total .save size %d bytes)",
-				tempGameFile.c_str(), stagedProtectedLength, SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES, SESSION_MAX_SAVEGAME_BYTES );
+	profile.Mark( "serialize" );
+	std::shared_ptr<sessionSaveStorageJob_t> storage;
+	if ( deferredPreview && jobSystem.IsInitialized() && !jobSystem.IsSynchronous() &&
+		fileOut->Length() > 0 && static_cast<size_t>( fileOut->Length() ) <=
+		openq4::DurableFileMaxBytes - SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES ) {
+		storage = std::make_shared<sessionSaveStorageJob_t>();
+		storage->path = fileSystem->RelativePathToOSPath( tempGameFile.c_str(), "fs_savepath" );
+		// The former synchronous sidecar open created this directory. A fresh
+		// profile must have its save path before the worker attempts a replace.
+		fileSystem->CreateOSPath( storage->path.c_str() );
+		storage->descriptionPath = fileSystem->RelativePathToOSPath( tempDescriptionFile.c_str(), "fs_savepath" );
+		storage->description.assign( descriptionSnapshot->GetDataPtr(), descriptionSnapshot->Length() );
+		if ( !Session_QueueCheckpointStorage( *storage, fileOut, com_saveGameCopyOnWorker.GetBool() ) ) {
+			storage.reset();
 		}
-		fileSystem->CloseFile( fileOut );
-		fileOut = NULL;
-		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
-		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
-		syncNextGameFrame = true;
-		soundSystem->SetMute( insideExecuteMapChange );
-		return false;
 	}
+	profile.Mark( "queue-storage" );
 
-	// close the save game file
-	const bool payloadSynced = fileOut->Sync();
-	fileSystem->CloseFile( fileOut );
-	fileOut = NULL;
-	if ( !payloadSynced ) {
-		common->Warning( "Failed to persist staged savegame '%s'", tempGameFile.c_str() );
-		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
-		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
-		syncNextGameFrame = true;
-		soundSystem->SetMute( insideExecuteMapChange );
-		return false;
-	}
-
-	if ( !Session_AppendSaveGameIntegrityTrailer( tempGameFile ) ) {
-		common->Warning( "Failed to protect staged savegame '%s' with an integrity trailer", tempGameFile.c_str() );
-		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
-		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
-		syncNextGameFrame = true;
-		soundSystem->SetMute( insideExecuteMapChange );
-		return false;
-	}
-
-	if ( !Session_ValidateStagedSaveGameHeader( tempGameFile ) ) {
-		common->Warning( "Staged savegame '%s' failed validation", tempGameFile.c_str() );
-		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
-		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
-		syncNextGameFrame = true;
-		soundSystem->SetMute( insideExecuteMapChange );
-		return false;
-	}
-
-	const bool previewReady = ( saveType != ST_AUTO && Session_ValidateStagedSavePreview( tempPreviewFile ) &&
-		Session_SyncRelativeSaveFile( tempPreviewFile ) );
-	if ( !previewReady ) {
-		Session_RemoveRelativeSaveFile( tempPreviewFile );
-		if ( !Session_CreateSavePreviewDeletionMarker( tempPreviewFile ) ) {
-			common->Warning( "Failed to stage preview deletion marker '%s'", tempPreviewFile.c_str() );
+	// The game thread owns the immutable snapshot and transaction guard across
+	// frames. A checkpoint preview comes from normal presentation; finalization
+	// runs only after readback completes, or after a bounded failure fallback.
+	auto finish = [=]() mutable -> bool {
+		idFile *&fileOut = *fileState;
+		profile.Resume();
+		int stagedProtectedLength = -1;
+		idFile *stagedSnapshot = storage && storage->snapshot ? storage->snapshot.get() : fileOut;
+		const bool stagedSizeValid = Session_GetBoundedSaveGameLength( stagedSnapshot, tempGameFile, "staged write", stagedProtectedLength ) &&
+			stagedProtectedLength <= SESSION_MAX_SAVEGAME_BYTES - SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES;
+		if ( !stagedSizeValid ) {
+			if ( stagedProtectedLength > SESSION_MAX_SAVEGAME_BYTES - SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES &&
+				 stagedProtectedLength <= SESSION_MAX_SAVEGAME_BYTES ) {
+				common->Warning( "Staged savegame '%s' is %d bytes before its %d-byte integrity trailer (maximum total .save size %d bytes)",
+					tempGameFile.c_str(), stagedProtectedLength, SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES, SESSION_MAX_SAVEGAME_BYTES );
+			}
+			fileSystem->CloseFile( fileOut );
+			fileOut = NULL;
 			Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
 			Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
 			syncNextGameFrame = true;
 			soundSystem->SetMute( insideExecuteMapChange );
 			return false;
 		}
-	}
-	sessionStagedSaveFile_t stagedFiles[3];
-	int numStagedFiles = 0;
-	Session_InitStagedSaveFile( stagedFiles[numStagedFiles++], tempDescriptionFile, descriptionFile, true );
-	Session_InitStagedSaveFile( stagedFiles[numStagedFiles++], tempPreviewFile, previewFile, true );
-	// The payload is the commit point. Sidecars must be in place before its
-	// final rename so interrupted saves can be recovered deterministically.
-	Session_InitStagedSaveFile( stagedFiles[numStagedFiles++], tempGameFile, gameFile, true );
 
-	if ( !Session_CommitStagedSaveFiles( stagedFiles, numStagedFiles ) ) {
-		Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
-		Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
-		syncNextGameFrame = true;
+		if ( storage ) {
+			fileSystem->CloseFile( fileOut );
+			fileOut = NULL;
+			storage->snapshot.reset();
+			storage->snapshotData = nullptr;
+			if ( !storage->success ) {
+				common->Warning( "Failed to persist checkpoint '%s': %s", gameFile.c_str(), storage->error.c_str() );
+				return false;
+			}
+			if ( com_saveGameProfile.GetBool() ) common->Printf( "Checkpoint storage worker: %.3f ms\n", storage->msec );
+		} else {
+			// Persist the complete snapshot in one bulk write. The existing validation
+			// and payload-last transaction below still gate publication of the slot.
+			idFile *payloadFile = fileSystem->OpenFileWrite( tempGameFile );
+			const bool payloadWritten = payloadFile != NULL &&
+				payloadFile->Write( fileOut->GetDataPtr(), stagedProtectedLength ) == stagedProtectedLength;
+			const bool payloadSynced = payloadWritten && payloadFile->Sync();
+			if ( payloadFile != NULL ) {
+				fileSystem->CloseFile( payloadFile );
+			}
+			fileSystem->CloseFile( fileOut );
+			fileOut = NULL;
+			if ( !payloadSynced ) {
+				common->Warning( "Failed to persist staged savegame '%s'", tempGameFile.c_str() );
+				Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+				Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+				syncNextGameFrame = true;
+				soundSystem->SetMute( insideExecuteMapChange );
+				return false;
+			}
+
+			profile.Mark( "payload-sync" );
+			if ( !Session_AppendSaveGameIntegrityTrailer( tempGameFile ) ) {
+				common->Warning( "Failed to protect staged savegame '%s' with an integrity trailer", tempGameFile.c_str() );
+				Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+				Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+				syncNextGameFrame = true;
+				soundSystem->SetMute( insideExecuteMapChange );
+				return false;
+			}
+
+		}
+		if ( !storage ) {
+			idFile *descriptionFile = fileSystem->OpenFileWrite( tempDescriptionFile );
+			const bool persisted = descriptionFile != NULL &&
+				descriptionFile->Write( descriptionSnapshot->GetDataPtr(), descriptionSnapshot->Length() ) == descriptionSnapshot->Length() && descriptionFile->Sync();
+			if ( descriptionFile != NULL ) fileSystem->CloseFile( descriptionFile );
+			if ( !persisted ) {
+				common->Warning( "Failed to persist description file '%s'", tempDescriptionFile.c_str() );
+				return false;
+			}
+		}
+		profile.Mark( "integrity" );
+		if ( !Session_ValidateStagedSaveDescription( tempDescriptionFile, saveSlotFileName, saveType ) ) {
+			common->Warning( "Staged save description '%s' failed validation", tempDescriptionFile.c_str() );
+			return false;
+		}
+		bool payloadValid;
+		if ( storage ) {
+			// The joined worker read the persisted file back and compared every
+			// byte with this immutable payload, including its integrity trailer.
+			// Validate the header/footer/trailer against those same bytes and the
+			// worker's calculated CRC, without hashing the full snapshot again on
+			// the game thread. No load or recovery path receives this proof.
+			idFile_Memory verifiedPayload( tempGameFile.c_str(),
+				static_cast<const char *>( storage->payload.data() ),
+				static_cast<int>( storage->payload.size() ) );
+			const sessionVerifiedSaveChecksum_t verifiedChecksum = { &verifiedPayload,
+				static_cast<int>( storage->protectedLength ), storage->checksum };
+			payloadValid = Session_ValidateSaveGameHeader( &verifiedPayload, tempGameFile, &verifiedChecksum );
+		} else {
+			payloadValid = Session_ValidateStagedSaveGameHeader( tempGameFile );
+		}
+		if ( !payloadValid ) {
+			common->Warning( "Staged savegame '%s' failed validation", tempGameFile.c_str() );
+			Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+			Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+			syncNextGameFrame = true;
+			soundSystem->SetMute( insideExecuteMapChange );
+			return false;
+		}
+
+		profile.Mark( "validation" );
+		// A joined preview worker has already synchronized and read back these
+		// exact staged bytes. Keep the normal header check, without a second
+		// disk barrier on the game thread. Failed/unsubmitted jobs use the old path.
+		const bool previewPersisted = previewStorage && previewStorage->jobs && previewStorage->success;
+		if ( previewStorage && previewStorage->jobs && com_saveGameProfile.GetBool() ) {
+			common->Printf( "Checkpoint preview worker: %.3f ms verified=%d\n", previewStorage->msec, previewPersisted ? 1 : 0 );
+		}
+		const bool previewReady = ( saveType != ST_AUTO && Session_ValidateStagedSavePreview( tempPreviewFile ) &&
+			( previewPersisted || Session_SyncRelativeSaveFile( tempPreviewFile ) ) );
+		if ( !previewReady ) {
+			Session_RemoveRelativeSaveFile( tempPreviewFile );
+			if ( !Session_CreateSavePreviewDeletionMarker( tempPreviewFile ) ) {
+				common->Warning( "Failed to stage preview deletion marker '%s'", tempPreviewFile.c_str() );
+				Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+				Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+				syncNextGameFrame = true;
+				soundSystem->SetMute( insideExecuteMapChange );
+				return false;
+			}
+		}
+		sessionStagedSaveFile_t stagedFiles[3];
+		int numStagedFiles = 0;
+		Session_InitStagedSaveFile( stagedFiles[numStagedFiles++], tempDescriptionFile, descriptionFile, true );
+		Session_InitStagedSaveFile( stagedFiles[numStagedFiles++], tempPreviewFile, previewFile, true );
+		// The payload is the commit point. Sidecars must be in place before its
+		// final rename so interrupted saves can be recovered deterministically.
+		Session_InitStagedSaveFile( stagedFiles[numStagedFiles++], tempGameFile, gameFile, true );
+
+		profile.Mark( "preview-sync" );
+		std::shared_ptr<sessionSaveCommitJob_t> commit;
+		if ( deferredPreview && com_saveGameCommitOnWorker.GetBool() && jobSystem.IsInitialized() && !jobSystem.IsSynchronous() ) {
+			commit = std::make_shared<sessionSaveCommitJob_t>();
+			commit->removePreview = !previewReady;
+			for ( int n = 0; n < 3; ++n ) {
+				commit->files[n].temporary = fileSystem->RelativePathToOSPath( stagedFiles[n].tempName.c_str(), "fs_savepath" );
+				commit->files[n].final = fileSystem->RelativePathToOSPath( stagedFiles[n].finalName.c_str(), "fs_savepath" );
+				commit->files[n].backup = fileSystem->RelativePathToOSPath( stagedFiles[n].backupName.c_str(), "fs_savepath" );
+			}
+			if ( !Session_QueueCheckpointCommit( *commit ) ) commit.reset();
+		}
+		if ( commit ) {
+			profile.Mark( "queue-commit" );
+		} else if ( !Session_CommitStagedSaveFiles( stagedFiles, numStagedFiles ) ) {
+			Session_RemoveStagedSaveFiles( tempGameFile, tempDescriptionFile, tempPreviewFile );
+			Session_RestoreGeneratedSaveState( *this, generatedSaveName, saveType, previousLastQuicksave, previousLastCheckPoint );
+			syncNextGameFrame = true;
+			soundSystem->SetMute( insideExecuteMapChange );
+			return false;
+		} else if ( com_saveGameProfile.GetInteger() >= 3 ) {
+			profile.Mark( "commit-files" );
+		}
+
+		auto complete = [=]() mutable -> bool {
+			if ( commit ) {
+				profile.Resume();
+				if ( com_saveGameProfile.GetBool() ) common->Printf( "Checkpoint commit worker: %.3f ms committed=%d cleanup=%d recovery=%d\n",
+					commit->msec, commit->result.committed, commit->result.cleanupComplete, commit->result.recoveryNeeded );
+				if ( !commit->result.committed ) {
+					if ( commit->result.recoveryNeeded ) operationGuard->PreserveRecovery();
+					common->Warning( "Failed to commit checkpoint '%s': %s", gameFile.c_str(), commit->result.error.c_str() );
+					return false;
+				}
+				if ( !commit->result.cleanupComplete ) common->Warning( "Checkpoint cleanup deferred: %s", commit->result.error.c_str() );
+			}
+			if ( !previewReady && !commit ) Session_RemoveRelativeSaveFile( previewFile );
+			if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "commit-preview" );
+
+			if ( !deferredPreview ) syncNextGameFrame = true;
+			soundSystem->SetMute( insideExecuteMapChange );
+			if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "commit-sound" );
+
+			if ( saveType != ST_AUTO ) game->NotifySaveGameComplete();
+			if ( com_saveGameProfile.GetInteger() >= 3 ) profile.Mark( "commit-ui" );
+			common->Printf( "Saved '%s'\n", saveSlotName.c_str() );
+			operationGuard->Complete();
+			retainedNewestSave = time( NULL );
+			profile.Mark( "commit" );
+			profile.Report( saveSlotName.c_str() );
+			return true;
+		};
+		if ( commit ) {
+			// Build the continuation before publishing its job owner. Allocation
+			// failure then joins the local job before the guard cleans staged paths.
+			sessionPendingCheckpoint = std::move( complete );
+			sessionPendingCheckpointCommit = commit;
+			return true;
+		}
+		return complete();
+	};
+	if ( deferredPreview ) {
+		sessionPendingCheckpointPreview = tempPreviewFile;
+		sessionPendingCheckpointSince = Sys_Milliseconds();
+		sessionPendingCheckpointPreviewReady = false;
+		sessionPendingCheckpointStorage = storage;
+		sessionPendingCheckpointPreviewStorage = previewStorage;
+		sessionPendingCheckpoint = finish;
 		soundSystem->SetMute( insideExecuteMapChange );
-		return false;
+		return true;
 	}
-
-	if ( !previewReady ) {
-		Session_RemoveRelativeSaveFile( previewFile );
-	}
-
-	syncNextGameFrame = true;
-	soundSystem->SetMute( insideExecuteMapChange );
-
-	common->Printf( "Saved '%s'\n", saveSlotName.c_str() );
-	operationGuard.Complete();
-	retainedNewestSave = time( NULL );
-
-	return true;
+	return finish();
 #endif
+}
+
+bool idSessionLocal::FinishPendingSave( bool wait ) {
+	// UpdateScreen while waiting can refresh a save menu. Defer those reads
+	// instead of recursively entering the same transaction or exposing it.
+	if ( sessionFinishingPendingSave ) return false;
+	struct finishingGuard_t {
+		finishingGuard_t() { sessionFinishingPendingSave = true; }
+		~finishingGuard_t() { sessionFinishingPendingSave = false; }
+	} finishingGuard;
+	while ( sessionPendingCheckpoint ) {
+		if ( !sessionPendingCheckpointPreviewReady ) {
+			const int result = renderSystem->PollSavePreview( sessionPendingCheckpointPreview.c_str() );
+			if ( result != 0 || Sys_Milliseconds() - sessionPendingCheckpointSince >= 2000 ) {
+				sessionPendingCheckpointPreviewReady = true;
+				if ( result == 1 && sessionPendingCheckpointPreviewStorage ) {
+					Session_QueueCheckpointPreview( *sessionPendingCheckpointPreviewStorage );
+				} else if ( result != 1 ) {
+					renderSystem->CancelSavePreview();
+					common->Warning( "Checkpoint preview unavailable; preserving the game snapshot" );
+				}
+			}
+		}
+		const bool storageReady = !sessionPendingCheckpointStorage || sessionPendingCheckpointStorage->jobs->TryWait();
+		const bool previewStorageReady = !sessionPendingCheckpointPreviewStorage || !sessionPendingCheckpointPreviewStorage->jobs ||
+			sessionPendingCheckpointPreviewStorage->jobs->TryWait();
+		const bool commitReady = !sessionPendingCheckpointCommit || sessionPendingCheckpointCommit->jobs->TryWait();
+		if ( !sessionPendingCheckpointPreviewReady || !storageReady || !previewStorageReady || !commitReady ) {
+			if ( !wait ) return false;
+			UpdateScreen( false );
+			Sys_Sleep( 1 );
+			continue;
+		}
+		std::function<bool()> finish = std::move( sessionPendingCheckpoint );
+		sessionPendingCheckpoint = nullptr;
+		sessionPendingCheckpointStorage.reset();
+		sessionPendingCheckpointPreviewStorage.reset();
+		sessionPendingCheckpointCommit.reset();
+		if ( !finish() ) return false;
+		// Validation can enqueue a file transaction. Loading/quitting must wait
+		// through that second stage too; gameplay polling yields until next frame.
+		if ( sessionPendingCheckpoint && !wait ) return false;
+	}
+	return true;
+}
+
+void Session_FinishPendingSave() {
+	sessLocal.FinishPendingSave( true );
 }
 
 /*
@@ -8236,6 +8723,7 @@ idSessionLocal::LoadGame
 ===============
 */
 bool idSessionLocal::LoadGame( const char *saveName ) {
+	FinishPendingSave( true );
 #ifdef	ID_DEDICATED
 	common->Printf( "Dedicated servers cannot load games.\n" );
 	return false;
@@ -8441,6 +8929,7 @@ idSessionLocal::DeleteGame
 ===============
 */
 bool idSessionLocal::DeleteGame( const char *saveName ) {
+	FinishPendingSave( true );
 	if ( saveName == NULL || saveName[0] == '\0' ) {
 		return false;
 	}
@@ -9301,6 +9790,7 @@ void idSessionLocal::HandleAppResume( bool afterMapLoad ) {
 }
 
 void idSessionLocal::Frame() {
+	FinishPendingSave( false );
 	HandleAppResume( false );
 	// Re-derive the playing sound world from the current focus state before the
 	// mix runs, so s_muteUnfocused can never leave audio switched off once the

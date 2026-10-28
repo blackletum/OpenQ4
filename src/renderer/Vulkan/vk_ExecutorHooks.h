@@ -54,7 +54,9 @@ void VK_Exec_MarkColorOrigin( bool flipY );
 void VK_Exec_MarkCanonicalWrites();
 VkFrontFace VK_Exec_CanonicalFrontFace();
 int					VK_Exec_ActiveCubeFace( void );
-bool				VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace = 0 );
+// samplePreviousDepth=false is for color-only intermediate passes which do not
+// sample the previous depth attachment; captures still manage their own layouts.
+bool				VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace = 0, bool samplePreviousDepth = true );
 void				VK_Exec_ClearRenderTarget( bool clearColor, bool clearDepth, float depthValue,
 							const float colorValue[ 4 ] );
 bool				VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,

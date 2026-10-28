@@ -3,6 +3,7 @@
 // canonical schema and runtime, then the production title, pause and loading
 // documents (content/baseoq4/pak0/guis) loaded, laid out and driven by state.
 #include "src/ui/retained/Runtime.h"
+#include "src/ui/retained/PlayerSetupRequest.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -191,12 +192,12 @@ static const std::set<std::string> SessionCommands = {"continue","singlePlayer",
 	"demosBack","demosSelect","demosPlay","demosDelete","demosRefresh","demosFilter","demosNewer","demosOlder","modsSelect","modsLoad","deathRestart","deathLoad","deathMenu","creditsBack",
 	"arenaBack","arenaTier0","arenaTier1","arenaTier2","arenaTier3","arenaTier4","arenaMatch0","arenaMatch1","arenaMatch2","arenaMatch3",
 	"arenaTierPrevious","arenaTierNext","arenaEasier","arenaHarder","arenaStart","arenaReset","arenaResetConfirm","arenaResetCancel","arenaRetry","arenaDismiss",
-	"multiplayerJoin","multiplayerCreate","multiplayerSetup","multiplayerBack",
+	"multiplayerJoin","multiplayerCreate","multiplayerSetup","multiplayerBack","playerSetupClose",
 	"createBack","createMap","createStart","createName","createMapCycle","createPassword","createRconPassword","createMapsNewer",
 	"createMapsOlder","createBanList","createBanPick","createBanRemove",
 	"joinBack","joinPick","joinServer","joinNewer","joinOlder","joinRefresh","joinNewList","joinSourceInternet","joinSourceLan",
 	"joinClearSort","joinSortFavorite","joinSortLocked","joinSortName","joinSortPing","joinSortPlayers","joinSortGameType","joinSortMap",
-	"joinSortDedicated","joinSortRepeater","joinFavorite","joinModPrevious","joinModNext","joinFilterFull","joinFilterEmpty","joinFilterPassword","joinGameTypePrevious","joinGameTypeNext","joinClearFilters","noticeAction0","noticeAction1","noticeAction2","audioBack","gameBack","controlsBind","controlsClear","controlsBack","joinConnect","joinSearch","joinSearchClear","joinSortNext",
+	"joinSortDedicated","joinSortRepeater","joinFavorite","joinModPrevious","joinModNext","joinFilterFull","joinFilterEmpty","joinFilterPassword","joinGameTypePrevious","joinGameTypeNext","joinClearFilters","noticeAction0","noticeAction1","noticeAction2","audioBack","gameBack","controlsBind","controlsClear","controlsBack","settingsBack","settingsControls","settingsGame","settingsDisplay","settingsAudio","settingsDefaults","joinConnect","joinSearch","joinSearchClear","joinSortNext",
 	"mpClose","mpMainMenu","mpDisconnect","mpStockPage","mpTeamAction","mpSelectPlayer","mpMute","mpFriend","mpWelcomeAction",
 	"mpVoteYes","mpVoteNo","mpCallVote","mpRail","mpSettingsControls","mpSettingsGame","mpSettingsSystem","mpMatch","mpMatchSelect",
 	"mpSummaryChat","mpAdminPass","mpAdminSelect","mpAdminKick","mpAdminBan","mpAdminSwitch","mpAdminBans","mpAdminBanPick","mpAdminUnban",
@@ -235,6 +236,10 @@ static const std::set<std::string> PlayerSettings = {"ui_handicap","cl_player_ou
 
 static void CheckSessionActions(const Document& document) {
 	for (const auto& [id,action] : document.Model().actions) {
+		if (action.operation == "player.setup.apply") {
+			Check(ValidPlayerSetupAction(action),"Player Setup submits a typed, observed-value and catalog-bound proposal");
+			continue;
+		}
 		// A text field writes the page's own state, then may run its event;
 		// a page may return the focus to a field holding text not yet entered.
 		if (action.operation == "ui.state.set") {
@@ -3593,6 +3598,97 @@ static void CheckCreateServerBanList(ScreenHost& host, const char* path) {
 	Check(text("banModal","display") == "none" && text("advancedModal","display") == "block" && runtime.FocusedControl() == "create-banlist",
 		"closing the list returns to the row that opened it, the dialog still open");
 }
+// The retained SETTINGS page (tools/ui/retained_settings_page.py): the stock
+// settings screen's buttons on the home plates, each asking the session for
+// its page; LOAD DEFAULTS asks first; a return lands on its section.
+static void CheckSettingsPage(ScreenHost& host, const char* path) {
+	const auto source = Read(path);
+	Document document; std::vector<Diagnostic> diagnostics;
+	if (!document.Load(source,diagnostics)) for (const auto& d : diagnostics) std::fprintf(stderr,"%u:%u %s %s\n",unsigned(d.line),unsigned(d.column),d.pointer.c_str(),d.message.c_str());
+	Check(diagnostics.empty() && document.Model().id == "openq4.settings" && document.Model().canvasHeight == 720,
+		"the SETTINGS page validates on the 4:3 canvas");
+	CheckSessionActions(document);
+	const std::pair<const char*,const char*> sections[] = {{"controls","settingsControls"},{"game","settingsGame"},
+		{"display","settingsDisplay"},{"audio","settingsAudio"},{"back","back"}};
+	for (const auto& [control, action] : sections) {
+		const auto* node = document.Model().FindNode(control);
+		Check(node && node->control && node->control->action == action,"each section asks the session for its page");
+	}
+	Check(std::get<std::string>(document.Model().actions.at("back").arguments.at("command").literal) == "settingsBack" &&
+		std::get<std::string>(document.Model().actions.at("settingsDefaults").arguments.at("command").literal) == "settingsDefaults",
+		"BACK and LOAD DEFAULTS' YES reach the session");
+	Runtime runtime(host);
+	Check(runtime.Initialize() && runtime.LoadDocument(source,"guis/menu/settings.q4ui",diagnostics),"the page loads into a runtime");
+	Viewport viewport; viewport.canvasHeight = document.Model().canvasHeight; viewport.canvasMinWidth = document.Model().canvasMinWidth;
+	viewport.width = 1280; viewport.height = 720;
+	std::string error; Runtime::EventEffects effects;
+	const auto press = [&](MenuInput input, double at) { runtime.MenuAction(input,true,at); runtime.MenuAction(input,false,at+.01); };
+	const auto text = [&](const std::string& node, const char* property) {
+		const auto found = runtime.PresentedValue(node,property); return found ? found->text : std::string("?");
+	};
+	Check(runtime.RunEvent("onActivate",0.1,effects,error),"the page arrives");
+	runtime.Frame(viewport,0.4);
+	Check(runtime.FocusedControl() == "controls","from the home it starts on CONTROLS");
+	runtime.TakeActions();
+	press(MenuInput::Down,0.5); press(MenuInput::Accept,0.6);
+	{
+		const auto actions = runtime.TakeActions();
+		Check(actions.size() == 1 && actions[0].action == "settingsGame","GAME OPTIONS asks for its page");
+	}
+	// LOAD DEFAULTS asks first; NO asks nothing, YES asks the session.
+	Check(runtime.FocusControl("defaults",0.7),"focus LOAD DEFAULTS");
+	press(MenuInput::Accept,0.71);
+	{
+		// The plate's event, which the adapter runs.
+		const auto actions = runtime.TakeActions();
+		Check(actions.size() == 1 && actions[0].event == "defaultsmodalshow" && actions[0].action.empty() &&
+			runtime.RunEvent(actions[0].event,0.72,effects,error) && effects.actions.empty(),"LOAD DEFAULTS asks the page, not the session");
+	}
+	runtime.Frame(viewport,1.0);
+	Check(text("defaultsModal","display") == "block","LOAD DEFAULTS opens its question");
+	Check(runtime.FocusedControl() == "defaultsModal_yes" || runtime.FocusedControl() == "defaultsModal_no","the question takes the focus");
+	Check(runtime.FocusControl("defaultsModal_no",1.01),"focus NO");
+	press(MenuInput::Accept,1.02);
+	for (const auto& action : runtime.TakeActions()) {
+		Check(!action.event.empty() && runtime.RunEvent(action.event,1.03,effects,error) && effects.actions.empty(),"NO asks nothing");
+	}
+	runtime.Frame(viewport,1.05); runtime.Frame(viewport,1.5);
+	Check(text("defaultsModal","display") == "none","NO closes the question");
+	Check(runtime.FocusControl("defaults",1.51),"focus LOAD DEFAULTS again");
+	press(MenuInput::Accept,1.52);
+	for (const auto& action : runtime.TakeActions()) Check(runtime.RunEvent(action.event,1.53,effects,error),"LOAD DEFAULTS asks again");
+	runtime.Frame(viewport,1.6); runtime.Frame(viewport,2.0);
+	Check(runtime.FocusControl("defaultsModal_yes",2.1),"focus YES");
+	press(MenuInput::Accept,2.11);
+	{
+		// YES closes the question and asks the session to restore the defaults.
+		const auto actions = runtime.TakeActions();
+		Check(actions.size() == 1 && actions[0].event == "defaultsconfirmed" && runtime.RunEvent(actions[0].event,2.12,effects,error) &&
+			effects.actions.size() == 1 && std::get<std::string>(effects.actions[0].arguments.at("command")) == "settingsDefaults",
+			"YES restores the defaults");
+	}
+	// A return from a section lands on it.
+	runtime.Frame(viewport,2.6); runtime.Frame(viewport,3.5);
+	Check(text("defaultsModal","display") == "none","the question closes");
+	Check(runtime.SetState({{"from_audio",true}},error,3.6) && runtime.RunEvent("onActivate",3.6,effects,error),"back from AUDIO");
+	runtime.Frame(viewport,4.0);
+	Check(runtime.FocusedControl() == "audio","the return lands on AUDIO");
+	Check(runtime.RunEvent("onBack",4.1,effects,error) && effects.actions.size() == 1 &&
+		std::get<std::string>(effects.actions[0].arguments.at("command")) == "settingsBack","Back asks the session to return");
+	// A portrait view uses the same canvas contract as the engine adapter.
+	// Navigation plates deliberately bleed off the leading edge (section 9);
+	// their text and the description must stay wholly inside the view.
+	const auto bounds = [&](const std::string& id) { Bounds b; Check(runtime.GetBounds(id,b),"a SETTINGS page node is laid out"); return b; };
+	Viewport portrait = viewport; portrait.width = 540; portrait.height = 960;
+	runtime.Frame(portrait,4.2);
+	for (const char* id : {"controls-label","defaults-label","back-label","description"}) {
+		const auto box = bounds(id);
+		if (box.x < -.5f || box.x+box.width > 540.5f || box.y+box.height > 960.5f)
+			std::fprintf(stderr,"SETTINGS portrait %s: x=%.2f y=%.2f width=%.2f height=%.2f\n",id,box.x,box.y,box.width,box.height);
+		Check(box.x >= -.5f && box.x+box.width <= 540.5f && box.y+box.height <= 960.5f,"the page fits a portrait view");
+	}
+}
+
 // The retained CONTROLS page (tools/ui/retained_controls.py): each row shows
 // the keys the session publishes for its action; Accept asks the session to
 // wait for a key, the west face button to clear the focused row.
@@ -4411,6 +4507,10 @@ int main(int argc, char** argv) {
  if (argc == 3 && std::string(argv[1]) == "--summary") {
      ScreenHost host; CheckSummary(host,argv[2]);
      std::printf("retained summary: %d checks passed\n",checks); return 0;
+ }
+ if (argc == 3 && std::string(argv[1]) == "--settings") {
+     ScreenHost host; CheckSettingsPage(host,argv[2]);
+     std::printf("retained SETTINGS page: %d checks passed\n",checks); return 0;
  }
  if (argc == 3 && std::string(argv[1]) == "--controls") {
      ScreenHost host; CheckControlsPage(host,argv[2]);

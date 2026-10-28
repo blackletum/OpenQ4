@@ -116,8 +116,10 @@ its translation layer as nested code:
 
 These are additions to the two existing package variants, not a new variant.
 There is no third macOS download and no new `macos_graphics_bridge` value.
-OpenGL remains the default renderer in both packages; the Vulkan renderer is
-selected at run time with `r_renderApi vulkan`. The decision plan is
+Fresh desktop configurations now use Automatic (`best`): Vulkan with OpenGL
+fallback. Existing explicit backend preferences persist. The retained System
+menu can change the backend and GPU; macOS Vulkan qualification remains
+experimental. This 28 October selection-policy change leaves packaging intact. The decision plan is
 [macos-moltenvk-decision.md](archive/2026-10-18/macos-moltenvk-decision.md).
 
 Both files are nested code and follow the existing inside-out signing rule: each

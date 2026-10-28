@@ -4641,7 +4641,11 @@ void Sys_SDL_EmergencyReleaseGameWindow(void) {
 
 #if defined(_WIN32)
 static void SDL3_MinimizeOnFullscreenFocusLoss(void) {
-	if (!s_sdlWindow) {
+	// SDL's opt-out also applies to our Windows fallback. Otherwise a caller
+	// requesting a visible, unfocused fullscreen window still gets minimized
+	// here, even though SDL itself honored the hint. Keep the ordinary desktop
+	// behavior unless the caller explicitly disables it.
+	if (!s_sdlWindow || !SDL_GetHintBoolean(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, true)) {
 		return;
 	}
 

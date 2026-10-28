@@ -1035,6 +1035,7 @@ idGameLocal::Shutdown
 ============
 */
 void idGameLocal::Shutdown( void ) {
+	idSaveGame::ClearDictionaryCache();
 
 	int		i;
 	if ( moduleShutdownStarted ) {
@@ -1217,6 +1218,9 @@ the session may have written some data to the file already
 // mekberg: added saveTypes
 void idGameLocal::SaveGame( idFile *f, saveType_t saveType ) {
 // RAVEN END
+	const bool profileSave = cvarSystem->GetCVarBool( "com_saveGameProfile" );
+	const auto saveClock = [profileSave]() { return profileSave ? idLib::sys->GetClockTicks() : 0.0; };
+	const double profileStart = saveClock();
 	int i;
 	idEntity *ent;
 	idEntity *link;
@@ -1230,6 +1234,7 @@ void idGameLocal::SaveGame( idFile *f, saveType_t saveType ) {
 	}
 
 	idSaveGame savegame( f );
+	const double profilePrepared = saveClock();
 
 	if (g_flushSave.GetBool( ) == true ) { 
 		// force flushing with each write... for tracking down
@@ -1277,6 +1282,7 @@ void idGameLocal::SaveGame( idFile *f, saveType_t saveType ) {
 
 	// write out complete object list
 	savegame.WriteObjectList();
+	const double profileObjects = saveClock();
 
 	program.Save( &savegame );
 
@@ -1464,15 +1470,12 @@ void idGameLocal::SaveGame( idFile *f, saveType_t saveType ) {
 
 	// write out pending events
 	idEvent::Save( &savegame );
+	const double profileGlobals = saveClock();
 
 	savegame.Close();
+	const double profileClosed = saveClock();
 
 // RAVEN BEGIN
-// mekberg: added saveTypes and wrapped saveMessage
-	if ( saveType != ST_AUTO && GetLocalPlayer() && GetLocalPlayer()->GetHud() ) {
-		GetLocalPlayer()->SaveMessage();
-	}
-
 // jshepard: resume weapon operation
 	if(	GetLocalPlayer() && 
 		!GetLocalPlayer()->IsInVehicle() &&	
@@ -1480,6 +1483,19 @@ void idGameLocal::SaveGame( idFile *f, saveType_t saveType ) {
 		GetLocalPlayer()->weapon->PostSave();
 	}
 // RAVEN END
+	if ( profileSave ) {
+		const double scale = 1000.0 / idLib::sys->ClockTicksPerSecond();
+		common->Printf( "Game save profile: prepare=%.3f objects=%.3f globals=%.3f close=%.3f resume=%.3f ms\n",
+			( profilePrepared - profileStart ) * scale, ( profileObjects - profilePrepared ) * scale,
+			( profileGlobals - profileObjects ) * scale, ( profileClosed - profileGlobals ) * scale,
+			( saveClock() - profileClosed ) * scale );
+	}
+}
+
+void idGameLocal::NotifySaveGameComplete() {
+	if ( GetLocalPlayer() && GetLocalPlayer()->GetHud() ) {
+		GetLocalPlayer()->SaveMessage();
+	}
 }
 
 /*
@@ -3135,6 +3151,7 @@ idGameLocal::MapShutdown
 ============
 */
 void idGameLocal::MapShutdown( void ) {
+	idSaveGame::ClearDictionaryCache();
 	Printf( "------------ Game Map Shutdown --------------\n" );
 	
 	gamestate = GAMESTATE_SHUTDOWN;
@@ -5076,6 +5093,7 @@ TIME_THIS_SCOPE("idGameLocal::RunFrame - gameDebug.BeginFrame()");
 	D_DrawDebugLines();
 
 	g_simpleItems.ClearModified();
+	if ( lastCatchupFrame ) idSaveGame::PopulateDictionaryCache();
 	return ret;
 }
 // RAVEN END

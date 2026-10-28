@@ -319,7 +319,9 @@ The MVD-specific interface remains available:
   `mvdFollowNext`, `mvdFollowPrev` and `mvdFreeRoam`;
 - `mvdStatus`, which also reports an active recording
   (`MVD_RECORDING path= staged= bytes= elapsed= snapshots= reliable= records=`)
-  and the last recording result (`MVD_LAST_RESULT state= reason= final= partial=`).
+  and the last recording result (`MVD_LAST_RESULT state= reason= final= partial=`);
+- `mvdLibrary`, which reports the writable library's recording count, bytes,
+  configured quota and `automaticDeletion=0`.
 
 `DEMO_FOLLOW_PREV` walks the same eligibility test as `DEMO_FOLLOW_NEXT`
 backwards (`idGameLocal::SetDemoFollowClient`). A direct slot or name first
@@ -357,7 +359,44 @@ Relevant MVD cvars are:
 - `mvd_snapshotDelay` defaults to 50 ms;
 - `mvd_maxSnapshotMB`, `mvd_maxSizeMB`, and
   `mvd_maxDurationMinutes` bound recording resources;
+- `mvd_libraryQuotaMB` optionally bounds new recordings against existing writable
+  library storage; `0` (the default) disables this extra limit;
 - `mvd_enforceContent` controls the declaration-checksum gate.
+
+### Library retention and quota, 28 October 2026
+
+Recordings are retained until an operator explicitly archives or deletes them.
+This preserves competitive-series journal links. There is no age-based or
+oldest-first pruning, and standard builds do not download recordings or assets
+from servers. Use a separately administered file transfer for sharing demos;
+`mvdLibrary` and recording status are available through the console/rcon.
+
+With `mvd_libraryQuotaMB` enabled, admission counts `.mvd` and `.mvd.part` files
+recursively under this profile's writable `demos/`, including nested competition
+recordings, malformed files and interrupted streams. Read-only search paths do
+not consume this writable-library budget. An unreadable, linked or excessively
+large directory tree refuses admission instead of silently undercounting it.
+The recorder freezes the remaining budget when it starts, reserves index/end
+overhead and refuses a record before it would cross that budget. A quota stop
+retains its complete prefix as a recoverable `.mvd.part`; `mvdStatus` reports the
+failure and path. Existing files are never removed to make room.
+
+This is a recording-admission policy for one recorder per writable profile,
+not a filesystem-wide reservation: external writers and files added after
+admission are not tracked. `mvdRecover` is an explicit salvage operation and
+can create a second copy beyond the quota; archive space first if needed.
+Changing the CVar during a recording applies to the next recording.
+
+Native fixtures cover nested/partial/Unicode names, linked roots, exact footer
+boundaries and overflow. Production recording failure cases cover quota stops
+with the per-file cap disabled. The staged GL smoke in
+`.tmp/mp-completion-20261028/mvd-quota/` preserves a synthetic 2,031,616-byte
+occupancy file, refuses a 1 MiB quota without opening a recording, then admits
+64 KiB under a 2 MiB quota. The stopped library contains 2,096,741 bytes, below
+its 2,097,152-byte limit. Recovery retains the source and produces a playable
+demo; its engine render-target capture was inspected. The report hashes the
+runtime before and after and records exit 0. Repeat with
+`tools/tests/mp_mvd_quota_smoke.py --basepath <retail-root> --output-dir <new-dir>`.
 
 ## Playback capability matrix
 
@@ -497,6 +536,43 @@ is not drawn until playback runs. In the first run, both seek frames at the
 first checkpoint also lacked one nearby player that continuous play showed.
 The rewind frame also lacked the map's light-shaft effects, because no frames
 had run since the map reload.
+
+## Paused seek weapon catch-up, 28 October 2026
+
+The retained 24 October Red Rover recording reproduces the missing first-person
+weapon at living-player checkpoints. A render definition alone was insufficient
+evidence: it existed, but the weapon was still raising below the camera. The
+snapshot reader had requested catch-up; `idPlayer::UpdateWeapon` recreated the
+weapon and cleared that request before `Weapon_Combat` could honour it.
+
+Initialization now calls the existing `NetCatchup` state when requested, before
+clearing the flag. Normal spawns keep their raise animation. The executable
+`mvd_seek_weapon_state.py` runs the production initialization block, verifies
+once-only catch-up and absent/dead-player admission, and rejects the old code.
+
+`mp_mvd_seek_smoke.py` checks paused forward/backward seeks at 12, 26, 46, 66,
+86, 12 and 46 seconds in the same recording. It checks exact playback time,
+unchanged pause/follow state, ready visible weapons for living loaded players,
+engine screenshots and absence of frozen client moveables. The OpenGL runs
+pass under `.tmp/mp-completion-20261028/mvd-catchup-gl2/` and
+`mvd-final-gl/`; their reports bind the tested binaries and recording. The
+inspected 46-second OpenGL capture shows the machinegun again. Earlier
+`mvd-baseline/` captures preserve the missing-weapon control; its original model
+presence check alone did not detect the missing visual, so it is not a pass for
+this corrected gate. The directories `mvd-catchup-vk/` and `mvd-final-vk/` do
+not qualify Vulkan: the harness incorrectly passed `vk`, which selected OpenGL.
+The corrected probe passes `vulkan` and verifies renderer activation/gameplay
+in the engine log, as well as rejecting runtime mutation during a run.
+All seven corrected Vulkan checkpoints pass under
+`.tmp/mp-completion-20261028/mvd-qualified-vulkan/`, including the actual API
+reported at each capture. The inspected 46-second engine capture shows the
+machinegun and clean scene. An intermediate `mvd-final-vulkan/` run retains a
+test failure: it required a shadow-map log line even when shadow maps were
+disabled; the renderer itself activated and captured correctly.
+
+This resolves the paused-seek weapon finding. Independent keyframes, transient
+effects reconstruction, structured markers and the other MP-05 scope
+remain separate acceptance gates.
 
 ## Update policy
 

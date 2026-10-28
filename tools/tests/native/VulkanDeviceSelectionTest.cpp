@@ -1,6 +1,7 @@
 // Copyright (C) 2026 DarkMatter Productions
 // Fake Vulkan queries drive the production selector; no loader or GPU required.
 #include "../../../src/renderer/Vulkan/VulkanDeviceSelection.h"
+#include "../../../src/renderer/RendererDeviceCatalog.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -54,6 +55,7 @@ struct Queue {
 };
 
 struct Device {
+	unsigned char identity=0;
 	VkPhysicalDeviceProperties properties = {};
 	VkBool32 dynamicRendering = VK_TRUE;
 	VkBool32 synchronization2 = VK_TRUE;
@@ -103,6 +105,13 @@ VKAPI_ATTR void VKAPI_CALL Properties( VkPhysicalDevice handle, VkPhysicalDevice
 	auto &device = Get( handle );
 	++device.propertiesCalls;
 	*properties = device.properties;
+}
+VKAPI_ATTR void VKAPI_CALL Properties2(VkPhysicalDevice handle,VkPhysicalDeviceProperties2* properties) {
+	Require(properties->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,"properties2 type");
+	auto* id=static_cast<VkPhysicalDeviceIDProperties*>(properties->pNext);
+	Require(id && id->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES,"identity query type");
+	id->deviceUUID[15]=Get(handle).identity;
+	properties->properties=Get(handle).properties;
 }
 VKAPI_ATTR void VKAPI_CALL Features( VkPhysicalDevice handle, VkPhysicalDeviceFeatures2 *features ) {
 	auto &device = Get( handle );
@@ -178,11 +187,12 @@ void Report( uint32_t index, const VkPhysicalDeviceProperties &properties, const
 }
 
 const vkDeviceSelectionApi_t api = { PhysicalDevices, Properties, Features, Extensions,
-	Queues, SurfaceSupport, Capabilities, Formats, FormatProperties, MemoryProperties };
+	Queues, SurfaceSupport, Capabilities, Formats, FormatProperties, MemoryProperties, Properties2 };
 
 void Reset( const char *name, size_t count = 2 ) {
 	caseName = name;
 	devices.assign( count, Device() );
+	for(unsigned i=0; i<count; ++i) devices[i].identity=static_cast<unsigned char>(i+1);
 	deviceQuery = {};
 	rejected.clear();
 	rejectionResults.clear();
@@ -190,7 +200,7 @@ void Reset( const char *name, size_t count = 2 ) {
 	probeQueryResults.clear();
 }
 vkDeviceSelection_t Select( int expected, int forced = -1, VkResult expectedFailure = VK_ERROR_FEATURE_NOT_PRESENT,
-		uint32_t firstIndex = 0 ) {
+		uint32_t firstIndex = 0, const char* preference="auto" ) {
 	vkDeviceSelection_t selected = {};
 	selected.device = Handle( 10 );
 	selected.index = 10;
@@ -199,7 +209,7 @@ vkDeviceSelection_t Select( int expected, int forced = -1, VkResult expectedFail
 	selected.hasPortabilitySubset = true;
 	selected.hasSampleLocations = true;
 	const VkResult result = VK_SelectPhysicalDevice( api, VK_NULL_HANDLE, VK_NULL_HANDLE, forced, selected, Report,
-			nullptr, firstIndex );
+			nullptr, firstIndex, preference );
 	if ( expected < 0 ) {
 		Require( result == expectedFailure, "unexpected selection error" );
 		Require( selected.device == VK_NULL_HANDLE && selected.index == 0 && selected.queueFamily == 0
@@ -232,12 +242,12 @@ void ProbeReport( const vkDeviceProbeInfo_t &info, VkResult result, void * ) {
 }
 
 vkDeviceProbeInfo_t Probe( int expected, bool verbose = false, int forced = -1,
-		VkResult expectedFailure = VK_ERROR_FEATURE_NOT_PRESENT ) {
+		VkResult expectedFailure = VK_ERROR_FEATURE_NOT_PRESENT, const char* preference="auto" ) {
 	vkDeviceProbeInfo_t selected = {};
 	selected.physicalDevice = Handle( 10 );
 	selected.index = 10;
 	selected.meetsRequirements = true;
-	const VkResult result = VK_SelectProbeDevice( api, VK_NULL_HANDLE, forced, verbose, selected, ProbeReport );
+	const VkResult result = VK_SelectProbeDevice( api, VK_NULL_HANDLE, forced, verbose, selected, ProbeReport, nullptr, preference );
 	if ( expected < 0 ) {
 		Require( result == expectedFailure, "unexpected probe selection error" );
 		Require( selected.physicalDevice == VK_NULL_HANDLE && selected.index == 0
@@ -324,7 +334,7 @@ uint32_t Bit( VkPresentModeKHR mode ) { return 1u << static_cast<uint32_t>( mode
 
 int main() {
 	Reset( "first suitable; no optional features required" ); Select( 0 );
-	Require( devices[1].propertiesCalls == 0, "automatic selection queried later devices unnecessarily" );
+	Require( devices[1].propertiesCalls == 1, "automatic selection did not rank later devices" );
 	Reset( "older API before suitable GPU" ); devices[0].properties.apiVersion = VK_API_VERSION_1_2;
 	SkipFirst( VK_ERROR_INCOMPATIBLE_DRIVER ); Require( devices[0].featureCalls == 0, "queried unsupported feature structure" );
 	Reset( "descriptor ceiling" ); devices[0].properties.limits.maxBoundDescriptorSets = 7; SkipFirst( VK_ERROR_FEATURE_NOT_PRESENT );
@@ -397,12 +407,12 @@ int main() {
 	const auto withoutOptional = Select( 0 );
 	Require( !withoutOptional.hasPortabilitySubset && !withoutOptional.hasSampleLocations, "optional extension invented" );
 	Reset( "automatic selection resumes after a failed adapter", 3 ); Select( 1, -1, VK_ERROR_FEATURE_NOT_PRESENT, 1 );
-	Require( devices[0].propertiesCalls == 0 && devices[2].propertiesCalls == 0, "resume queried an earlier or later device" );
+	Require( devices[0].propertiesCalls == 1 && devices[2].propertiesCalls == 1, "ranked resume requires complete inventory" );
 	Reset( "resume skips an unsuitable next device", 3 ); devices[1].dynamicRendering = VK_FALSE;
 	Select( 2, -1, VK_ERROR_FEATURE_NOT_PRESENT, 1 );
-	Require( rejected == std::vector<uint32_t>{ 1 } && devices[0].propertiesCalls == 0, "resume reported the wrong candidates" );
+	Require( rejected == std::vector<uint32_t>{ 1 } && devices[0].propertiesCalls == 1, "resume reported the wrong candidates" );
 	Reset( "resume past the last device" ); Select( -1, -1, VK_ERROR_FEATURE_NOT_PRESENT, 2 );
-	Require( devices[0].propertiesCalls == 0 && devices[1].propertiesCalls == 0 && rejected.empty(), "queried a device below the resume point" );
+	Require( devices[0].propertiesCalls == 1 && devices[1].propertiesCalls == 1 && rejected.empty(), "incomplete exhausted inventory" );
 	Reset( "resume when later devices are all unsuitable", 3 ); devices[1].synchronization2 = VK_FALSE; devices[2].synchronization2 = VK_FALSE;
 	Select( -1, -1, VK_ERROR_FEATURE_NOT_PRESENT, 1 );
 	Require( rejected == std::vector<uint32_t>{ 1, 2 }, "did not report every remaining candidate" );
@@ -410,9 +420,34 @@ int main() {
 	Require( deviceQuery.countCalls == 0 && devices[0].propertiesCalls == 0, "explicit retry enumerated or substituted" );
 	Reset( "explicit index beyond the old override cap", 20 ); Select( 17, 17 );
 	Require( devices[0].propertiesCalls == 0 && devices[16].propertiesCalls == 0, "forced index queried another device" );
+	Reset("hybrid integrated before discrete");
+	devices[0].properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+	devices[0].localBytes=UINT64_MAX;
+	devices[1].properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+	Select(1); Select(0,-1,VK_ERROR_FEATURE_NOT_PRESENT,1);
+	const std::string dedicatedId=Select(1).id;
+	Select(0,-1,VK_ERROR_FEATURE_NOT_PRESENT,0,"00000000000000000000000000000001");
+	std::swap(devices[0],devices[1]);
+	Select(0,-1,VK_ERROR_FEATURE_NOT_PRESENT,0,dedicatedId.c_str());
+	Select(-1,-1,VK_ERROR_INITIALIZATION_FAILED,1,dedicatedId.c_str());
+	Select(-1,-1,VK_ERROR_FEATURE_NOT_PRESENT,0,"ffffffffffffffffffffffffffffffff");
+	Select(-1,-1,VK_ERROR_INITIALIZATION_FAILED,0,"-1;quit");
+	Select(1,1,VK_ERROR_FEATURE_NOT_PRESENT,0,dedicatedId.c_str()); // Diagnostic override wins.
+	devices[0].dynamicRendering=VK_FALSE; Select(1);
+	Reset("software memory never beats integrated hardware");
+	devices[0].properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_CPU; devices[0].localBytes=UINT64_MAX;
+	devices[1].properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU; Select(1);
+	Reset("larger discrete GPU preferred regardless of index");
+	for(auto& d:devices) d.properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+	devices[1].localBytes*=2; Select(1); std::swap(devices[0],devices[1]); Select(0);
+	Reset("stable UUID breaks same-class ties after reordering");
+	std::swap(devices[0],devices[1]); Select(1);
+	Reset("unknown identity still allows automatic but not named choice");
+	devices[0].identity=0; devices[1].identity=0; Select(0);
+	Select(-1,-1,VK_ERROR_FEATURE_NOT_PRESENT,0,"00000000000000000000000000000001");
 	const int rendererCases = passed;
-	Reset( "quiet probe stops at first suitable" ); Probe( 0 );
-	Require( devices[1].propertiesCalls == 0 && probeReports.size() == 1, "quiet probe queried later GPU" );
+	Reset( "quiet probe ranks the complete inventory" ); Probe( 0 );
+	Require( devices[1].propertiesCalls == 1 && probeReports.size() == 2, "quiet probe skipped a later GPU" );
 	Reset( "verbose probe scores suitable candidates" );
 	devices[0].properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
 	devices[1].properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
@@ -489,6 +524,27 @@ int main() {
 	Require( !Probe( 0 ).hasDescriptorIndexing, "partial descriptor indexing reported as complete" );
 	Reset( "no suitable probe candidate" ); for ( auto &device : devices ) { device.dynamicRendering = VK_FALSE; } Probe( -1, true );
 	Reset( "empty probe device list", 0 ); Probe( -1 );
+	Reset("quiet probe prefers discrete and agrees with verbose");
+	devices[0].properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU; devices[0].localBytes=UINT64_MAX;
+	devices[1].properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+	const auto quiet=Probe(1); const auto verbose=Probe(1,true);
+	Require(quiet.score==verbose.score && !strcmp(quiet.id,verbose.id),"probe policies disagree");
+	Probe(0,false,-1,VK_ERROR_FEATURE_NOT_PRESENT,"00000000000000000000000000000001");
+	Probe(-1,false,-1,VK_ERROR_FEATURE_NOT_PRESENT,"ffffffffffffffffffffffffffffffff");
+	renderDeviceCatalog_t catalog{};
+	Require(VK_QueryDeviceCatalog(api,VK_NULL_HANDLE,catalog)==VK_SUCCESS && catalog.count==2 &&
+		catalog.devices[0].usable && catalog.devices[1].preferred && !catalog.devices[0].preferred,"catalog preference/admission");
+	Reset("same physical GPU exposed by two ICDs"); devices[1].identity=devices[0].identity;
+	devices[0].dynamicRendering=VK_FALSE;
+	Require(VK_QueryDeviceCatalog(api,VK_NULL_HANDLE,catalog)==VK_SUCCESS && catalog.count==1 && catalog.devices[0].usable,"duplicate physical UUIDs not coalesced");
+	Reset("catalog refuses partial physical inventories",33);
+	Require(VK_QueryDeviceCatalog(api,VK_NULL_HANDLE,catalog)==VK_INCOMPLETE && catalog.count==0,"catalog silently truncated");
+	Reset("catalog retains but disables incompatible GPU"); devices[0].dynamicRendering=VK_FALSE;
+	Require(VK_QueryDeviceCatalog(api,VK_NULL_HANDLE,catalog)==VK_SUCCESS && catalog.count==2 &&
+		!catalog.devices[0].usable && catalog.devices[1].usable,"unsupported GPU selectable");
+	Reset("catalog cannot persist an absent UUID"); devices[0].identity=0;
+	Require(VK_QueryDeviceCatalog(api,VK_NULL_HANDLE,catalog)==VK_SUCCESS && !catalog.devices[0].usable,"absent UUID selectable");
+	++passed;
 	const int probeCases = passed - rendererCases;
 
 	Reset( "present modes use the queried device", 1 );

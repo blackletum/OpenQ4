@@ -228,7 +228,7 @@ typedef struct vkShadowBlock_s {
 	float			texelSize[ 4 ];		// x,y: 1 / atlas dimensions, z: r_shadowMapTexelBiasScale
 	float			filterParams[ 4 ];	// x: radius, y: taps, z: mode, w: hardware compare
 	float			pcssParams[ 4 ];	// x: light radius, y: max radius, z: effective radius, w: receiver-plane bias
-	float			debugParams[ 4 ];	// x: r_shadowMapDebugMode, y: receiver fallback reason
+	float			debugParams[ 4 ];	// x: debug mode, y: fallback reason, zw: PCSS ownership UV offset
 	float			momentAtlas[ 4 ];	// translucent moments: depth->moment UV scale (0 = none), bias u, v, 1 / moment atlas size
 	float			momentParams[ 4 ];	// x: density, y: min variance, z: bleed reduction, w: filter radius
 } vkShadowBlock_t;
@@ -3832,6 +3832,13 @@ static int VK_Inter_WriteShadowSlice( const viewEntity_t *space ) {
 	block.pcssParams[ 3 ] =
 			r_shadowMapReceiverPlaneBias.GetBool() ? 1.0f : 0.0f;
 	block.debugParams[ 0 ] = VK_ShadowMap_DebugModeValue();
+	if ( passState->unionLocalDepth ) {
+		// Both blocks share the cascade layout; a tile-aligned UV translation
+		// selects the global casters for every GLOBAL receiver depth sample.
+		const vkShadowPassState_t &local = state->passes[VK_SHADOW_RECEIVER_LOCAL];
+		block.debugParams[ 2 ] = local.atlasRects[ 0 ][ 0 ] - passState->atlasRects[ 0 ][ 0 ];
+		block.debugParams[ 3 ] = local.atlasRects[ 0 ][ 1 ] - passState->atlasRects[ 0 ][ 1 ];
+	}
 	if ( passState->momentValid ) {
 		memcpy( block.momentAtlas, passState->momentAtlas, sizeof( block.momentAtlas ) );
 		VK_Inter_MomentParams( block.momentParams, filterSettings.filterRadius );

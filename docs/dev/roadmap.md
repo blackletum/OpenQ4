@@ -56,17 +56,17 @@ future work and decisions are coordinated here.
 
 ## Report and contribution traceability
 
-Reviewed 26 October 2026. These links connect the reports and contributions
+Reviewed 28 October 2026. These links connect the reports and contributions
 to the existing workstreams; they do not create separate schedules or promise a
 release. GitHub remains the source for subsequent discussion and PR/check state.
 
 | Report or contribution | Owning work and remaining acceptance |
 | --- | --- |
-| [#168: disappearing menu text after preset changes](https://github.com/themuffinator/openQ4/issues/168) | UI-01/UI-07, REN-04: the earlier glyph reload fix is partial evidence; qualify current GL/Vulkan preset changes and seek confirmation of the intermittent symptom. |
+| [#168: disappearing menu text after preset changes](https://github.com/themuffinator/openQ4/issues/168) | UI-01/UI-07, REN-04: the earlier glyph reload fix is partial evidence; qualify current GL/Vulkan preset changes and seek confirmation of the intermittent symptom. Defer the requested retest until #205 supplies a verified replacement for the defective 26 October package. |
 | [#169: resolution scaling affects menus](https://github.com/themuffinator/openQ4/issues/169) | REN-04/UI-07: the contributor's 22 October Linux/OpenGL retest preserves menu sharpness in mode 1; legacy mode 0 still crops at 25%. Qualify current stock/retained UI, Vulkan, in-game HUD, resize and video restart before closure. |
-| [#170: weapon effects, sound and reload animation](https://github.com/themuffinator/openQ4/issues/170) | Q4-03/AUD-01/HF-04: preserve the merged BSE sound-diversity fix; identify and qualify each remaining weapon/effect/animation symptom separately. |
+| [#170: weapon effects, sound and reload animation](https://github.com/themuffinator/openQ4/issues/170) | Q4-03/AUD-01/HF-04: preserve the merged BSE sound-diversity fix; identify and qualify each remaining weapon/effect/animation symptom separately. The offered 26 October package cannot save; #205 must provide a verified replacement before the requested development-build retest. |
 | [#181: rebuilt hub2 cannot load](https://github.com/themuffinator/openQ4/issues/181) | CORE-05: the compiler allocation crash was fixed by #182; oversized runtime surfaces and silhouette warnings remain. |
-| [#183: machinegun transparency](https://github.com/themuffinator/openQ4/issues/183) | Q4-01/VK-04/REN-08: reporter save/log and both-backend stock-data reproduction received; scope fixes are in `2126a232`. A Windows x64 development package from the passing 26 October job is linked on the issue; await reporter confirmation on the same view. |
+| [#183: machinegun transparency](https://github.com/themuffinator/openQ4/issues/183) | Q4-01/VK-04/REN-08: closed on 28 October after the reporter confirmed the `2126a232` scope corrections on both GL/Vulkan, in separate and normal installations. This is a development fix, not a new release. The test package's separate save failure remains open as #205, addressed by #203. |
 | [#184: Tech Li at the hangar1 lift](https://github.com/themuffinator/openQ4/issues/184) | Q4-02: the supplied save identifies the Turbo/scripted-mover timing race addressed by #198. #189 is separate unreachable-patient recovery. Qualify the fresh lift sequence; the proposed prevention does not repair already-stuck saves, which still need a pre-lift save. |
 | [#185: GOG offline installation on macOS](https://github.com/themuffinator/openQ4/issues/185) | PLAT-04/REL-01: provide extraction/path guidance and qualify the reporter's installer/package combination; do not imply that openQ4 imports Windows installers. |
 | [#186: subtitles](https://github.com/themuffinator/openQ4/issues/186) | AUD-07/UI-02/UI-04: define supported dialogue text, timing, localization and accessible display coverage. |
@@ -75,11 +75,13 @@ release. GitHub remains the source for subsequent discussion and PR/check state.
 | [#180: GUI save migration PR](https://github.com/themuffinator/openQ4/pull/180) | Q4-05/Q4-07/UI-09: source review approved after persistent value/evaluation-state and input-retention fixes. Contributor Linux restore/update evidence is retained; completed current CI and remaining historical-save platform qualification are distinct gates. |
 | [#189: medic approach watchdog PR](https://github.com/themuffinator/openQ4/pull/189) | Q4-02: bounded stall recovery, SP/MP parity, restore behavior and normal heal/progression regression; does not by itself prove #184 resolved. |
 | [#190: numeric clipboard harness PR](https://github.com/themuffinator/openQ4/pull/190) | CORE-04/GOV-02: mock-interface fix merged; the subsequent atlas math-include fix passes locally. Complete fresh CI without suppressing checks; neither fixture fix alone qualifies the full product. |
-| [#191: parallel validation PR](https://github.com/themuffinator/openQ4/pull/191) | GOV-02/CORE-04: source review approved; 17 of 18 checks passed at `83a78672`. Windows ARM64 still fails locked harness cleanup (#201) and the outer durable-file timeout; rerun after those prerequisites without suppressing checks. |
+| [#191: parallel validation PR](https://github.com/themuffinator/openQ4/pull/191) | GOV-02/CORE-04: source review approved; 16 of 18 checks passed at `a721db93`. Windows ARM64 reached 280/281 native tests, failing only the three locked-harness cleanup cases covered by #201; Linux sync-window-ops exhausted its 90-minute job limit. Qualify #191 with #201 and adequate measured job time without suppressing checks. |
 | [#192: weapon GUI events prevent save loading](https://github.com/themuffinator/openQ4/issues/192) / [#193: backlog recovery PR](https://github.com/themuffinator/openQ4/pull/193) | Q4-05/Q4-07: source review approved; contributor Linux synthetic-save evidence demonstrates the queue defect and recovery. Complete integration/CI and qualify the reporter's failure before closing #192. |
 | [#198: Turbo scripted-mover timing PR](https://github.com/themuffinator/openQ4/pull/198) | Q4-02: source review approved, preserving plain scripted-mover timing while keeping doors/platforms fast; current CI and the #184 save-recovery limitation remain explicit. |
-| [#201: Windows ARM64 harness cleanup PR](https://github.com/themuffinator/openQ4/pull/201) | GOV-02/CORE-04: source review approved; refresh after #202 and validate on the native ARM64 runner. The durable-file timeout and correctly located push-log upload are separate CI prerequisites. |
-| [26 October main verification](https://github.com/themuffinator/openQ4/actions/runs/40277373140) | GOV-02/CORE-04/PLAT-04: Windows x64, Linux x64/ARM64 and three macOS jobs passed. Windows ARM64 has the failures above; macOS Intel Metal timed out in renderer-foundation self-tests. Preserve failed evidence and require a completed rerun; a passing Windows package does not qualify those targets. |
+| [#201: Windows ARM64 harness cleanup PR](https://github.com/themuffinator/openQ4/pull/201) | GOV-02/CORE-04: source review approved; `14b965be` has 10 passing checks, six cancelled and one skipped. Its sequential ARM64 job exhausted 90 minutes before native tests; qualify with #191 rather than treating that cancellation as cleanup evidence. |
+| [#203: complete push-payload history](https://github.com/themuffinator/openQ4/pull/203) / [#205: packaged saves rejected as build 1](https://github.com/themuffinator/openQ4/issues/205) | REL-01/Q4-05/GOV-02: source review approved at `e178a61b`; the exact build-history regression and all three shallow-checkout negative controls pass on Windows. Complete CI, produce a fresh push payload, verify its real build number and in-game save/load, then replace defective download recommendations. Keep #205 open through that package qualification. |
+| [#204: missing music in signed macOS 0.14.000](https://github.com/themuffinator/openQ4/issues/204) | PLAT-04/AUD-01: the report uses MacSourcePorts' signed build of withdrawn 0.14.0. Request the affected level, music volume and engine/OpenAL log; the cause and reproduction on available 0.13.2 are unconfirmed. Signing does not establish a later engine revision. Preserve saves and package separation in any comparison; 0.13.2 cannot read format-4 saves. |
+| [26 October main verification](https://github.com/themuffinator/openQ4/actions/runs/40277373140) | GOV-02/CORE-04/PLAT-04: Windows x64, Linux x64/ARM64 and three macOS jobs passed. Windows ARM64 has the failures above; macOS Intel Metal timed out in renderer-foundation self-tests. The Windows payload subsequently proved unable to save because its shallow checkout produced build 1 (#205). Preserve those failures; passing CI did not qualify packaged save/load or the failed targets. |
 
 ## Current baseline to preserve
 
@@ -87,14 +89,14 @@ release. GitHub remains the source for subsequent discussion and PR/check state.
 | --- | --- |
 | High refresh | Rendering is decoupled from exact 60 Hz scheduling. Camera, view weapon, eligible world transforms and skeletons interpolate; local multiplayer body presentation, ordinary joint modifiers, clock-phase correction and weapon GUI, muzzle-flash and flashlight lights are aligned. Alternate views, client debris and active ragdoll poses share the clock, and opt-in late look turns the drawn view toward unapplied input. Remote actors and the recorded exclusions in the [presentation owners contract](presentation-owners.md) remain separate work. |
 | Game time | Ordinary game code advances in 16 ms steps. Network game timestamps deliberately use that same clock while scheduling uses the exact 60 Hz ladder. Do not apply a global 16-to-16.667 ms conversion as a presentation fix. |
-| Vulkan | Stable supported opt-in on Windows x64 following the October NVIDIA/Intel qualification; experimental on Linux and macOS. OpenGL remains the desktop default and `best` selection. Historical failed runs remain evidence for their specific builds and conditions. |
+| Vulkan | Stable supported on Windows x64 following the October NVIDIA/Intel qualification; experimental on Linux and macOS. The user-requested 28 October GPU policy makes fresh desktop `best` prefer compatible high-performance Vulkan hardware with OpenGL fallback; saved explicit choices persist. Android keeps GLES. This does not expand hardware qualification. Historical failed runs remain evidence for their specific builds and conditions. |
 | Modern rendering | Native GL/Vulkan PBR is default-on for authored PBR materials; stock materials stay classic. Shared classic rendering domains exist but remain default-off. Aggregate modern-visible lighting still has `MODERN_LIGHTING_PARITY_PROVEN_DOMAINS=0`; these are different promotion decisions. |
 | Temporal rendering | Automatic TAAU supports subnative bilinear/bicubic scaling and dynamic resolution on eligible desktop GL/Vulkan paths; crop/nearest modes and VR are excluded. Rigid, skinned and first-person weapon motion vectors and reactive effect coverage exist. Dynamic resolution and GPU skinning remain opt-in. GLES has no temporal resolve. |
 | VR | The active source implements OpenGL PC OpenXR, stereo, tracked input, room scale, crouch, two-handed aiming, haptics, comfort controls and vehicle views. Vulkan/EGL/Quest work is recoverable from archived history, not active implementation. Real-headset qualification remains open. |
 | Android | Experimental ARM64/API 24+ GLES3 client, SDLActivity host, in-tree game modules, signed APK/release verification and dependency licensing are implemented. Device qualification and integration of archived onboarding/touch/lifecycle work remain open. |
-| UI | Many retained screens and HUDs now run by default. The register preserves 349 rows, 310 active requirements and 39 superseded rows. UI-10 reconciled retail/base/Awakening mounts to 358 source/include-bound variants; all remain unaccepted for migration. Historical hashes and invalidated inventory acceptance are preserved. |
+| UI | Many retained screens and HUDs now run by default. The register preserves 350 rows, 311 active requirements and 39 superseded rows. UI-10 reconciled retail/base/Awakening mounts to 358 source/include-bound variants; all remain unaccepted for migration. Historical hashes and invalidated inventory acceptance are preserved. |
 | Retail and Awakening | Canonical SP/MP sources and BSE are in-tree. Awakening is additive SP content under `q4xbase`, not a separate multiplayer module. Retail decl and BSE audits have already resolved extensive earlier gaps. |
-| Multiplayer | Dual-stack networking, pure asset checks and bounded rcon2 exist. Actual MP defaults are `net_mpLagCompensation 0` and `net_mpPredictMode 0`; the player networking guide now agrees. `RemoteExtrapolationMS()` is still a zero placeholder because the server cannot observe the client's prediction choice. Retail 2.85 interoperability is outside the current openQ4 2.41 protocol contract. |
+| Multiplayer | Dual-stack networking, pure asset checks and bounded rcon2 exist. Actual MP defaults are `net_mpLagCompensation 0` and `net_mpPredictMode 0`. Clients advertise bounded remote extrapolation, and server rewind subtracts it from the displayed pose age; the coupled implementation and remaining peer qualification are recorded under MP-07. Retail 2.85 interoperability is outside the current openQ4 2.41 protocol contract. |
 | Platforms | Windows x64 and Linux x64/Steam Deck are first-class platform targets; macOS arm64 and Linux ARM64 are previews; Windows ARM64 and Android are experimental. Renderer tiers are separate from platform tiers. |
 | Foundations and tools | The bounded job service, worker DDS prefetch, generated-cache experiments, native dmap/AAS commands, save-format compatibility readers and experimental map workspace already exist. Their remaining scope is defined below. |
 
@@ -284,6 +286,13 @@ Sources: [historical high-refresh scope](archive/2026-10-18/high-framerate-rende
   30/60/120/144/165/240/360 and uncapped, VSync/VRR where available, low-FPS catch-up,
   menu/loading/background policy and preset/Steam Deck overrides. Verify physical
   motion and pacing; a cap, average FPS or hidden capture alone cannot close it.
+  Added reference, 27 October: native 2560 x 1440 fullscreen `game/airdefense1`
+  starting-position rotations with the Remastered HUD and revised Ultra settings
+  must keep **every frame <=6.67 ms**. The first complete maximum-quality Vulkan
+  run with all effects and four cascades averages 38.5 FPS with a 37.55 ms
+  maximum on Vulkan (OpenGL: 30.9 FPS / 69.85 ms); qualification remains open.
+  Earlier MSAA-off measurements do not qualify this reference. See the
+  [airdefense checkpoint](ui/runtime-performance.md#airdefense-maximum-quality-reference-27-october-2026).
   Progress: targets, budgets and the measurement procedure are declared in the
   [presentation owners contract](presentation-owners.md), with
   `presentation_look_runtime.py` for engine-side latency and smoothness; its
@@ -518,6 +527,145 @@ Sources: [modernization history](archive/2026-10-18/idtech5-modernization-roadma
   budgets. Decide explicit support or exclusion for compressed, authored-HDR and
   oversized inputs; an HDR generator does not establish a general HDR loader.
 - [ ] **REN-07 — P2, measured optimization: remove demonstrated CPU/GPU stalls.**
+  The 28 October [preset audit](ui/performance-presets.md#preset-and-detection-audit-28-october-2026)
+  adds Enhanced between Balanced and Quality and replaces host-wide memory
+  ranking with active-device, shared-memory, resolution and CPU-aware detection.
+  The follow-up applies the same policy on first launch, preserves existing
+  configs/launch overrides, caps Android conservatively and intersects platform
+  hints with verified memory limits. The seven-level ladder is sufficient.
+  Further review separates Apple GL 2.1's optional post-effect limit from classic
+  material capability, keeps failed SDL RAM queries unknown, and prevents repair
+  of an unset legacy classification from overwriting saved graphics settings.
+  The drawable follow-up also bounds automatic scene scale on high-resolution
+  UMA/mobile displays, disables unavailable post AA, and routes stock quality
+  commands through the canonical profiles. See the same audit for policy and
+  validation limits; manual quality levels remain unchanged.
+  Preset/runtime checks are separate from the still-open frame-time gate.
+  The [backend/device follow-up](ui/performance-presets.md#rendering-backend-and-device-selection-28-october-2026)
+  groups renderer and stable GPU selection with the presets, prefers compatible
+  discrete hardware, and checks active-device detection after a menu restart.
+  Windows NVIDIA/Intel and simulated cross-platform selection coverage do not
+  close the physical Linux/macOS/Android or frame-time gates.
+  As requested on 28 October, subsequent airdefense qualification uses Quality
+  (one preset below Ultra), native 2560 x 1440 fullscreen and the Remastered HUD.
+  Disable the preset's 144 FPS cap for measurement; retain the strict per-frame
+  150 FPS floor and checkpoint-stall requirement. Ultra remains maximum quality;
+  the maximum-quality measurements below are historical, not the current gate.
+  Current airdefense work adds strict full-window pacing evidence, cached-depth
+  particle sorting and retained HUD vertex/frame-query reductions. Maximum
+  quality currently remains GPU-bound; no frame-rate gate is closed.
+  Bounding Vulkan shadow clears to occupied fresh blocks saves roughly 2 ms
+  in paired native fullscreen rotations, with pixel-identical frozen captures.
+  Avoiding unused post-process depth transitions and redundant MSAA capture
+  blits saves a further roughly 0.1–0.2 ms and 0.8–0.9 ms in paired probes;
+  render-target/HDR checks pass. A stale backend-view pointer found by temporal
+  restart testing is fixed, and temporal/probe-source restart checks pass.
+  Fresh opaque shadow ownership depth reuse saves another 0.38 ms on average
+  across five matched rotations; 100 atlas/tile resize cycles remain bounded.
+  Sampling the exact PCSS ownership depth union then removes the copy, saving
+  2.53 ms across five matched rotations. Four view pairs are RGB-identical;
+  Vulkan validation and another 100 atlas/tile resize cycles pass. Individual
+  frame spikes still exceed the target, so this does not close the strict gate.
+  Default-cache GPU diagnostics now isolate map production at 6.715 ms mean
+  versus 1.824 ms for remaining lighting; 1,024 nested timing samples pass Vulkan
+  validation. Zero-light receiver sampling and save-scalar inlining showed no
+  useful gain and were removed; retain their evidence rather than repeating them.
+  Omitting unused shadow stencil attachments saves 1.220 ms across five matched
+  rotations, with validation and 100 bounded atlas/point-size cycles plus restart
+  passing. Native maximum-quality qualification reaches 52.55 FPS mean with a
+  29.82 ms worst frame; the strict floor remains unmet. Point-cube depth copying
+  was slower in every pair and is removed.
+  Expanded GPU attribution measures 15.008 ms in the main view and 2.269 ms in
+  portal-sky rendering; SMAA is only 0.243 ms. All 1,024 frame masks and nested
+  intervals pass Vulkan validation. Precomputed SSAO spiral offsets showed no
+  useful speed gain across five pairs and were removed. These diagnostics do
+  not supersede the strict qualification or close the performance gate.
+  Conservative portal-sky discard matches four frozen views exactly, but five
+  paired rotations improve the mean by only 0.21%, below repeat variation, and
+  worsen the largest spike. The prototype and optional extension were removed.
+  The restored-build native qualification records 53.35 FPS mean, 26.40 ms p99
+  and 32.79 ms maximum; workload gates pass and all performance gates still fail.
+  Finer GPU attribution measures 4.400 ms in projected-map production versus
+  0.914 ms in point cubes, with 1,024 validated nested intervals. A conservative
+  local-caster bounded-clear experiment preserved frozen-view/control parity
+  but was 0.204% slower across five pairs and is removed. Prioritize projected
+  map generation without reducing the quality contract.
+  Caster depth ordering and compatible indirect batches also fail five-pair
+  whole-frame comparisons (0.034% and 0.100% slower); both are removed.
+  Optional pipeline counters now measure 143.5 million fragment invocations
+  per frame in fresh projected maps. Stationary per-cascade captures locate
+  most of that work in LOCAL cascades of perspective light 0; counter-enabled
+  and disabled video-restart tests pass. An opaque-only shader specialization
+  is 0.606% slower over three pairs and worsens p99/max in each pair, so it is
+  removed. The counters remain default-off; no performance gate is closed.
+  Receiver-bound diagnostics cover 100% of every cascade in all 76 samples,
+  so they do not justify a simple receiver-driven rectangular crop.
+  A fixed 32-call SSAO sequence also regresses the five-pair mean by 0.591%
+  and is removed. No quality setting is reduced by these investigations.
+  Read-only hardware sampling confirms sustained 100% GPU utilization at
+  2550 MHz with no active clock-event flags in 55 busy samples; the repeated
+  1,024-frame GPU profile is 18.378 ms. Investigate larger GPU-work reductions;
+  these results do not support a device-setting change or close any gate.
+  Checkpoint work now buffers the live snapshot, defers GL/Vulkan thumbnail
+  readback, batches scalar/dictionary writes and writes bounded payloads and
+  descriptions through the existing job/durable-file
+  service. Reusing the joined worker's verified CRC reduces completion validation to
+  about 0.2 ms. A save-only compiled-script checksum cache removes roughly 3 ms
+  of repeated hashing; fresh-reference and compile/reload invalidation probes pass.
+  Preview persistence/readback now also runs on a bounded worker, reducing its
+  main-thread completion phase to about 0.3 ms; lifecycle, blocked-preview and
+  native persistence-failure checks pass.
+  Optional dictionary profiling now attributes 2.82–2.99 ms of warm snapshots
+  to about 3.94 MB of dictionary data. Both production writers preserve byte
+  parity with profiling enabled/disabled; Vulkan load/quit/reopen, corruption
+  rejection and failed-payload preservation pass. Two scanning-based cache
+  prototypes regressed and were removed. Immediate mutation-observer population
+  also regressed first saves, so population now runs in bounded later game frames.
+  Deferred reuse is enabled after 4,774 live byte comparisons, ten fresh-session
+  saves without a measured cold penalty, and normal/reversed warm pairs showing
+  a 15.42% mean reduction (13.56→11.47 ms). The largest observed population batch
+  is 0.566 ms. Native mutation/lifetime/deadline/byte bounds and SP/MP wire tests,
+  plus default-path lifecycle/corruption/failed-preview checks, pass. Checkpoint
+  windows still exceed the target; worst-frame and stall-removal gates stay open.
+  Moving the final snapshot copy to a worker cuts handoff means from 1.94 to
+  0.19 ms, but normal/reversed pairs regress total work and window p99; that
+  experiment remains disabled. Native ownership/rejection/storage-failure and
+  live load/quit/corruption/fallback checks pass. Transaction setup/commit and
+  live-state serialization remain targets; a commit outlier reaches 19.6 ms.
+  Legacy GUI attribution finds 43 duplicate writes per snapshot. A bounded
+  per-save cache passes 430 GL/VK fresh-byte comparisons and SP/MP wire/failure tests,
+  reducing combined normal/reversed mean serialization 13.66→9.92 ms. Total
+  checkpoint work and window p99 regress, so it remains disabled. Commit detail
+  separates 1.31–4.96 ms in file operations from 0.34–0.45 ms in notification;
+  experimental background publication now preserves payload-last commit and
+  interrupted rollback. Native fault/recovery/lifetime tests, live rename-denial
+  rollback/reload and GL disabled-job fallback pass. Ten normal/reversed samples
+  per mode regress total work despite cheaper commits. A further balanced
+  20-save run reduces total work 29.11→23.57 ms with nearly equal serialization,
+  but window p99 medians regress; the switch remains disabled pending a
+  consistent whole-frame gain. Combining publication with GUI reuse also fails:
+  mean window p99 rises 29.22→34.73 ms despite lower total CPU work. A 32.69 ms
+  setup outlier motivates finer preparation timing. Neither experiment closes
+  the stall-removal gate. Fine timing identifies 1.85–4.30 ms of recovery work
+  with developer/unbuffered logging, versus 0.08–0.17 ms with developer messages
+  disabled. This is observer-cost evidence, not a product optimization; compare
+  buffered-logging gameplay separately before promotion. That comparison still
+  regresses mean p99 and the largest window, so both experiments remain off.
+  Duplicate explicit-read developer traces are removed under the existing
+  fs_debug policy: recovery now takes 0.09–0.21 ms in developer launches, with
+  lifecycle/corruption/blocked-preview checks passing. Checkpoint windows still
+  peak at 40.64/27.19/34.97 ms; this removes logging cost, not the entire stall.
+  A retained Motion-validation candidate did not exercise the serialized GUI
+  path and was removed; its apparent timing gain is explicitly invalidated.
+  The latest staged default remains below the strict target at 53.68 FPS mean,
+  27.65 ms p99 and 80.06 ms maximum, with native fullscreen/max-quality checks
+  passing (`qualification-checkpoint-commit-vk`). The outlier remains in the
+  result without an established cause; this rotation contains no saves.
+  Damaged saves still fail independent load-time integrity checks;
+  reload, immediate load/quit and failed-overwrite checks pass. Snapshot CPU
+  time and first-use rendering still cause measurable hitches;
+  keep the user's stall-removal gate open. See the
+  [checkpoint measurements](ui/runtime-performance.md#checkpoint-save-stalls-27-october-2026).
   Audit hot copy-helper GL state queries, cluster allocation/binning, per-frame
   pose work, shadow invalidation, render-target generations and upload lifetimes.
   Reuse existing job/measurement infrastructure. Shadow uniform caching already
@@ -758,7 +906,7 @@ The [visual specification](ui-visual-design.md),
 [product register](ui/product-requirements.md),
 [machine-readable requirements](ui/product-requirements.json) and
 [migration manifest](ui/migration-manifest.json) retain the full product contract.
-This roadmap adopts all **310 active requirements, 358 current source/include-bound
+This roadmap adopts all **311 active requirements, 358 current source/include-bound
 migration variants and seven final gates**. UI-10 reconciled retail/base/Awakening
 mounts while preserving the historical 271-entry manifest. The denominator follows
 effective source changes; it is not a fixed completion target. Scope contradictions
@@ -786,8 +934,23 @@ archived provenance; new scheduling belongs here.
   followed with its 79 rows in eight sections, then the
   [CONTROLS page](ui/retained-screens.md#the-controls-page-25-october-2026)
   with its 49 bindings and key capture; the stock settings screen now arrives
-  on no panel, so its buttons choose the retained pages. The settings screen
-  itself, Load Defaults' dialog and Player Setup remain.
+  on no panel, so its buttons choose the retained pages. Progress, 26 October:
+  the [SETTINGS page](ui/retained-screens.md#the-settings-page-26-october-2026)
+  replaces the settings screen's level from the title and the pause, with
+  Load Defaults' question; DISPLAY still opens the stock panel unless the
+  SYSTEM page is on. Player Setup remains.
+  Progress, 28 October: the SETTINGS hub and Load Defaults work stranded in
+  the earlier UI worktree is integrated in the main checkout. SETTINGS from
+  the Strogg pause now opens the hub rather than its Load Game document;
+  returning preserves the correct pause family. Native navigation/fallback
+  coverage and current windowed engine captures qualify this bounded change;
+  Player Setup, the SYSTEM/editor round trip and broader acceptance remain open.
+  Later that day, the [model-scene foundation](ui/document-format.md#model-scenes)
+  adds the real animated renderDef host needed by Player Setup: typed root/head/
+  weapon scenes, per-part skins and bounded native targets. Native suites and
+  GL/Vulkan gameplay pose captures pass, including Vulkan resource resets;
+  late fixture precache warnings and broader lifecycle/visual gates remain.
+  Player Setup itself is still outstanding.
 - [ ] **UI-02 — P1, implementation and qualification: text, input and accessibility.**
   Finish in-field IME/composition, shaping/kerning/fallback/styles, grapheme editing,
   caret/candidate placement, binding capture, accessibility exposure and contextual
@@ -945,6 +1108,10 @@ archived provenance; new scheduling belongs here.
   reproducing #168/#169. The System route is retained in all four; its stale
   selection after an external console preset change was subsequently repaired
   under UI-01; that repair does not change these performance measurements.
+  Progress, 28 October: the [renderer/device controls](ui/performance-presets.md#rendering-backend-and-device-selection-28-october-2026)
+  pass the actual SYSTEM layout matrix in twelve locales and windowed engine
+  selection/restart checks on NVIDIA/Intel. This is functional and layout
+  evidence only; the existing product, performance and platform gates remain.
 - [ ] **UI-08 — P1, qualification and decision: final cutover.** Complete all seven
   final gates with current source-bound behavior, visual/editor/performance and
   Windows/Linux/macOS/Android-GLES evidence, including dedicated packaging. Decide
@@ -957,7 +1124,7 @@ archived provenance; new scheduling belongs here.
   not just individual pages: general controls/components, public GUI adapter
   methods, material/movie/model/generated-image operations, world-surface output
   and input, gameplay timers, independent instances and save/restart continuity.
-  Current code has six canonical control roles, four node kinds,
+  Current code has six canonical control roles, five node kinds,
   partial material-image operations, empty binding-name
   updates/text-wrap queries and an explicit world-output rejection. Map each
   limitation to required semantics and extend existing working facilities rather
@@ -978,6 +1145,12 @@ archived provenance; new scheduling belongs here.
   dispatch. Ordered pending steps still work; external changes and removed or
   disabled options reject stale proposals. Native control/page regressions pass;
   complete toolkit and exactly-once corpus qualification remain open.
+  Progress, 28 October: the typed model node and native colour/depth coverage
+  resolve provide actual model output rather than a decorative substitute.
+  [Bounded evidence and limitations](ui/document-format.md#model-foundation-evidence-28-october-2026)
+  retain the failed fixture views, renderer-demo refusal, diagnostic-preview
+  canvas issue and unqualified native lifecycle/composition cases. This does
+  not accept `INV-013` or either production model preview.
 - [x] **UI-10 — P0, investigation and implementation: refresh effective scope and
   source inventory.** Completed [retail/base/Awakening inventory](ui/inventory-report.md):
   264/276/324 effective paths, 358 distinct source/include-bound variants, 18
@@ -1007,6 +1180,13 @@ archived provenance; new scheduling belongs here.
   earlier acceptance only while it is current, or withdraw it explicitly. Its 19
   fixture tests cover the failure cases above. The transition awaits its
   separate review, and nothing has been accepted with it.
+  Progress, 28 October: a follow-up source review found that records did not
+  have to be committed, artwork could cite only a log, and earlier acceptance
+  did not recheck binary/capture artifacts. The transition now enforces those
+  checks and rejects control characters in evidence paths. Twenty-four fixture
+  tests pass, with archive and inventory modes retaining their restrictions.
+  [Review details](ui/acceptance-transition.md). The changed tooling still needs
+  separate review before product acceptance; no requirement or resource is accepted.
 
 Detailed current evidence: [menu audit](ui/menu-audit.md),
 [retained screens](ui/retained-screens.md), [multiplayer menus](ui/multiplayer-menus.md),
@@ -1131,6 +1311,12 @@ Sources: [competitive closure audit](competitive-match-reference-audit.md),
 [demo architecture](multiview-demos.md), [MVD qualification](mvd-qualification-2026-09-07.md),
 [liquid implementation history](archive/2026-10-18/plans/2026-08-07-liquid-support.md).
 
+Current delivery scope, 28 October: the user deferred real WAN and
+cross-architecture peer qualification for now. MP-07/MP-08 retain those gates for
+future support qualification; local implementation, simulation and current-host
+checks continue. This deferral does not promote prediction/rewind defaults or
+claim peer combinations that have not been tested.
+
 - [ ] **MP-01 — P1, qualification: competitive framework release closure.** Exercise
   roster invitations/substitution/bench/disconnect, replacement identity and slot
   reuse, ballots/stale operations, pool/veto/load-failure rollback, countdown/ready/
@@ -1246,6 +1432,22 @@ Sources: [competitive closure audit](competitive-match-reference-audit.md),
   events, give-ups or traversal timeouts
   ([rim landings, dodges, drops and pursuit](mp-bots.md#rim-landings-dodges-drops-and-pursuit-progress-26-october-2026)).
   The strict long-match gate and controlled timing remain open.
+  Progress, 28 October: a bounded quarter-millisecond histogram adds conservative
+  p50/p95/p99 ceilings to `bot_profile`, with native boundary/reset/overflow
+  coverage. The audit can enforce explicit mean, p95 and generation budgets and
+  reject runs overlapping other runtimes or compilers. A five-minute six-bot DM8
+  run records 284.928 simulated seconds, 56 combat kills, one navigation world
+  death and one stuck event. Its 2.192 ms mean passes the selected 4 ms reference
+  budget; a 12 ms worst-window p95 exceeds 8 ms, and competing processes invalidate
+  controlled timing. No failure is waived. The unhit fall near `(601, 685, 314)`
+  is being isolated from the retained pre-departure states; the gate stays open.
+  The [unpressed-WALK investigation](mp-bots.md#unpressed-walk-falls-and-timing-evidence-28-october-2026)
+  reproduces a diagonal rim fall from one retained pose. Air recovery now admits
+  descending unpressed WALK falls with a proven-unsafe coast, preserving planned
+  departures and safe arcs. Native boundary/reversal tests pass; both failing
+  diagonal cases now land alive and all four direct-approach controls survive.
+  This isolates and repairs a defect without claiming the original match's exact
+  cause. Current long-match/catalog and controlled timing gates remain open.
 - [ ] **MP-03 — P2, implementation and qualification: broader bot navigation.**
   Audit custom-map ladders/lifts, shallow trenches, route-cost approximations,
   pad/player collisions, graph limits, optional caching and debug growth. Extend
@@ -1297,6 +1499,10 @@ Sources: [competitive closure audit](competitive-match-reference-audit.md),
   formats and explicit retail-stream rejection. Test partial writes, repeated
   seeking, pause/restart/round changes and transient geometry; reuse competition's
   existing auto-record lifecycle rather than duplicating it.
+  Scope decision, 28 October: the user selected the core recording/playback
+  workflow, structured markers, autotracking and independent keyframes. Reverse
+  scrubbing, timedemo, AVI export and generated thumbnails are deferred and do
+  not block this selected delivery scope.
   Progress, 23 October: `mvdRecover` salvages an interrupted `.mvd.part`
   into a new demo, never modifying the source. An executable fixture runs the
   production reader, writer and recovery at all 2,032 cut points of a
@@ -1329,12 +1535,32 @@ Sources: [competitive closure audit](competitive-match-reference-audit.md),
   ([evidence](multiview-demos.md#red-rover-seek-debris-24-october-2026)). The
   missing first-person weapon after a paused seek, keyframes, reverse scrub,
   AVI, thumbnails, retention and markers remain open.
+  Progress, 28 October: snapshot weapon initialization now honours its pending
+  catch-up before clearing it. Previously a paused seek recreated a weapon at
+  the start of its raise animation, below the view, although a model definition
+  existed. The executable regression rejects the old initialization and preserves
+  ordinary spawns, absent model snapshots and once-only catch-up. Seven exact-time
+  forward/backward paused seeks pass on GL and Vulkan with the retained Red Rover
+  recording; inspected engine captures show the weapon again. See the
+  [dated qualification](multiview-demos.md#paused-seek-weapon-catch-up-28-october-2026).
+  Broader operator, keyframe and export scope remains open.
+  The same day's [retention/quota policy](multiview-demos.md#library-retention-and-quota-28-october-2026)
+  preserves recordings and journal links until explicit archival/deletion. The
+  optional `mvd_libraryQuotaMB` counts nested complete/partial recordings and
+  freezes the remaining budget at admission; it never prunes. Native failure
+  tests and staged GL refusal/cap/recovery/playback pass, with existing files
+  unchanged. Downloads remain explicitly outside standard builds. Structured
+  markers, autotracking, independent keyframes and export scope remain open.
 - [ ] **MP-06 — P2, implementation and qualification: liquid extensions.** Verify
   splash/bubble/wade effects, underwater view/muffle, projectiles, buoyancy and bot
   behavior. The current AAS compiler already emits water/swim/waterjump data;
   validate its end-to-end consumers before proposing new generation. AI swimming,
   authored swim animation, moving volumes and air-HUD replication need explicit
   content/gameplay scope. Preserve mapper guidance against duplicate hurt damage.
+  Scope decision, 28 October: the user selected completion of static liquids,
+  player/bot swimming and replicated air readouts. Swimming monsters, new swim
+  animations and moving liquid volumes are deferred; they do not block this
+  selected delivery scope.
   Progress, 23 October: a client drained its local air reservoir once per
   prediction replay pass, N+1 times the server's rate under an N-frame lead;
   it now steps once per game frame. `s_soundWorlds` reports the underwater
@@ -1346,12 +1572,23 @@ Sources: [competitive closure audit](competitive-match-reference-audit.md),
   they have more than half their air; the rerun records no stuck reports and
   28 completed traversals instead of 8 ([details](mp-bots.md#team-knock-guard-and-trench-rims-23-october-2026)).
   Bot swimming, ragdoll buoyancy and an air HUD remain scope decisions.
+  Progress, 28 October: the AAS compiler now sets `AREA_LIQUID` from the emitted
+  water contents. Swim links already used contents, while the water-jump builder
+  required the missing flag. An executable production-area fixture covers wet/dry,
+  floor/no-floor, reused and empty nodes and rejects the old compiler. Actual
+  compiled-water-map/consumer qualification and broader liquid presentation remain
+  open; this does not add swimming AI, animations or moving volumes.
+  Follow-through: the [actual dedicated compiler](liquid-qualification.md)
+  emits 26 swim and 16 water-jump links in the partitioned liquid-lab fixture;
+  all nine serialized water areas carry `AREA_LIQUID`. The independently copied
+  fixed compiler runtime preserves its hashes and writes outside `.install/`.
+  This closes the compiler-output check; routing/movement consumers and wider
+  liquid presentation remain open, and stock nonswimming AAS defaults stay intact.
 - [ ] **MP-07 — P1, implementation and qualification: coupled prediction and
   rewind.** In `src/mpgame/gamesys/SysCvar.cpp` both enhanced prediction and lag
-  compensation default off; `src/mpgame/Game_local.cpp` bounds rewind using RTT
-  and reported prediction, but `RemoteExtrapolationMS()` still returns zero. Define
-  server-visible/negotiated extrapolation, displayed pose age and rewind together
-  with HF-01/HF-05; bound untrusted client claims and prevent double correction.
+  compensation default off. Preserve the coupled displayed-pose-age and rewind
+  contract implemented below with HF-01/HF-05; bound untrusted client claims
+  and prevent double correction.
   Keep promotion separate from implementation. Qualify actual remote peers under
   delay, jitter, loss, reordering and duplicate commands, including teleport,
   respawn, slot reuse, pause and spectator changes. Cover hitscan, lightning and
@@ -1417,12 +1654,16 @@ Sources: [competitive closure audit](competitive-match-reference-audit.md),
   returns before the bias when the lead or the measured round trip is missing.
   The state fixture adds three bias-20 cases. A Codex round found this on
   23 October in its own copy of the code.
+  Progress, 28 October: `lagCompStatus` now applies the same measured-connection
+  prerequisite as the rewind path, so positive bias cannot report a fictitious
+  rewind for a bot, listen host or unmeasured slot. The state and wiring checks
+  pass; enhanced prediction and compensation remain off by default.
 - [ ] **MP-08 — P1, qualification and decision: network and content interoperability.**
   Qualify real cross-platform/architecture peers over IPv4 and IPv6, fragmentation/
-  MTU/rate limits, congestion, high player counts, discovery and reconnect. Address
-  or explicitly document single-address DNS selection: the current resolvers
-  prefer an IPv4 result and do not provide a bounded multi-address/family failover
-  sequence. Exercise ordered pure assets, content-only mods and explicit trusted
+  MTU/rate limits, congestion, high player counts, discovery and reconnect. Preserve
+  the bounded multi-address/family failover sequence implemented
+  below; qualify real multi-record DNS separately. Exercise ordered pure assets,
+  content-only mods and explicit trusted
   local code-module admission. Keep the same-platform pure compatibility token
   distinct from cryptographic module verification or anti-cheat; standard builds
   do not enable direct asset downloading. Document clear rejection of unsupported

@@ -1,5 +1,6 @@
 // Copyright (C) 2026 DarkMatter Productions
 #include "../../../src/renderer/materialprogram/GLSLCompiler.h"
+#include "../../../src/renderer/BuiltinModelPreviewShader.h"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -72,6 +73,11 @@ static void Reject(const char *label, const material::CompileRequest &request, c
 
 int main(int argc, char **argv) {
     if (argc == 2) { output = std::filesystem::absolute(argv[1]); std::filesystem::create_directories(output); }
+    material::CompileRequest model;
+    model.vertexName="builtin:retained/modelResolve.vp"; model.fragmentName="builtin:retained/modelResolve.fp";
+    model.vertexSource=RetainedModelVertexSource; model.fragmentSource=RetainedModelFragmentSource;
+    model.textures={{"Colour",0},{"Depth",1}};
+    Require(Accept("retained_model",model).textureMask==3,"model resolve binds colour and depth in actual Vulkan compiler");
     if (argc == 3 && std::string(argv[1]) == "--retained") {
         // Compile the shipped source pairs and their material interfaces
         // through the actual Vulkan

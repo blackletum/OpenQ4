@@ -153,7 +153,7 @@ def validate_every_unload_restores() -> None:
 
     # a new load site has to capture before its GetRenderAPI; count them so it
     # cannot appear without this test being revisited
-    for function, expected in (("Sys_DLL_Load", 2), ("GetRenderAPI", 2)):
+    for function, expected in (("Sys_DLL_Load", 3), ("GetRenderAPI", 2)):
         found = call_count(loader, function)
         if found != expected:
             raise AssertionError(f"expected {expected} {function} calls in {LOADER}, found {found}")
@@ -208,6 +208,12 @@ def validate_every_unload_restores() -> None:
     )
     # the active module's snapshot is not the probe's to spend
     reject(probe, "rm_state.moduleCompletions", context)
+
+    inventory = braced_block(loader, "bool R_RendererModule_QueryRenderingDevices(renderDeviceCatalog_t& output) {")
+    require_ordered(inventory, ("rm_state.moduleExport.GetRenderingDevices(&output)",
+        "Sys_DLL_Load(path)", "completions.Capture();", "entry(&imports)",
+        "exports->Shutdown();", "RM_UnloadModuleBinary(handle,completions);"), "device inventory")
+    reject(inventory, "rm_state.moduleCompletions", "device inventory")
 
 
 def validate_loader_is_the_only_module_loader() -> None:

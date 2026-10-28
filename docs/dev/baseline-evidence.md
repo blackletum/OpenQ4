@@ -25,8 +25,8 @@ mean every renderer, optional feature or current package is qualified.
 
 | Configuration or default | Current source and disposition | Evidence owner / remaining gate |
 | --- | --- | --- |
-| Windows x64, desktop OpenGL / `best` | Default `gl` in `RendererModule.cpp`; current gameplay captures available | Desktop/platform workstream, [platform matrix](platform-support.md), REL-01 |
-| Windows x64 Vulkan | Supported opt-in retains October NVIDIA/Intel evidence; no automatic promotion to default | Vulkan workstream, [capability matrix](engine-capability-matrix.md), VK-01/VK-02 |
+| Windows x64, automatic desktop renderer | Fresh `best` prefers compatible high-performance Vulkan hardware with OpenGL fallback; existing GL choices persist. See [selection evidence](ui/performance-presets.md#rendering-backend-and-device-selection-28-october-2026). | Desktop/platform workstream, [platform matrix](platform-support.md), REL-01 |
+| Windows x64 Vulkan | Supported; the 28 October selection policy prefers it for fresh desktop configurations with OpenGL fallback. October NVIDIA/Intel evidence retains its original scope. | Vulkan workstream, [capability matrix](engine-capability-matrix.md), VK-01/VK-02 |
 | Linux x64 / Steam Deck, GL | First-class target; existing native Wayland/X11 evidence is historical, not rerun by this Windows audit | Linux/platform workstream, platform matrix and PLAT-01 |
 | Linux Vulkan and macOS Vulkan | Experimental; software/CI evidence does not qualify physical GPUs | Vulkan/platform workstream, VK-01 and PLAT-01/PLAT-04 |
 | macOS arm64 | Preview; unsigned packages and OS-floor signoff remain explicit | Apple/platform workstream, [macOS signoff](macos-signoff-evidence.md), PLAT-04 |

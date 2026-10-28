@@ -669,7 +669,7 @@ void *R_GetCommandBuffer( int bytes );
 bool R_GlobalShaderOverride( const idMaterial **shader );
 bool R_ValidateGLSLProgram( newShaderStage_t *stage );
 bool R_FindGLSLSourcePair( const char *programName, idStr &vertexPath, idStr &fragmentPath,
-    char **vertexBuffer, char **fragmentBuffer, int *vertexBytes = NULL, int *fragmentBytes = NULL,
+    std::string &vertexSource, std::string &fragmentSource, int *vertexBytes = NULL, int *fragmentBytes = NULL,
     bool *foundAnySource = NULL );
 void R_ReloadGLSLPrograms_f( const idCmdArgs &args );
 bool RB_BindGLSLShaderParm( glslShaderParmBinding_t binding, int location, const shaderStage_t *stage, const drawInteraction_t *din );
@@ -900,6 +900,9 @@ public:
 	virtual void			CaptureRenderToImage( const char *imageName );
 	virtual void			CaptureRenderToFile( const char *fileName, bool fixAlpha );
 	virtual void			CaptureRenderToFile( const char *fileName, bool fixAlpha, int outputWidth, int outputHeight );
+	virtual bool BeginSavePreview();
+	virtual int PollSavePreview( const char *fileName );
+	virtual void CancelSavePreview();
 	virtual void			SetPortalSkyCaptureViewCallback( renderPortalSkyCaptureViewCallback_t callback );
 	virtual void			UnCrop();
 	virtual void			GetCardCaps( bool &oldCard, bool &nv10or20 );

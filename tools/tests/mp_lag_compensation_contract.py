@@ -171,6 +171,8 @@ def validate_estimator() -> None:
     require(commands, 'cmdSystem->AddCommand( "lagCompStatus", Cmd_LagCompStatus_f', "lag compensation status command")
     status = function_body(commands, "static void Cmd_LagCompStatus_f(", "lag compensation status command")
     require(status, "gameLocal.EstimateMPLagCompensation( clientNum, estimate );", "lag compensation status command")
+    require(status, "estimate.leadMS > 0 && estimate.measuredMS > 0 ?",
+            "lag compensation status must not manufacture a bot or listen-host rewind from bias")
 
     player = read(GAME_LIBS_ROOT, "src/mpgame/Player.cpp")
     require(player, "gameLocal.lastChainReplayTics - remoteChainResimulatedTics", "client-side displayed pose age")

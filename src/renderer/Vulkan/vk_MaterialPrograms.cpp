@@ -223,20 +223,19 @@ Program *Find( const newShaderStage_t *stage ) {
     if ( found != currentPrograms.end() ) { return programs[found->second].get(); }
     if ( RecentlyRejected( key ) ) { return NULL; }
     oq4material::CompileRequest request;
-    char *vertex = NULL, *fragment = NULL;
+    std::string vertex, fragment;
     int vertexBytes = 0, fragmentBytes = 0;
     idStr vertexPath, fragmentPath;
     const bool sourcePairFound = R_FindGLSLSourcePair( stage->glslProgramName, vertexPath, fragmentPath,
-        &vertex, &fragment, &vertexBytes, &fragmentBytes );
+        vertex, fragment, &vertexBytes, &fragmentBytes );
     if ( sourcePairFound ) {
         request.vertexName = vertexPath.c_str(); request.fragmentName = fragmentPath.c_str();
         if ( vertexBytes > 0 && fragmentBytes > 0
             && static_cast<size_t>( vertexBytes ) <= oq4material::MaxSourceBytes
             && static_cast<size_t>( fragmentBytes ) <= oq4material::MaxSourceBytes ) {
-            request.vertexSource.assign( vertex, vertexBytes );
-            request.fragmentSource.assign( fragment, fragmentBytes );
+            request.vertexSource = vertex;
+            request.fragmentSource = fragment;
         }
-        fileSystem->FreeFile( vertex ); fileSystem->FreeFile( fragment );
     }
     // Reuse precedes the capacity check: an unchanged reload must still work
     // when all version slots are occupied. Failed versions are reusable too.
@@ -423,17 +422,16 @@ vkGLSLProgramFamily_t VK_MaterialPrograms_NativeFamily( const char *program ) {
         }
         return VK_GLSL_PROGRAM_FAMILY_UNKNOWN;
     }
-    char *vertex = NULL, *fragment = NULL;
+    std::string vertex, fragment;
     int vertexBytes = 0, fragmentBytes = 0;
     bool anySource = false;
     idStr vertexPath, fragmentPath;
     const bool pair = R_FindGLSLSourcePair( program, vertexPath, fragmentPath,
-        &vertex, &fragment, &vertexBytes, &fragmentBytes, &anySource );
+        vertex, fragment, &vertexBytes, &fragmentBytes, &anySource );
     vkGLSLProgramFamily_t selected = VK_GLSL_PROGRAM_FAMILY_UNKNOWN;
     if ( pair ) {
-        const std::string vertexHash = SourceDigest( vertex, vertexBytes );
-        const std::string fragmentHash = SourceDigest( fragment, fragmentBytes );
-        fileSystem->FreeFile( vertex ); fileSystem->FreeFile( fragment );
+        const std::string vertexHash = SourceDigest( vertex.data(), vertexBytes );
+        const std::string fragmentHash = SourceDigest( fragment.data(), fragmentBytes );
         for ( const auto &signature : vkNativeMaterialSources ) {
             if ( canonical == signature.program && !vertexHash.empty() && !fragmentHash.empty()
                 && vertexHash == signature.vertexSHA256 && fragmentHash == signature.fragmentSHA256 ) {

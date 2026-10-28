@@ -44,6 +44,7 @@ layout(std140, set = 6, binding = 0) uniform SSAOBlock {
 // only the classic world pixels with the field's factor.
 #define ssaoMode			block.modeInfo.x
 #define ssaoFieldFlip		block.modeInfo.y
+#define ssaoMultiply		block.modeInfo.z
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
@@ -109,12 +110,16 @@ float InterleavedGradientNoise( vec2 pixelPos ) {
 	return fract( 52.9829189 * fract( dot( pixelPos, vec2( 0.06711056, 0.00583715 ) ) ) );
 }
 
-float ComputeAmbientOcclusion( vec2 uv, vec3 centerPos, vec3 centerNormal ) {
+float ComputeAmbientOcclusion( vec2 uv, vec3 centerPos ) {
+	vec3 centerNormal = vec3(0.0);
+	if (block.modeInfo.w < 0.5) centerNormal = ReconstructNormal(uv, centerPos);
 	float viewDepth = -centerPos.z;
 	float fade = 1.0 - smoothstep( ssaoMaxDistance * 0.5, ssaoMaxDistance, viewDepth );
 	if ( fade <= 0.0 ) {
 		return 1.0;
 	}
+
+	if (block.modeInfo.w > 0.5) centerNormal = ReconstructNormal(uv, centerPos);
 
 	float radiusPixels = clamp( ssaoRadius * projectionScale / max( viewDepth, 1.0 ), 2.0, 96.0 );
 	float rotation = InterleavedGradientNoise( uv / invTexSize ) * kTwoPi;
@@ -188,7 +193,7 @@ void FieldMain( vec2 uv ) {
 		return;
 	}
 	vec3 centerPos = ReconstructViewPosition( uv, depth );
-	float ao = ComputeAmbientOcclusion( uv, centerPos, ReconstructNormal( uv, centerPos ) );
+	float ao = ComputeAmbientOcclusion( uv, centerPos );
 	// A classic world surface is the visible one where the frame did not
 	// settle in front of the classic-only snapshot.
 	float classicDepth = texture( ClassicDepthBuffer, uv ).x;
@@ -197,7 +202,7 @@ void FieldMain( vec2 uv ) {
 }
 
 void ApplyMain( vec2 uv ) {
-	vec4 scene = texture( Scene, uv );
+	vec4 scene = ssaoMultiply > 0.5 ? vec4( 1.0 ) : texture( Scene, uv );
 	ivec2 texel = ivec2( gl_FragCoord.xy );
 	if ( ssaoFieldFlip > 0.5 ) {
 		texel.y = textureSize( AOField, 0 ).y - 1 - texel.y;
@@ -220,7 +225,7 @@ void main() {
 		FieldMain( uv );
 		return;
 	}
-	vec4 scene = texture( Scene, uv );
+	vec4 scene = ssaoMultiply > 0.5 ? vec4( 1.0 ) : texture( Scene, uv );
 	float depth = SampleDepth( uv );
 
 	if ( depth >= 0.99999 ) {
@@ -234,8 +239,7 @@ void main() {
 	}
 
 	vec3 centerPos = ReconstructViewPosition( uv, depth );
-	vec3 centerNormal = ReconstructNormal( uv, centerPos );
-	float ao = ComputeAmbientOcclusion( uv, centerPos, centerNormal );
+	float ao = ComputeAmbientOcclusion( uv, centerPos );
 
 	if ( ssaoDebugView > 0.5 ) {
 		outColor = vec4( vec3( ao ), scene.a );

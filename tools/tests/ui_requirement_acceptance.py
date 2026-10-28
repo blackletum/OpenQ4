@@ -8,6 +8,7 @@ checks qualify that audit, not any UI implementation.
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import hashlib
 import importlib.util
@@ -134,7 +135,8 @@ class AcceptanceTransitionTests(unittest.TestCase):
         self.current["baseline"]["engine_revision"] = self.baseline
         self.write(".tmp/bin/openQ4-client_x64.exe", "client bytes")
         self.write(".tmp/run/openq4.log", "UI ready\n")
-        self.write(".tmp/run/menu.png", "png bytes")
+        (self.root / ".tmp/run/menu.png").write_bytes(base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
 
     # Fixture plumbing ---------------------------------------------------------
     def clean_fixture(self, target):
@@ -242,11 +244,14 @@ class AcceptanceTransitionTests(unittest.TestCase):
                 "bitmap_exceptions": entry["bitmap_exceptions"]}
         return record
 
-    def publish(self, record):
+    def publish(self, record, commit=True):
         path = f"docs/dev/ui/acceptance/{record['id']}.json"
         self.write_json(path, record)
         self.current["evidence"][record["id"]] = {"kind": "acceptance_record", "path": path,
                                                   "sha256": self.hash(path), "scope": record["scope"]}
+        if commit:
+            self.git("add", "--", path)
+            self.git("commit", "--quiet", "--allow-empty", "-m", "Record reviewed fixture evidence")
 
     def mark(self, records, *names):
         for row in self.current["requirements"]:
@@ -262,14 +267,14 @@ class AcceptanceTransitionTests(unittest.TestCase):
         self.current["baseline"]["translated_or_accepted_resources"] = sum(
             item["translation_status"] == "accepted" for item in self.current_manifest["resources"])
 
-    def accept(self, name, requirements=(), resources=(), milestone=None):
+    def accept(self, name, requirements=(), resources=(), milestone=None, commit=True):
         """Apply one acceptance to the candidate files and publish its complete record."""
         self.mark([name], *requirements)
         for resource_id in resources:
             index = [item["resource_id"] for item in self.current_manifest["resources"]].index(resource_id)
             self.mark_resource(index, [name], [name])
         record = self.record(name, requirements, resources, milestone)
-        self.publish(record)
+        self.publish(record, commit)
         return record
 
     def audit(self, accept=(), resources=()):
@@ -468,6 +473,69 @@ class AcceptanceTransitionTests(unittest.TestCase):
                 self.publish(record)
                 with self.assertRaisesRegex(VALIDATOR.AuditError, error):
                     self.audit(["DOC-001", "WID-001"])
+
+    def test_rejects_uncommitted_and_modified_acceptance_records(self):
+        record = self.accept("acceptance-document", ["DOC-001"], commit=False)
+        with self.assertRaisesRegex(VALIDATOR.AuditError, "must be committed with its current bytes"):
+            self.audit(["DOC-001"])
+        self.publish(record)
+        self.assertEqual(self.audit(["DOC-001"])["accepted_requirements"], ["DOC-001"])
+        record["limitations"] = "Review edited after the record was committed."
+        self.publish(record, commit=False)
+        with self.assertRaisesRegex(VALIDATOR.AuditError, "must be committed with its current bytes"):
+            self.audit(["DOC-001"])
+
+    def test_artwork_rejects_logs_and_nonimage_files(self):
+        resource = self.resource_id(0)
+        record = self.accept("acceptance-menu", resources=[resource])
+        for evidence in ([".tmp/run/openq4.log"], [".tmp/run/menu.png"]):
+            with self.subTest(evidence=evidence):
+                if evidence == [".tmp/run/menu.png"]:
+                    self.write(".tmp/run/menu.png", "a log renamed to look like a screenshot")
+                    record["log_and_image_hashes_if_rendered"][".tmp/run/menu.png"] = self.hash(".tmp/run/menu.png")
+                record["resources"][resource]["artwork"][0]["evidence"] = evidence
+                self.publish(record)
+                with self.assertRaisesRegex(VALIDATOR.AuditError, "artwork proof cites no rendered image"):
+                    self.audit(resources=[resource])
+
+    def test_artwork_accepts_engine_screenshot_formats(self):
+        resource = self.resource_id(0)
+        record = self.accept("acceptance-menu", resources=[resource])
+        # A 1x1 uncompressed BGR engine screenshot, with an 18-byte TGA header.
+        tga = self.root / ".tmp/run/menu.tga"
+        tga.write_bytes(bytes((0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 24, 32, 0, 0, 0)))
+        record["log_and_image_hashes_if_rendered"][".tmp/run/menu.tga"] = self.hash(".tmp/run/menu.tga")
+        record["resources"][resource]["artwork"][0]["evidence"] = [".tmp/run/menu.tga"]
+        self.publish(record)
+        self.assertEqual(self.audit(resources=[resource])["accepted_resources"], [resource])
+
+    def test_rejects_control_characters_in_git_evidence_paths(self):
+        record = self.accept("acceptance-document", ["DOC-001"])
+        record["source_or_asset_hashes"]["src/ui/Widget.cpp\nHEAD:src/ui/Widget.cpp"] = self.hash(WIDGET)
+        self.publish(record)
+        with self.assertRaisesRegex(VALIDATOR.AuditError, "Invalid acceptance evidence path"):
+            self.audit(["DOC-001"])
+
+    def test_checkpoint_rechecks_earlier_binary_log_and_image_artifacts(self):
+        self.accept("acceptance-document", ["DOC-001"])
+        self.accept("acceptance-menu", resources=[self.resource_id(0)])
+        self.audit(["DOC-001"], [self.resource_id(0)])
+        self.land()
+        for name in (".tmp/bin/openQ4-client_x64.exe", ".tmp/run/openq4.log", ".tmp/run/menu.png"):
+            path = self.root / name
+            original = path.read_bytes()
+            for missing in (False, True):
+                with self.subTest(artifact=name, missing=missing):
+                    if missing:
+                        path.unlink()
+                    else:
+                        path.write_bytes(b"changed artifact")
+                    try:
+                        with self.assertRaisesRegex(VALIDATOR.AuditError, "Accepted scope has stale evidence"):
+                            self.increment()
+                    finally:
+                        path.write_bytes(original)
+        self.assertTrue(self.increment()["earlier_acceptance_current"])
 
     # Earlier acceptance and the other modes ---------------------------------
     def test_checkpoint_modes_never_accept(self):

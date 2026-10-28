@@ -889,6 +889,7 @@ void idUserInterfaceManagerLocal::SetAspectCorrection( bool enabled ) {
 }
 
 void idUserInterfaceManagerLocal::BeginLevelLoad() {
+	RetainedUI_PrecacheModelWorlds();
 	ClearHudPrimitives();
 	idRetainedHud::Precache();
 	int c = guis.Num();
@@ -1176,6 +1177,7 @@ idUserInterfaceLocal::idUserInterfaceLocal( bool managed ) : idUserInterfaceMana
 idUserInterfaceLocal::~idUserInterfaceLocal() {
 	delete retainedHud;
 	delete remastered;
+	delete essentialHud; essentialHud = nullptr;
 	delete desktop;
 	desktop = NULL;
 }
@@ -1204,7 +1206,8 @@ bool idUserInterfaceLocal::InitFromFile( const char *qpath, bool rebuild, bool c
 	evaluatedHudValid = false;
 	evaluatedHudState.Clear();
 	delete retainedHud; retainedHud = NULL;
-	delete remastered; remastered = NULL;
+	delete remastered;
+	delete essentialHud; essentialHud = nullptr; remastered = NULL;
 
 	if ( !( qpath && *qpath ) ) { 
 		return false;
@@ -1298,6 +1301,11 @@ bool idUserInterfaceLocal::InitFromFile( const char *qpath, bool rebuild, bool c
 		remastered = new idRemasteredHud( document );
 		remastered->Preload( source.c_str() );
 	}
+	if ( const char *document = idRemasteredHud::AirDocumentFor( source.c_str() );
+            document && !idRemasteredHud::Enabled() && src.IsLoaded() && parseOk ) {
+        essentialHud = new idRemasteredHud( document );
+        essentialHud->Preload( source.c_str() );
+    }
 	UI_LegacyObservationLoaded(this,src.IsLoaded());
 	levelLoadCache->Finish( src.IsLoaded() && parseOk && rebuild );
 	if (levelLoadCache->valid && desktop->CanKeepForLevelLoad()) {
@@ -1385,6 +1393,7 @@ void idUserInterfaceLocal::HandleNamedEvent ( const char* eventName ) {
 	if ( remastered ) {
 		remastered->ForwardEvent( eventName );
 	}
+	if ( essentialHud ) { essentialHud->ForwardEvent( eventName ); }
 }
 
 void idUserInterfaceLocal::Redraw( int _time, bool useAspectCorrection ) {
@@ -1455,10 +1464,12 @@ void idUserInterfaceLocal::Redraw( int _time, bool useAspectCorrection ) {
 		}
 		if ( useAspectCorrection && DrawRemasteredHud( _time ) ) return;
 		evaluatedHudValid = false;
-		if ( useAspectCorrection && DrawRetainedHud() ) return;
-		uiManagerLocal.dc.PushClipRect( uiManagerLocal.screenRect );
-		desktop->Redraw( 0, 0 );
-		uiManagerLocal.dc.PopClipRect();
+		if ( !useAspectCorrection || !DrawRetainedHud() ) {
+			uiManagerLocal.dc.PushClipRect( uiManagerLocal.screenRect );
+			desktop->Redraw( 0, 0 );
+			uiManagerLocal.dc.PopClipRect();
+		}
+		if ( useAspectCorrection ) DrawEssentialHud( _time );
 	}
 }
 
@@ -1482,6 +1493,7 @@ void idUserInterfaceLocal::DeleteStateVar( const char *varName ) {
 	if ( remastered ) {
 		remastered->ForwardDelete( varName );
 	}
+	if ( essentialHud ) { essentialHud->ForwardDelete( varName ); }
 }
 
 // Game HUDs republish many unchanged fields between simulation tics. Preserve
@@ -1510,6 +1522,7 @@ void idUserInterfaceLocal::SetStateString( const char *varName, const char *valu
 	if ( remastered ) {
 		remastered->ForwardState( varName, stored );
 	}
+	if ( essentialHud ) { essentialHud->ForwardState( varName, stored ); }
 }
 
 void idUserInterfaceLocal::SetStateBool( const char *varName, const bool value ) {
@@ -1524,6 +1537,7 @@ void idUserInterfaceLocal::SetStateBool( const char *varName, const bool value )
 	if ( remastered ) {
 		remastered->ForwardState( varName, stored );
 	}
+	if ( essentialHud ) { essentialHud->ForwardState( varName, stored ); }
 }
 
 void idUserInterfaceLocal::SetStateInt( const char *varName, const int value ) {
@@ -1539,6 +1553,7 @@ void idUserInterfaceLocal::SetStateInt( const char *varName, const int value ) {
 	if ( remastered ) {
 		remastered->ForwardState( varName, stored );
 	}
+	if ( essentialHud ) { essentialHud->ForwardState( varName, stored ); }
 }
 
 void idUserInterfaceLocal::SetStateFloat( const char *varName, const float value ) {
@@ -1555,6 +1570,7 @@ void idUserInterfaceLocal::SetStateFloat( const char *varName, const float value
 	if ( remastered ) {
 		remastered->ForwardState( varName, stored );
 	}
+	if ( essentialHud ) { essentialHud->ForwardState( varName, stored ); }
 }
 
 void idUserInterfaceLocal::SetStateVec4( const char *varName, const idVec4 &vector ) {
@@ -1880,6 +1896,7 @@ bool idUserInterfaceLocal::ReadFromSaveGame( idFile *savefile ) {
 	}
 	// The Remastered peer rejoins the restored dictionary at its next draw.
 	delete remastered;
+	delete essentialHud; essentialHud = nullptr;
 	remastered = NULL;
 
 	int num = 0;

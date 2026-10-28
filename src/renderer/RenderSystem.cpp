@@ -37,6 +37,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "RendererUpload.h"
 #include "ScenePackets.h"
 #include "TemporalPresentation.h"
+#include "SavePreviewCapture.h"
 #include "smaa/AreaTex.h"
 #include "smaa/SearchTex.h"
 
@@ -1891,11 +1892,12 @@ void	idRenderSystemLocal::CropRenderSize( int width, int height, bool makePowerO
 
 	renderCrop_t	*rc = &renderCrops[currentRenderCrop];
 
-	// we might want to clip these to the crop window instead
-	while ( width > glConfig.vidWidth ) {
+	// Forced offscreen targets can exceed the window (density/editor previews).
+	// Their owner validates device limits and allocated target dimensions.
+	while ( width > glConfig.vidWidth && !(forceDimensions && activeRenderTexture) ) {
 		width >>= 1;
 	}
-	while ( height > glConfig.vidHeight ) {
+	while ( height > glConfig.vidHeight && !(forceDimensions && activeRenderTexture) ) {
 		height >>= 1;
 	}
 
@@ -2011,7 +2013,7 @@ unscaled capture.
 ==============
 */
 static byte *R_ResampleCaptureToAspectRGBA( const byte *source, int sourceWidth, int sourceHeight,
-	int outputWidth, int outputHeight ) {
+	int outputWidth, int outputHeight, bool topDown = false, bool bgra = false ) {
 	int cropX = 0;
 	int cropY = 0;
 	int cropWidth = sourceWidth;
@@ -2061,21 +2063,48 @@ static byte *R_ResampleCaptureToAspectRGBA( const byte *source, int sourceWidth,
 			}
 			const int x1 = Min( x0 + 1, cropMaxX );
 
-			const byte *topLeft = source + ( (size_t)y0 * sourceWidth + x0 ) * 4;
-			const byte *topRight = source + ( (size_t)y0 * sourceWidth + x1 ) * 4;
-			const byte *bottomLeft = source + ( (size_t)y1 * sourceWidth + x0 ) * 4;
-			const byte *bottomRight = source + ( (size_t)y1 * sourceWidth + x1 ) * 4;
+			const int row0 = topDown ? sourceHeight - 1 - y0 : y0;
+			const int row1 = topDown ? sourceHeight - 1 - y1 : y1;
+			const byte *topLeft = source + ( (size_t)row0 * sourceWidth + x0 ) * 4;
+			const byte *topRight = source + ( (size_t)row0 * sourceWidth + x1 ) * 4;
+			const byte *bottomLeft = source + ( (size_t)row1 * sourceWidth + x0 ) * 4;
+			const byte *bottomRight = source + ( (size_t)row1 * sourceWidth + x1 ) * 4;
 			byte *destination = outputRow + x * 4;
 
 			for ( int channel = 0; channel < 4; channel++ ) {
-				const double top = topLeft[channel] + ( topRight[channel] - topLeft[channel] ) * xFraction;
-				const double bottom = bottomLeft[channel] + ( bottomRight[channel] - bottomLeft[channel] ) * xFraction;
+				const int sourceChannel = bgra && ( channel == 0 || channel == 2 ) ? 2 - channel : channel;
+				const double top = topLeft[sourceChannel] + ( topRight[sourceChannel] - topLeft[sourceChannel] ) * xFraction;
+				const double bottom = bottomLeft[sourceChannel] + ( bottomRight[sourceChannel] - bottomLeft[sourceChannel] ) * xFraction;
 				destination[channel] = (byte)( top + ( bottom - top ) * yFraction + 0.5 );
 			}
 		}
 	}
 
 	return output;
+}
+
+bool idRenderSystemLocal::BeginSavePreview() {
+	return glConfig.isInitialized && RB_RequestSavePreview();
+}
+
+int idRenderSystemLocal::PollSavePreview( const char *fileName ) {
+	const byte *pixels = NULL;
+	int width = 0, height = 0;
+	bool topDown = false, bgra = false;
+	int result = RB_PollSavePreview( pixels, width, height, topDown, bgra );
+	if ( result == 0 ) return 0;
+	if ( result == 1 ) {
+		byte *thumbnail = R_ResampleCaptureToAspectRGBA( pixels, width, height, 320, 240, topDown, bgra );
+		for ( int i = 0; i < 320 * 240; ++i ) thumbnail[i * 4 + 3] = 255;
+		if ( !R_WriteTGA( fileName, thumbnail, 320, 240, true ) ) result = -1;
+		R_StaticFree( thumbnail );
+	}
+	RB_ReleaseSavePreview();
+	return result;
+}
+
+void idRenderSystemLocal::CancelSavePreview() {
+	RB_ReleaseSavePreview();
 }
 
 void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlpha,
@@ -2110,30 +2139,17 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 
 	glReadBuffer( GL_BACK );
 
-	// GL_RGB readback rows use the default four-byte pack alignment.  Convert
-	// each row independently so the padding never becomes pixel data.
-	const int sourceStride = ( rc->width * 3 + 3 ) & ~3;
-	const size_t sourceBytes = (size_t)sourceStride * (size_t)rc->height;
-	byte *data = (byte *)R_StaticAlloc( sourceBytes );
-	memset( data, 0, sourceBytes );
-	
-	glReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGB, GL_UNSIGNED_BYTE, data ); 
+	// RGBA is naturally pack-aligned and is also the native Vulkan/ES readback
+	// format. Avoid a full-frame RGB intermediate and a second expansion copy.
+	byte *data2 = (byte *)R_StaticAlloc( (size_t)sourcePixelCount * 4 );
+	memset( data2, 0, (size_t)sourcePixelCount * 4 );
+	glReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGBA, GL_UNSIGNED_BYTE, data2 );
 	tr.takingScreenshot = wasTakingScreenshot;
 
-	byte *data2 = (byte *)R_StaticAlloc( (size_t)sourcePixelCount * 4 );
-
-	for ( int y = 0; y < rc->height; y++ ) {
-		const byte *sourceRow = data + (size_t)y * sourceStride;
-		byte *destinationRow = data2 + (size_t)y * rc->width * 4;
-		for ( int x = 0; x < rc->width; x++ ) {
-			destinationRow[ x * 4 ] = sourceRow[ x * 3 ];
-			destinationRow[ x * 4 + 1 ] = sourceRow[ x * 3 + 1 ];
-			destinationRow[ x * 4 + 2 ] = sourceRow[ x * 3 + 2 ];
-			destinationRow[ x * 4 + 3 ] = 0xff;
-		}
+	// Save previews have always been opaque, regardless of framebuffer alpha.
+	for ( int64 pixel = 0; pixel < sourcePixelCount; ++pixel ) {
+		data2[pixel * 4 + 3] = 0xff;
 	}
-	R_StaticFree( data );
-	data = NULL;
 
 	byte *outputData = data2;
 	int capturedWidth = rc->width;

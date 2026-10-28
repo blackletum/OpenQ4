@@ -1,0 +1,54 @@
+# Liquid navigation qualification
+
+MP-06 in the [roadmap](roadmap.md) owns delivery scope. This records what the
+compiler and gameplay checks establish; the archived liquid plan preserves
+implementation history.
+
+## AAS liquid flags, 28 October 2026
+
+Area emission now derives `AREA_LIQUID` from `AREACONTENTS_WATER`.
+`Reachability_Swim` already tests water contents, while the water-jump builder
+requires the liquid flag. Previously the compiler never supplied that flag.
+The native `aas_liquid_area_state.py` fixture executes production area emission
+for wet/dry, floor/no-floor, reused and empty BSP nodes and rejects the old
+compiler behavior.
+
+The actual staged dedicated compiler was independently copied into the fixed
+`.tmp/runtime/compiler/` runtime because AAS output is written through
+`fs_cdpath`, beside the executable. Tests must not write navigation output into
+the release-style `.install/` tree or a retail installation. Engine, game,
+package and dependency hashes are recorded before and after. No installed
+assets were copied into a writable test profile or hard-linked.
+
+The repository's authored `liquid_lab.map` supplies the geometry/materials. A
+test-only AAS definition uses a 32x32x80 agent, swimming enabled, gravity 800,
+16-unit steps and 20-unit water jumps. A pillar in the deep pool creates
+adjacent convex water areas so swim edges are needed. The generated source,
+settings, compiled AAS and logs are retained under
+`.tmp/mp-completion-20261028/aas-liquid-partitioned/`.
+
+| Observation | Result |
+|---|---|
+| Dedicated compiler process | Exit 0, completion marker, no fatal/error |
+| Serialized areas | 87 total; all 9 water areas also have `AREA_LIQUID` |
+| Swim reachabilities | 26 |
+| Water-jump reachabilities | 16 |
+| Runtime mutation | None; engine/module/packages retain their recorded hashes |
+
+Two earlier diagnostic runs remain separate. `aas-liquid/` used a differently
+named definition which duplicated `aas_types`; the shipped definition won, so
+the requested custom AAS file was not produced. `aas-liquid-enabled/` uses the
+correct override and emits 12 water jumps, but its three separate convex pools
+need no intra-pool swim edges. Its harness correctly retained a failed
+swim-edge expectation; adding the partitioned topology tests that generator.
+Compiler precache/material-stage warnings remain in the logs and are not
+presented as a warning-free run.
+
+This qualifies compiled liquid classification and swim/water-jump production.
+It does not establish the game AAS routing/movement consumers. Stock AAS
+definitions explicitly disable swim reachabilities; those defaults are
+preserved. Multiplayer bots use their own runtime collision-derived navigation
+rather than these AAS files. On 28 October the user selected static liquids,
+player/bot swimming and replicated air readouts. Swimming monsters, new swim
+animations and moving volumes are deferred. Air-HUD replication and broader
+visual/audio/physics qualification remain in the selected MP-06 scope.

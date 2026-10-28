@@ -124,7 +124,7 @@ def main():
         capability = function_body(service_source,'void UI_SettingsConfirmationDocument(std::uint64_t owner, const DocumentModel& document)')
         source = Path(temp)/'fixture.cpp';source.write_text(SOURCE.replace('// CAPABILITY_FUNCTION',capability),encoding='utf-8')
         binary = Path(temp)/'fixture.exe'
-        sources = [ROOT/'src/ui/retained'/name for name in ('Document.cpp','State.cpp','Motion.cpp','Presentation.cpp')]
+        sources = [ROOT/'src/ui/retained'/name for name in ('Document.cpp','State.cpp','Motion.cpp','Presentation.cpp','ModelScene.cpp')]
         sources += [jsoncpp/'src/lib_json'/name for name in ('json_reader.cpp','json_value.cpp','json_writer.cpp')]
         subprocess.run([compiler,'-std=c++20','-I',str(ROOT),'-I',str(jsoncpp/'include'),str(source),
                         *map(str,sources),'-o',str(binary)],check=True,env=env)

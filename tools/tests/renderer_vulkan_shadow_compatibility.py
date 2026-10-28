@@ -1356,6 +1356,8 @@ def validate_shadow_depth_format_selection() -> None:
         ("VkPipeline VK_Exec_PointCasterPipeline(", "point shadow caster pipeline"),
     ):
         caster_pipeline = braced_body(executor, marker, context)
+        require(caster_pipeline, "const bool withStencil = VK_ShadowMap_UseStencilAttachment();", context)
+        require(caster_pipeline, "[withStencil ? 1 : 0]", "separate cached pipeline variants")
         require_compact(
             caster_pipeline,
             "target.depthFormat = vkCtx.shadowDepthFormat;",
@@ -1363,12 +1365,19 @@ def validate_shadow_depth_format_selection() -> None:
         )
         require_compact(
             caster_pipeline,
-            """target.stencilFormat = vkCtx.shadowDepthHasStencil
+            """target.stencilFormat = withStencil
                 ? vkCtx.shadowDepthFormat : VK_FORMAT_UNDEFINED;""",
             context,
         )
 
     shadow_map = read("src/renderer/Vulkan/vk_ShadowMap.cpp")
+    stencil_attachment = braced_body(shadow_map, "bool VK_ShadowMap_UseStencilAttachment(", "unused shadow stencil")
+    require_compact(stencil_attachment,
+        "return vkCtx.shadowDepthHasStencil && r_vkShadowStencilAttachmentReference.GetBool();",
+        "reference attachment gated by actual format")
+    for pipeline in ("casterPipeline", "pointCasterPipeline"):
+        if executor.count(f"for ( VkPipeline &pipeline : vkExec.{pipeline} )") != 2:
+            raise AssertionError("Both caster variants must retire on shutdown and format reconfiguration")
     aspect_mask = braced_body(
         shadow_map,
         "static VkImageAspectFlags VK_ShadowMap_DepthAspectMask(",
@@ -1409,7 +1418,7 @@ def validate_shadow_depth_format_selection() -> None:
         "shadow-map caster rendering",
     )
     if compact(render).count(
-        compact("ri.pStencilAttachment = vkCtx.shadowDepthHasStencil ? &depth : NULL;")
+        compact("ri.pStencilAttachment = VK_ShadowMap_UseStencilAttachment() ? &depth : NULL;")
     ) < 2:
         raise AssertionError(
             "Projected and point shadow rendering must both omit stencil attachment metadata for depth-only formats"
@@ -1533,7 +1542,7 @@ def validate_csm_atlas_and_receiver_contract() -> None:
             """VK_ShadowMap_DrawPassCasters( ctx, light, receiverPass,
                 cascadeIndex, pass.composeDynamic
                     ? VK_SHADOW_CHAINS_STATIC_ONLY
-                    : VK_SHADOW_CHAINS_ALL )""",
+                    : VK_SHADOW_CHAINS_ALL, copiedLocalDepth || pass.unionLocalDepth )""",
             "VK_ShadowMap_InvalidatePassResource( light, receiverPass );",
         ),
         "complete per-cascade ownership rendering",
@@ -1552,9 +1561,9 @@ def validate_csm_atlas_and_receiver_contract() -> None:
             "const bool drawStatic = select != VK_SHADOW_CHAINS_DYNAMIC_ONLY;",
             "const bool drawDynamic = select != VK_SHADOW_CHAINS_STATIC_ONLY;",
             "const bool globalOwnership = receiverPass == VK_SHADOW_RECEIVER_GLOBAL;",
-            "if ( drawStatic )",
+            "if ( drawStatic && !localChainsOnly )",
             "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->globalShadowMapCasters )",
-            "if ( drawDynamic )",
+            "if ( drawDynamic && !localChainsOnly )",
             "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->globalShadowMapDynamicCasters )",
             "if ( globalOwnership && drawStatic )",
             "VK_ShadowMap_DrawCasterChain( ctx, light, cascadeIndex, vLight->localShadowMapCasters )",
@@ -1971,7 +1980,7 @@ def validate_shadow_filtering_contract() -> None:
             "float compareDepth = depth - ShadowReceiverBias(cascadeIndex) - tapBias;",
             "if (shadow.filterParams.w > 0.5)",
             "texture(shadowCompareMap, vec3(uv, compareDepth))",
-            "texture(shadowRawMap, uv).r",
+            "RawShadowDepth(uv)",
             "compareDepth <= storedDepth ? 1.0 : 0.0",
         ),
         "projected runtime compare/raw selection",
@@ -4847,8 +4856,8 @@ def validate_exact_static_cache_and_admission_contract() -> None:
         (
             "region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;",
             "region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;",
-            "copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;",
-            "copy.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;",
+            "copy.srcImageLayout = srcImage == dstImage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;",
+            "copy.dstImageLayout = srcImage == dstImage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;",
             "vkCmdCopyImage2( cmd, &copy );",
         ),
         "depth-only projected cache copy",

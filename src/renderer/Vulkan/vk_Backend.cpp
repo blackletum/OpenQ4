@@ -171,6 +171,28 @@ static void VK_FillGLConfigFromDevice( void ) {
 	glConfig.version_string = versionString;
 	glConfig.extensions_string = "";
 	glConfig.wgl_extensions_string = "";
+	glConfig.gpuClass = RendererGpuClass::Unknown;
+	glConfig.dedicatedVideoMemoryMB = 0;
+	switch ( vkCtx.deviceProperties.deviceType ) {
+		case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: glConfig.gpuClass = RendererGpuClass::Discrete; break;
+		case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: glConfig.gpuClass = RendererGpuClass::Integrated; break;
+		case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: glConfig.gpuClass = RendererGpuClass::Virtual; break;
+		case VK_PHYSICAL_DEVICE_TYPE_CPU: glConfig.gpuClass = RendererGpuClass::Software; break;
+		default: break;
+	}
+	if ( glConfig.gpuClass == RendererGpuClass::Discrete ) {
+		VkPhysicalDeviceMemoryProperties memory;
+		vkGetPhysicalDeviceMemoryProperties( vkCtx.physicalDevice, &memory );
+		// Largest local heap is conservative; do not sum mirrored device heaps or
+		// call host-visible/reBAR memory an additional pool of VRAM.
+		VkDeviceSize largest = 0;
+		for ( uint32_t i = 0; i < memory.memoryHeapCount; ++i ) {
+			if ( ( memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ) && memory.memoryHeaps[i].size > largest )
+				largest = memory.memoryHeaps[i].size;
+		}
+		const VkDeviceSize mib = largest / (1024 * 1024);
+		if ( mib <= 256 * 1024 ) glConfig.dedicatedVideoMemoryMB = static_cast<int>(mib);
+	}
 
 	glConfig.maxTextureSize = (int)vkCtx.deviceProperties.limits.maxImageDimension2D;
 	glConfig.maxTextureUnits = 8;
@@ -361,7 +383,7 @@ static bool VK_PrepareRenderDevice( void ) {
 		common->Warning( "Vulkan: device %u '%s' failed during %s; trying the next compatible device",
 				attempt.index, attempt.deviceName, vkStartupDeviceStage );
 		VK_Device_AbandonAdapter();
-		firstCandidate = attempt.index + 1;
+		++firstCandidate; // Preference rank, not enumeration index.
 	}
 }
 
@@ -412,6 +434,10 @@ VK_ShutdownRenderDevice
 void VK_ShutdownRenderDevice( void ) {
 	R_RendererMetrics_ShutdownGpuTimers();
 	VK_Device_Shutdown();
+	// The module owns a separate backend state from the engine. Its view,
+	// space and light pointers refer to frame memory retired by video restart;
+	// console GPU work can run before another view replaces those pointers.
+	memset( &backEnd, 0, sizeof( backEnd ) );
 	if ( vkBackendServices != NULL ) {
 		vkBackendServices->BeginWindowTeardown();
 		vkBackendServices->FinishWindowTeardown();

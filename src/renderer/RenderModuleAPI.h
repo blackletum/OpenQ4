@@ -85,7 +85,11 @@
 //      batches without weakening explicit render-target flush barriers.
 // 25 - idDeclManager appends FreeMaterialTypeArray: hit maps must be freed by
 //      their engine allocator, not by a renderer-local Mem_Free.
-#define RENDER_API_VERSION			25
+// 26 - Deferred checkpoint capture slots in idRenderSystem.
+// 27 - idDict mutation-observer layout shared across engine/renderer boundaries.
+// 28 - glconfig_t appends active GPU class and dedicated-memory telemetry.
+// 29 - Owned read-only rendering-device inventory, callable on the live module.
+#define RENDER_API_VERSION			29
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -403,6 +407,7 @@ struct renderImagePolicyRequest_t;
 struct renderImagePolicyResult_t;
 struct renderImagePolicy_t;
 struct renderImageRecoveryLease_t;
+struct renderDeviceCatalog_t;
 
 typedef struct renderExport_s {
 	int										version;		// RENDER_API_VERSION
@@ -440,6 +445,7 @@ typedef struct renderExport_s {
     bool (*PrepareColdImagePolicyRecovery)(uint64_t,uint64_t,const char*,uint32_t,const char*,uint32_t,renderImageRecoveryLease_t*,char*,int);
     bool (*CancelImagePolicyRecovery)(const renderImageRecoveryLease_t*,char*,int);
     bool (*ReleaseImagePolicyRecovery)(const renderImageRecoveryLease_t*,uint32_t,const renderImagePolicyResult_t*,char*,int);
+	bool (*GetRenderingDevices)(renderDeviceCatalog_t*);
 } renderExport_t;
 
 extern "C" {

@@ -581,6 +581,7 @@ void VectorElement::Configure(const Node& node, Host& owner, RuntimeStatistics& 
 	additiveImage=node.properties.contains("image-blend") && node.properties.at("image-blend").text=="additive";
 	imageSource=node.properties.contains("image") ? node.properties.at("image").text : "";
 	imageCoordinates=std::make_shared<ImageCoordinates>(ImageCoordinates{0,0,1,1}); imageTexture={}; imageGeometry={};
+	if (node.model) (*imageCoordinates)[3]=-1; // Engine targets have their origin at the lower edge.
 	for (const auto* property : {"image-offset-x","image-offset-y","image-scale-x","image-scale-y"})
 		if (const auto found=node.properties.find(property);found!=node.properties.end()) SetImageCoordinate(property,found->second.data[0]);
 }

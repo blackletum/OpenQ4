@@ -48,6 +48,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "DurableFile.h"
 #include "SettingsPersistence.h"
 #include "PerformancePreset.h"
+#include "CVarAssignmentCapture.h"
 #include "InitializationPresentation.h"
 #include <chrono>
 #include "FileSystemPathValidation.h"
@@ -55,10 +56,12 @@ If you have questions concerning this license or the applicable additional terms
 #include "../sys/NetworkEndpoint.h"
 
 #include "PresentationPacing.h"
+#include "FrameWorkProfile.h"
 
 #if defined( USE_SDL3 )
 #include <SDL3/SDL_locale.h>
 #include <SDL3/SDL_timer.h>
+#include <SDL3/SDL_cpuinfo.h>
 #endif
 
 #define	MAX_PRINT_MSG_SIZE	4096
@@ -66,6 +69,8 @@ If you have questions concerning this license or the applicable additional terms
 
 void openQ4_PrintFramePacingSnapshot( const char *reason );
 void openQ4_RecordMultiplayerFramePacing( void );
+void Session_FinishPendingSave();
+static void Com_ProfileFrameWork_f( const idCmdArgs &args );
 
 static const int OPENQ4_ENTITYDEF_MEDIA_CACHE_TOOL_MASK =
 	EDITOR_RADIANT |
@@ -109,9 +114,9 @@ idCVar com_version( "si_version", version.string, CVAR_SYSTEM|CVAR_ROM|CVAR_SERV
 idCVar com_buildInfo( "com_buildInfo", buildInfo.string, CVAR_SYSTEM|CVAR_ROM, "detailed engine build information" );
 idCVar com_skipRenderer( "com_skipRenderer", "0", CVAR_BOOL|CVAR_SYSTEM, "skip the renderer completely" );
 idCVar com_machineSpec( "com_machineSpec", "-1", CVAR_INTEGER | CVAR_ARCHIVE | CVAR_SYSTEM, "hardware classification, -1 = not detected, 0 = low quality, 1 = medium quality, 2 = high quality, 3 = ultra quality" );
-const char *com_performancePresetArgs[] = { "minimum", "lowpower", "performance", "balanced", "quality", "ultra", NULL };
-static const char *com_performancePresetValueStrings[] = { "balanced", "minimum", "lowpower", "performance", "quality", "ultra", NULL };
-idCVar com_performancePreset( "com_performancePreset", "balanced", CVAR_ARCHIVE | CVAR_SYSTEM, "coherent system performance preset: minimum, lowpower, performance, balanced, quality, ultra", com_performancePresetValueStrings, idCmdSystem::ArgCompletion_String<com_performancePresetArgs> );
+const char *com_performancePresetArgs[] = { "minimum", "lowpower", "performance", "balanced", "enhanced", "quality", "ultra", NULL };
+static const char *com_performancePresetValueStrings[] = { "balanced", "minimum", "lowpower", "performance", "enhanced", "quality", "ultra", NULL };
+idCVar com_performancePreset( "com_performancePreset", "balanced", CVAR_ARCHIVE | CVAR_SYSTEM, "coherent system performance preset: minimum, lowpower, performance, balanced, enhanced, quality, ultra", com_performancePresetValueStrings, idCmdSystem::ArgCompletion_String<com_performancePresetArgs> );
 idCVar com_purgeAll( "com_purgeAll", "0", CVAR_BOOL | CVAR_ARCHIVE | CVAR_SYSTEM, "purge everything between level loads" );
 idCVar com_WriteSingleDeclFile( "com_WriteSingleDeclFile", "0", CVAR_SYSTEM | CVAR_BOOL, "write a packed decl file after startup or map loads; use com_singleDeclFileWriteMode for openQ4 or exact-retail game-type coverage" );
 idCVar com_memoryMarker( "com_memoryMarker", "-1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_INIT, "used as a marker for memory stats" );
@@ -2994,173 +2999,6 @@ void Com_SetMachineSpec_f( const idCmdArgs &args ) {
 	commonLocal.SetMachineSpec();
 }
 
-/*
-=================
-Com_ExecMachineSpecs_f
-=================
-*/
-#ifdef MACOS_X
-void OSX_GetVideoCard( int& outVendorId, int& outDeviceId );
-bool OSX_GetCPUIdentification( int& cpuId, bool& oldArchitecture );
-#endif
-void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
-	if ( com_machineSpec.GetInteger() == 3 ) {
-		cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_lodbias", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_forceDownSize", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_roundDown", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_preload", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useAllFormats", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecular", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBump", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBumpLimit", 256, CVAR_ARCHIVE );
-		// keep DDS replacements enabled at the top spec; in openQ4 this cvar also
-		// gates user-supplied replacement packs, not just the stock progimg tree
-		cvarSystem->SetCVarInteger( "image_usePrecompressedTextures", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSize", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarString( "image_filter", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_anisotropy", 16, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useCompression", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_ignoreHighQuality", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "s_maxSoundsPerShader", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_mode", 5, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useNormalCompression", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_multiSamples", 8, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_postAA", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_screenFraction", 100, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );
-	} else if ( com_machineSpec.GetInteger() == 2 ) {
-		cvarSystem->SetCVarString( "image_filter", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_lodbias", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_forceDownSize", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_roundDown", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_preload", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useAllFormats", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecular", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBump", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBumpLimit", 256, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_usePrecompressedTextures", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSize", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_anisotropy", 8, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useCompression", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_ignoreHighQuality", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "s_maxSoundsPerShader", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useNormalCompression", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_mode", 4, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_multiSamples", 4, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_postAA", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_screenFraction", 100, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );
-	} else if ( com_machineSpec.GetInteger() == 1 ) {
-		cvarSystem->SetCVarString( "image_filter", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_anisotropy", 4, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_lodbias", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSize", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_forceDownSize", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_roundDown", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_preload", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useCompression", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useAllFormats", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_usePrecompressedTextures", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecular", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBump", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBumpLimit", 256, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useNormalCompression", 2, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_mode", 3, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_multiSamples", 2, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_postAA", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_screenFraction", 100, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );
-	} else {
-		cvarSystem->SetCVarString( "image_filter", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_lodbias", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_roundDown", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_preload", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useAllFormats", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_usePrecompressedTextures", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSize", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_anisotropy", 2, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useCompression", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_ignoreHighQuality", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "s_maxSoundsPerShader", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecular", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBump", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBumpLimit", 256, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_mode", 3	, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_useNormalCompression", 2, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_multiSamples", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_postAA", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_screenFraction", 85, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "r_swapInterval", 0, CVAR_ARCHIVE );
-		cvarSystem->SetCVarFloat( "r_forceAmbient", 0.0f, CVAR_ARCHIVE );
-	}
-
-	if ( Sys_GetVideoRam() < 128 ) {
-		cvarSystem->SetCVarBool( "image_ignoreHighQuality", true, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSize", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeLimit", 256, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecular", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBump", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeBumpLimit", 256, CVAR_ARCHIVE );
-	}
-
-	if ( Sys_GetSystemRam() < 512 ) {
-		cvarSystem->SetCVarBool( "image_ignoreHighQuality", true, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "s_maxSoundsPerShader", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSize", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeLimit", 256, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecular", 1, CVAR_ARCHIVE );
-		cvarSystem->SetCVarInteger( "image_downSizeSpecularLimit", 64, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "com_purgeAll", true, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "r_forceLoadImages", true, CVAR_ARCHIVE );
-	} else {
-		cvarSystem->SetCVarBool( "com_purgeAll", false, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "r_forceLoadImages", false, CVAR_ARCHIVE );
-	}
-
-	bool oldCard = false;
-	bool nv10or20 = false;
-	renderSystem->GetCardCaps( oldCard, nv10or20 );
-	if ( oldCard ) {
-		cvarSystem->SetCVarBool( "g_decals", false, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "g_projectileLights", false, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "g_doubleVision", false, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "g_muzzleFlash", false, CVAR_ARCHIVE );
-	} else {
-		cvarSystem->SetCVarBool( "g_decals", true, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "g_projectileLights", true, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "g_doubleVision", true, CVAR_ARCHIVE );
-		cvarSystem->SetCVarBool( "g_muzzleFlash", true, CVAR_ARCHIVE );
-	}
-	if ( nv10or20 ) {
-		cvarSystem->SetCVarInteger( "image_useNormalCompression", 1, CVAR_ARCHIVE );
-	}
-
-#if defined( MACOS_X )
-	// On low settings, G4 systems & 64MB FX5200/NV34 Systems should default shadows off
-	bool oldArch;
-	int vendorId, deviceId, cpuId;
-	OSX_GetVideoCard( vendorId, deviceId );
-	OSX_GetCPUIdentification( cpuId, oldArch );
-	bool isFX5200 = vendorId == 0x10DE && ( deviceId & 0x0FF0 ) == 0x0320;
-	if ( ( oldArch || ( isFX5200 && Sys_GetVideoRam() < 128 ) ) && com_machineSpec.GetInteger() == 0 ) {
-		cvarSystem->SetCVarBool( "r_shadows", false, CVAR_ARCHIVE );
-	} else {
-		cvarSystem->SetCVarBool( "r_shadows", true, CVAR_ARCHIVE );
-	}
-#endif
-}
-
 using openQ4PerformancePreset_t = openq4::PerformancePreset;
 static const auto& OPENQ4_PERFORMANCE_PRESETS = openq4::PerformancePresets();
 static const int OPENQ4_PERFORMANCE_PRESET_COUNT = openq4::PerformancePresetCount;
@@ -3386,59 +3224,87 @@ static bool Common_ApplyPerformancePreset( const openQ4PerformancePreset_t &pres
 	return applied;
 }
 
+// Retain the stock console command, but never revive its separate resolution,
+// texture, vsync and obsolete card-specific recipes.
+void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
+ const auto *preset=openq4::PerformancePresetForMachineSpec(com_machineSpec.GetInteger());
+ if(args.Argc()!=1||!preset){
+  common->Printf("execMachineSpec requires no arguments and com_machineSpec 0..3. Settings were preserved.\n");
+  return;
+ }
+ Common_ApplyPerformancePreset(*preset);
+}
+
 static int Common_SanitizePerformancePresetMemoryMB( int rawMegabytes, int fallbackMegabytes, int maxReasonableMegabytes ) {
  return openq4::SanitizePerformancePresetMemoryMB(rawMegabytes,fallbackMegabytes,maxReasonableMegabytes);
 }
 
-static idStr Common_FormatPerformancePresetMemorySignal( int rawMegabytes, int effectiveMegabytes ) {
-	idStr text = Sys_FormatMemoryMB( effectiveMegabytes );
-	if ( rawMegabytes != effectiveMegabytes ) {
-		text += " effective, ";
-		text += Sys_FormatMemoryMB( rawMegabytes );
-		text += " reported";
-	}
-	return text;
-}
-
 bool Common_CapturePerformancePresetSignals(openq4::PerformancePresetSignals& output,std::string& error) {
  openq4::PerformancePresetSignals signals;
- signals.explicitLowPower=Common_HasExplicitLowPowerHostSignal();
- if (!signals.explicitLowPower) {
-  signals.raspberryPi=Common_HasRaspberryPiHostSignal();
-  if (!signals.raspberryPi) {
-   signals.steamDeck=idStr::Icmp(com_platformProfile.GetString(),"steamdeck")==0 || Common_HasSteamDeckHostSignal();
-   if (!signals.steamDeck) {
-    if (!renderSystem) { error="Renderer capability observation is unavailable";return false; }
-    signals.systemRamMB=Sys_GetSystemRam();signals.videoRamMB=Sys_GetVideoRam();
-    bool nv10or20=false;renderSystem->GetCardCaps(signals.legacyRenderer,nv10or20);
-    if (!signals.legacyRenderer) signals.arm64=Common_HostCpuIsArm64();
-   }
-  }
+ if (!renderSystem || !renderSystem->GetGLConfig().isInitialized) {
+  error="Renderer capability observation is unavailable";return false;
  }
+ const auto& config=renderSystem->GetGLConfig();
+ signals.explicitLowPower=Common_HasExplicitLowPowerHostSignal();
+ signals.raspberryPi=Common_HasRaspberryPiHostSignal();
+ signals.steamDeck=idStr::Icmp(com_platformProfile.GetString(),"steamdeck")==0 || Common_HasSteamDeckHostSignal();
+ signals.arm64=Common_HostCpuIsArm64();
+#if defined( __ANDROID__ )
+ signals.mobile=true;
+#endif
+#if defined( USE_SDL3 )
+ // Unlike the legacy platform getters, SDL reports 0 on query failure instead
+ // of inventing 512/1024/2048 MiB. Use one observation on all supported hosts.
+ signals.systemRamMB=SDL_GetSystemRAM();
+#else
+ signals.systemRamMB=Sys_GetSystemRam();
+#endif
+ signals.videoRamMB=config.dedicatedVideoMemoryMB;
+ signals.gpuClass=config.gpuClass;
+ signals.drawableWidth=config.vidWidth;signals.drawableHeight=config.vidHeight;
+ // The retired GetCardCaps reports false unconditionally; observe the actual
+ // live backend instead. Vulkan does not populate GL-specific capability bits.
+ const bool vulkan=config.version_string && RendererNameContains(config.version_string,"Vulkan");
+ signals.postAAAvailable=vulkan || (config.GLSLProgramAvailable && config.GLSL130Available && config.backendCaps.hasFBO);
+ signals.modernEffects=signals.postAAAvailable && (vulkan || config.maxTextureSize>=4096);
+ // Apple GL 2.1 has GLSL 1.20 and runs the classic material path well. Missing
+ // SMAA/HDR/post support says nothing about its texture or MSAA performance.
+ // Only a limited classic material pipeline/texture size warrants Minimum.
+ const bool classicPrograms=config.GLSLProgramAvailable ||
+  (config.ARBVertexProgramAvailable && config.ARBFragmentProgramAvailable);
+ signals.legacyRenderer=!vulkan && (!classicPrograms || config.maxTextureSize<2048);
+#if defined( USE_SDL3 )
+ signals.logicalCpus=SDL_GetNumLogicalCPUCores();
+#endif
  output=signals;error.clear();return true;
 }
-static const char *Common_DetectPerformancePresetName( idStr &reason ) {
+static bool Common_DetectPerformancePreset( openQ4PerformancePreset_t &preset, idStr &reason ) {
  openq4::PerformancePresetSignals signals;std::string error;
- if (!Common_CapturePerformancePresetSignals(signals,error)) {reason=error.c_str();return OPENQ4_DEFAULT_PERFORMANCE_PRESET;}
+ if (!Common_CapturePerformancePresetSignals(signals,error)) {reason=error.c_str();return false;}
  const auto detected=openq4::DetectPerformancePreset(signals);
+ if (!openq4::ResolveDetectedPerformancePreset(detected,preset)) {reason="detected profile is unavailable";return false;}
  using Reason=openq4::PerformancePresetReason;
- if(detected.reason==Reason::ExplicitLowPower)reason="explicit low-power environment signal";
- else if(detected.reason==Reason::RaspberryPi)reason="Raspberry Pi host signal";
- else if(detected.reason==Reason::SteamDeck)reason="Steam Deck platform profile";
- else if(detected.reason==Reason::LegacyRenderer)reason="legacy renderer architecture";
- else{
-  const idStr sysRamReason=Common_FormatPerformancePresetMemorySignal(signals.systemRamMB,detected.systemRamMB);
-  const idStr vidRamReason=Common_FormatPerformancePresetMemorySignal(signals.videoRamMB,detected.videoRamMB);
-  switch(detected.reason){
-   case Reason::ArmLowMemory:reason=va("ARM64 with constrained memory (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
-   case Reason::Arm:reason=va("ARM64 host (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
-   case Reason::LowMemory:reason=va("constrained memory (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
-   case Reason::ModestMemory:reason=va("modest memory/GPU budget (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
-   case Reason::HighMemory:reason=va("high memory/GPU budget (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
-   default:reason=va("standard desktop budget (%s RAM, %s VRAM)",sysRamReason.c_str(),vidRamReason.c_str());break;
-  }
+ const char* policy="unknown hardware; conservative starting point";
+ switch(detected.reason){
+  case Reason::ExplicitLowPower:policy="explicit low-power request";break;
+  case Reason::RaspberryPi:policy="Raspberry Pi host";break;
+  case Reason::SteamDeck:policy="Steam Deck power budget";break;
+  case Reason::Mobile:policy="mobile power budget";break;
+  case Reason::LegacyRenderer:policy="limited active renderer capabilities";break;
+  case Reason::Software:policy="software renderer";break;
+  case Reason::Virtual:policy="virtual GPU";break;
+  case Reason::LowMemory:policy="constrained memory";break;
+  case Reason::ModestMemory:policy="modest or unknown system memory";break;
+  case Reason::Dedicated:policy="dedicated GPU capacity; not a measured frame rate";break;
+  case Reason::Shared:policy="shared-memory GPU budget";break;
+  case Reason::Resolution:policy="drawable resolution budget";break;
+  case Reason::Cpu:policy="limited or unknown CPU concurrency";break;
+  default:break;
  }
- return detected.preset->name;
+ reason=va("%s; GPU=%s, RAM=%d MiB, dedicated VRAM=%d MiB (0=unknown/shared), drawable=%dx%d, CPUs=%d, scene scale=%d%%, post AA=%d",
+  policy,RendererGpuClassName(signals.gpuClass),detected.systemRamMB,detected.videoRamMB,
+  signals.drawableWidth,signals.drawableHeight,signals.logicalCpus,preset.screenFraction,preset.postAA);
+ return true;
 }
 
 static bool Common_ApplyPerformancePresetCommand( const idCmdArgs &args, bool quiet = false ) {
@@ -3492,27 +3358,71 @@ static bool Common_AutoDetectPerformancePresetCommand( const idCmdArgs &args, bo
 	}
 
 	idStr reason;
-	const char *presetName = Common_DetectPerformancePresetName( reason );
-	const openQ4PerformancePreset_t *preset = Common_FindPerformancePreset( presetName );
-	if ( preset == NULL ) {
-		preset = Common_DefaultPerformancePreset();
-		reason = "internal fallback";
-	}
-	if ( preset == NULL ) {
-		if ( !quiet ) {
-			common->Printf( "Auto-detect default preset '%s' is unavailable.\n", OPENQ4_DEFAULT_PERFORMANCE_PRESET );
-		}
+	openQ4PerformancePreset_t preset;
+	if ( !Common_DetectPerformancePreset( preset, reason ) ) {
+		if ( !quiet ) common->Printf( "Auto-detect unavailable: %s. Settings were preserved.\n", reason.c_str() );
 		return false;
 	}
 
 	if ( !quiet ) {
-		common->Printf( "Auto-detected performance preset '%s' (%s).\n", preset->name, reason.c_str() );
+		common->Printf( "Auto-detected performance preset '%s' (%s).\n", preset.name, reason.c_str() );
 	}
-	return Common_ApplyPerformancePreset( *preset, quiet );
+	return Common_ApplyPerformancePreset( preset, quiet );
 }
 
 static void Com_AutoDetectPerformancePreset_f( const idCmdArgs &args ) {
 	Common_AutoDetectPerformancePresetCommand( args );
+}
+
+static bool Common_BootstrapStartupPerformancePreset(
+	openQ4PerformancePresetCVarBackup_t bootstrap[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] ) {
+	const auto *preset = Common_FindPerformancePreset( "minimum" );
+	if ( preset == NULL || !Common_ApplyPerformancePreset( *preset, true ) ) return false;
+	Common_BackupPerformancePresetCVars( bootstrap );
+	return true;
+}
+
+// First launch starts with a small bootstrap profile until a real device can be
+// observed. Keep settings supplied by autoexec/launch options over that profile;
+// a named profile is an explicit choice, including Minimum. Existing saved
+// configurations never enter this path just because their spec marker is gone.
+static bool Common_ApplyStartupPerformancePreset(
+	const openQ4PerformancePresetCVarBackup_t bootstrap[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT],
+	const bool assigned[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] ) {
+	idStr reason;
+	bool explicitPreset = false;
+	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
+		if ( assigned[i] && idStr::Icmp( bootstrap[i].name, "com_performancePreset" ) == 0 ) explicitPreset = true;
+	}
+	openQ4PerformancePreset_t detectedPreset;
+	const char *name = explicitPreset ? com_performancePreset.GetString() : "auto";
+	const auto *preset = explicitPreset ? Common_FindPerformancePreset( name ) :
+		( Common_DetectPerformancePreset( detectedPreset, reason ) ? &detectedPreset : NULL );
+	if ( preset == NULL ) {
+		common->Printf( "First-launch performance detection unavailable (requested '%s'): %s\n",
+			name != NULL ? name : "", reason.c_str() );
+		return false;
+	}
+	openQ4PerformancePresetCVarBackup_t configured[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT];
+	Common_BackupPerformancePresetCVars( configured );
+	const int modifiedFlags = cvarSystem->GetModifiedFlags();
+	if ( !Common_ApplyPerformancePreset( *preset, true ) ) return false;
+	bool restored = true;
+	for ( int i = 0; i < OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT; ++i ) {
+		const auto &value = configured[i];
+		if ( idStr::Icmp( value.name, "com_performancePreset" ) == 0 ) continue;
+		if ( value.valid && ( assigned[i] || value.value != bootstrap[i].value || Common_HasStartupVariable( value.name ) ) ) {
+			restored &= Common_SetPerformancePresetString( preset->name, value.name, value.value.c_str(), false );
+		}
+	}
+	if ( !restored ) {
+		Common_RestorePerformancePresetCVars( configured );
+		Common_RestorePerformancePresetModifiedFlags( modifiedFlags );
+		return false;
+	}
+	common->Printf( "First-launch performance preset '%s'%s%s; preserving configured overrides.\n",
+		preset->name, reason.c_str()[0] == '\0' ? "" : ": ", reason.c_str() );
+	return true;
 }
 
 static const char *commonCommandCompletionMatch = NULL;
@@ -3702,14 +3612,14 @@ static bool Common_PerformancePresetCheckRestoredAudio( const openQ4PerformanceP
 static bool Common_ValidatePerformancePresetIntent( const openQ4PerformancePreset_t &preset ) {
 	bool passed = true;
 
-	// Shadow maps belong to the two top tiers only; the tiers below keep the
-	// stock stencil shadows.
-	const bool shadowMapTier = Common_PerformancePresetIsNamed( preset, "quality" ) || Common_PerformancePresetIsNamed( preset, "ultra" );
+	// Enhanced is the affordable modern-effects tier; lower tiers retain stencil.
+	const bool shadowMapTier = Common_PerformancePresetIsNamed( preset, "enhanced" ) || Common_PerformancePresetIsNamed( preset, "quality" ) || Common_PerformancePresetIsNamed( preset, "ultra" );
 	passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_useShadowMap", preset.useShadowMap, shadowMapTier ? 1 : 0 );
-	if ( preset.bloom != 0 || preset.ssao != 0 || preset.hdrToneMap != 0 || preset.motionBlur != 0 || preset.crt != 0 ) {
-		common->Printf( "PerformancePreset self-test failed: %s enables optional post effects; presets should keep authored rendering as the baseline\n", preset.name );
-		passed = false;
-	}
+	passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_bloom", preset.bloom, shadowMapTier ? 1 : 0 );
+	passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_ssao", preset.ssao, shadowMapTier ? 1 : 0 );
+	passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_hdrToneMap", preset.hdrToneMap, shadowMapTier ? 1 : 0 );
+	passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_motionBlur", preset.motionBlur, Common_PerformancePresetIsNamed( preset, "ultra" ) ? 1 : 0 );
+	passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_crt", preset.crt, 0 );
 	passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_useLightGrid", preset.useLightGrid, 1 );
 
 	if ( Common_PerformancePresetIsNamed( preset, "minimum" ) || Common_PerformancePresetIsNamed( preset, "lowpower" ) ) {
@@ -3747,6 +3657,17 @@ static bool Common_ValidatePerformancePresetIntent( const openQ4PerformancePrese
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_downSize", preset.downSize, 0 );
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_ignoreHighQuality", preset.ignoreHighQuality, 0 );
 		passed &= Common_PerformancePresetCheckRestoredAudio( preset );
+	} else if ( Common_PerformancePresetIsNamed( preset, "enhanced" ) ) {
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "com_machineSpec", preset.machineSpec, 2 );
+		passed &= Common_PerformancePresetCheckBenchmarkPreset( preset, "modern" );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_screenFraction", preset.screenFraction, 100 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_multiSamples", preset.multiSamples, 2 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapSize", preset.shadowMapSize, 1024 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapPointSize", preset.shadowMapPointSize, 512 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapFilterMode", preset.shadowMapFilterMode, 0 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapFilterTaps", preset.shadowMapFilterTaps, 5 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_ssaoSamples", preset.ssaoSamples, 12 );
+		passed &= Common_PerformancePresetCheckRestoredAudio( preset );
 	} else if ( Common_PerformancePresetIsNamed( preset, "quality" ) ) {
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "com_machineSpec", preset.machineSpec, 3 );
 		passed &= Common_PerformancePresetCheckBenchmarkPreset( preset, "modern" );
@@ -3760,8 +3681,21 @@ static bool Common_ValidatePerformancePresetIntent( const openQ4PerformancePrese
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "com_machineSpec", preset.machineSpec, 3 );
 		passed &= Common_PerformancePresetCheckBenchmarkPreset( preset, "high-end" );
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_screenFraction", preset.screenFraction, 100 );
-		passed &= Common_PerformancePresetCheckIntAtLeast( preset, "r_multiSamples", preset.multiSamples, 8 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_multiSamples", preset.multiSamples, 16 );
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_anisotropy", preset.anisotropy, 16 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_postAA", preset.postAA, 3 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapSize", preset.shadowMapSize, 4096 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapPointSize", preset.shadowMapPointSize, 2048 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapFilterTaps", preset.shadowMapFilterTaps, 13 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapPointFilterTaps", preset.shadowMapPointFilterTaps, 13 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapFilterMode", preset.shadowMapFilterMode, 2 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapPointFilterMode", preset.shadowMapPointFilterMode, 1 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapAtlasSize", preset.shadowMapAtlasSize, 16384 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_shadowMapCSM", preset.shadowMapCSM, 1 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_ssaoSamples", preset.ssaoSamples, 32 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_bloomMipCount", preset.bloomMipCount, 5 );
+		passed &= Common_PerformancePresetCheckExpectedInt( preset, "r_motionBlurSamples", preset.motionBlurSamples, 16 );
+
 		passed &= Common_PerformancePresetCheckExpectedInt( preset, "image_usePrecompressedTextures", preset.usePrecompressedTextures, 1 );
 		passed &= Common_PerformancePresetCheckIntAtLeast( preset, "r_rendererUploadMegs", preset.uploadMegs, 32 );
 		passed &= Common_PerformancePresetCheckRestoredAudio( preset );
@@ -3813,6 +3747,15 @@ static bool Common_ValidatePerformancePresetProgression( void ) {
 		passed &= Common_PerformancePresetCheckNonDecreasingBudget( previousPreset, preset, "s_maxSoundsPerShader", previousPreset.maxSoundsPerShader, preset.maxSoundsPerShader );
 		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_useShadowMap", previousPreset.useShadowMap, preset.useShadowMap );
 		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_shadowMapSize", previousPreset.shadowMapSize, preset.shadowMapSize );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_shadowMapPointSize", previousPreset.shadowMapPointSize, preset.shadowMapPointSize );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_shadowMapFilterTaps", previousPreset.shadowMapFilterTaps, preset.shadowMapFilterTaps );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_shadowMapPointFilterTaps", previousPreset.shadowMapPointFilterTaps, preset.shadowMapPointFilterTaps );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_shadowMapFilterMode", previousPreset.shadowMapFilterMode, preset.shadowMapFilterMode );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_shadowMapPointFilterMode", previousPreset.shadowMapPointFilterMode, preset.shadowMapPointFilterMode );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_shadowMapAtlasSize", previousPreset.shadowMapAtlasSize, preset.shadowMapAtlasSize );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_ssaoSamples", previousPreset.ssaoSamples, preset.ssaoSamples );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_bloomMipCount", previousPreset.bloomMipCount, preset.bloomMipCount );
+		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_motionBlurSamples", previousPreset.motionBlurSamples, preset.motionBlurSamples );
 		passed &= Common_PerformancePresetCheckNonDecreasingBudget( previousPreset, preset, "r_shadowMapMaxUpdatesPerView", previousPreset.shadowMapMaxUpdates, preset.shadowMapMaxUpdates );
 		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_rendererUploadMegs", previousPreset.uploadMegs, preset.uploadMegs );
 		passed &= Common_PerformancePresetCheckNonDecreasingInt( previousPreset, preset, "r_rendererUploadFrameBuffers", previousPreset.uploadFrameBuffers, preset.uploadFrameBuffers );
@@ -3850,6 +3793,17 @@ static bool Common_ValidatePerformancePresetDefinition( const openQ4PerformanceP
 		 preset.maxSoundsPerShader < 0 ||
 		 ( preset.useShadowMap != 0 && preset.useShadowMap != 1 ) ||
 		 preset.shadowMapSize < 128 || preset.shadowMapSize > 4096 ||
+		 preset.shadowMapPointSize < 128 || preset.shadowMapPointSize > 2048 ||
+		 preset.shadowMapFilterTaps < 1 || preset.shadowMapFilterTaps > 13 ||
+		 preset.shadowMapPointFilterTaps < 1 || preset.shadowMapPointFilterTaps > 13 ||
+		 preset.shadowMapFilterMode < 0 || preset.shadowMapFilterMode > 2 ||
+		 preset.shadowMapPointFilterMode < 0 || preset.shadowMapPointFilterMode > 1 ||
+		 preset.shadowMapAtlasSize < 2048 || preset.shadowMapAtlasSize > 16384 ||
+		 preset.shadowMapCSM < 0 || preset.shadowMapCSM > 1 ||
+		 preset.ssaoSamples < 4 || preset.ssaoSamples > 32 ||
+		 preset.bloomMipCount < 1 || preset.bloomMipCount > 5 ||
+		 preset.motionBlurSamples < 1 || preset.motionBlurSamples > 16 ||
+
 		 preset.shadowMapMaxUpdates < 0 || preset.shadowMapMaxUpdates > OPENQ4_PERFORMANCE_PRESET_MAX_SHADOW_UPDATES ||
 		 ( preset.bloom != 0 && preset.bloom != 1 ) ||
 		 ( preset.ssao != 0 && preset.ssao != 1 ) ||
@@ -3970,6 +3924,29 @@ static bool Common_ValidatePerformancePresetApplied( const openQ4PerformancePres
 	passed &= Common_CheckPerformancePresetInt( preset.name, "s_numberOfSpeakers", preset.numberOfSpeakers );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "s_useEAXReverb", preset.useEAXReverb );
 	passed &= Common_CheckPerformancePresetInt( preset.name, "s_maxEmitterChannels", preset.maxEmitterChannels );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapPointSize", preset.shadowMapPointSize );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapFilterTaps", preset.shadowMapFilterTaps );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapPointFilterTaps", preset.shadowMapPointFilterTaps );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapFilterMode", preset.shadowMapFilterMode );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapPointFilterMode", preset.shadowMapPointFilterMode );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapAtlasSize", preset.shadowMapAtlasSize );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_ssaoSamples", preset.ssaoSamples );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_bloomMipCount", preset.bloomMipCount );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_motionBlurSamples", preset.motionBlurSamples );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapPointLights", 1 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_hdrSceneTarget", preset.hdrToneMap );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadows", 1 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_skipBump", 0 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_skipSpecular", 0 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_skipSky", 0 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "image_picmip", 0 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapCSM", preset.shadowMapCSM );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapCascadeCount", 4 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapProjectedCSM", 1 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapCascadeStabilize", 1 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_motionBlurObjectVectors", 1 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapHashedAlpha", 1 );
+	passed &= Common_CheckPerformancePresetInt( preset.name, "r_shadowMapTranslucentReceivers", 1 );
 	passed &= Common_CheckPerformancePresetTargetsArchived( preset.name );
 	return passed;
 }
@@ -3996,31 +3973,24 @@ static void Com_PerformancePresetSelfTest_f( const idCmdArgs &args ) {
 	passed &= targetsPassed;
 
 	idStr reason;
-	const char *detectedPresetName = Common_DetectPerformancePresetName( reason );
+	openQ4PerformancePreset_t detectedPreset;
+	if ( !Common_DetectPerformancePreset( detectedPreset, reason ) ) {
+		common->Printf( "PerformancePreset self-test failed: %s\n", reason.c_str() );
+		return;
+	}
+	const char *detectedPresetName = detectedPreset.name;
 	if ( Common_FindPerformancePreset( detectedPresetName ) == NULL ) {
 		common->Printf( "PerformancePreset self-test failed: auto-detect returned unknown preset '%s'\n", detectedPresetName != NULL ? detectedPresetName : "" );
 		passed = false;
 	}
-	if ( idStr::Icmp( detectedPresetName, "ultra" ) == 0 ) {
-		common->Printf( "PerformancePreset self-test failed: auto-detect selected ultra\n" );
+	if ( idStr::Icmp( detectedPresetName, "ultra" ) == 0 || idStr::Icmp( detectedPresetName, "quality" ) == 0 ) {
+		common->Printf( "PerformancePreset self-test failed: auto-detect selected an unmeasured top tier\n" );
 		passed = false;
 	}
 	if ( Common_SanitizePerformancePresetMemoryMB( 0, OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB, OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB ) != OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB ||
 		 Common_SanitizePerformancePresetMemoryMB( OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB + 1, OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB, OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB ) != OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB ||
 		 Common_SanitizePerformancePresetMemoryMB( 6144, OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB, OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB ) != 6144 ) {
 		common->Printf( "PerformancePreset self-test failed: memory telemetry sanitizer returned an unexpected value\n" );
-		passed = false;
-	}
-	const int rawDetectedVideoRam = Sys_GetVideoRam();
-	const int effectiveDetectedVideoRam = Common_SanitizePerformancePresetMemoryMB(
-		rawDetectedVideoRam,
-		OPENQ4_PERFORMANCE_PRESET_UNKNOWN_VIDEO_RAM_MB,
-		OPENQ4_PERFORMANCE_PRESET_MAX_REASONABLE_VIDEO_RAM_MB );
-	if ( rawDetectedVideoRam != effectiveDetectedVideoRam && idStr::Icmp( detectedPresetName, "quality" ) == 0 ) {
-		common->Printf(
-			"PerformancePreset self-test failed: auto-detect selected quality from sanitized VRAM telemetry (%s reported, %s effective)\n",
-			Sys_FormatMemoryMB( rawDetectedVideoRam ).c_str(),
-			Sys_FormatMemoryMB( effectiveDetectedVideoRam ).c_str() );
 		passed = false;
 	}
 
@@ -4077,12 +4047,11 @@ static void Com_PerformancePresetSelfTest_f( const idCmdArgs &args ) {
 			passed = false;
 		}
 
-		const openQ4PerformancePreset_t *detectedPreset = Common_FindPerformancePreset( detectedPresetName );
-		if ( detectedPreset != NULL ) {
+		{
 			idCmdArgs autoDetectArgs( "autoDetectPerformancePreset", false );
 			if ( !Common_AutoDetectPerformancePresetCommand( autoDetectArgs, true ) ||
-				 !Common_ValidatePerformancePresetApplied( *detectedPreset ) ) {
-				common->Printf( "PerformancePreset self-test failed: auto-detect command did not apply detected preset '%s'\n", detectedPreset->name );
+				 !Common_ValidatePerformancePresetApplied( detectedPreset ) ) {
+				common->Printf( "PerformancePreset self-test failed: auto-detect command did not apply detected preset '%s'\n", detectedPreset.name );
 				passed = false;
 			}
 		}
@@ -4630,8 +4599,14 @@ void Com_ReloadEngine_f( const idCmdArgs &args ) {
 		// A dedicated server's console already is its only window and quits on
 		// close: the reload leaves it as it is.
 	}
+	com_preserveStartupRecoveryLog = com_logFile.GetInteger() != 0;
 	commonLocal.ShutdownGame( true );
+	if ( !R_RendererModule_FinishSelectionReload() ) {
+		common->FatalError( "renderer selection reload could not retire the previous module" );
+		return;
+	}
 	commonLocal.InitGame();
+	com_preserveStartupRecoveryLog = false;
 	if ( !menu && !idAsyncNetwork::serverDedicated.GetBool() ) {
 		Sys_ShowConsole( 0, false );
 	}
@@ -5901,6 +5876,7 @@ idCommonLocal::InitCommands
 */
 void idCommonLocal::InitCommands( void ) {
 	LevelEditor_InitCommands();
+	cmdSystem->AddCommand( "profileFrameWork", Com_ProfileFrameWork_f, CMD_FL_SYSTEM, "capture 1..60000 complete engine frames without per-frame logging; writes diagnostics/frame-work.csv (0 stops)" );
 	cmdSystem->AddCommand( "error", Com_Error_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "causes an error" );
 	cmdSystem->AddCommand( "crash", Com_Crash_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "causes a crash" );
 	cmdSystem->AddCommand( "freeze", Com_Freeze_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "freezes the game for a number of seconds" );
@@ -6293,18 +6269,63 @@ static void Common_PresentationStallProbe( void ) {
 	Sys_Sleep( stallMsec );
 }
 
-/*
-=================
-idCommonLocal::Frame
-=================
-*/
+static openq4::FrameWorkProfile commonFrameWorkProfile;
+
+static double Common_FrameWorkNow() {
+	return Common_GetPresentationClockNow() * 1000.0 / Common_GetPresentationClockUnitsPerSecond();
+}
+
+static void Com_ProfileFrameWork_f( const idCmdArgs &args ) {
+	const int frames = args.Argc()==2 ? atoi(args.Argv(1)) : -1;
+	if (!commonFrameWorkProfile.Reset(frames)) {
+		common->Printf("usage: profileFrameWork <0..60000>\n"); return;
+	}
+	common->Printf("Frame work profile: requested %d complete frames\n",frames);
+}
+
+static void Common_MarkFrameWork(openq4::FrameWorkPhase phase) {
+	if (commonFrameWorkProfile.Active()) commonFrameWorkProfile.Mark(phase,Common_FrameWorkNow());
+}
+
+static void Common_EndFrameWork(int frame) {
+	if (!commonFrameWorkProfile.Active() || !commonFrameWorkProfile.End(frame,Common_FrameWorkNow())) return;
+	const auto& samples=commonFrameWorkProfile.Samples();
+	static const char* names[]{"gap","wait","events","configuration","commands","session","draw","tail"};
+	idFile* file=fileSystem->OpenFileWrite("diagnostics/frame-work.csv");
+	if (file) {
+		file->Printf("frame,totalMs,gapMs,waitMs,eventsMs,configurationMs,commandsMs,sessionMs,drawMs,tailMs\n");
+		for (const auto& sample:samples) {
+			file->Printf("%d,%.6f",sample.frame,sample.Total());
+			for (double value:sample.milliseconds) file->Printf(",%.6f",value);
+			file->Printf("\n");
+		}
+		fileSystem->CloseFile(file);
+	}
+	std::vector<double> values; values.reserve(samples.size());
+	for (int phase=-1; phase<static_cast<int>(openq4::FrameWorkPhase::Count); ++phase) {
+		values.clear(); double total=0;
+		for (const auto& sample:samples) {
+			const double value=phase<0 ? sample.Total() : sample.milliseconds[phase];
+			values.push_back(value); total+=value;
+		}
+		std::sort(values.begin(),values.end());
+		common->Printf("Frame work phase=%s samples=%u mean_ms=%.6f p95_ms=%.6f p99_ms=%.6f max_ms=%.6f\n",
+			phase<0 ? "total" : names[phase],static_cast<unsigned>(values.size()),total/values.size(),
+			values[static_cast<size_t>(ceil(values.size()*.95))-1],values[static_cast<size_t>(ceil(values.size()*.99))-1],values.back());
+	}
+	common->Printf("Frame work trace: %s\n",file ? "diagnostics/frame-work.csv" : "file write unavailable");
+}
+
 void idCommonLocal::Frame( void ) {
 	try {
+		if (commonFrameWorkProfile.Active()) commonFrameWorkProfile.Begin(Common_FrameWorkNow());
 		openQ4_BeginPresentationFrame();
 		Common_PresentationStallProbe();
+		Common_MarkFrameWork(openq4::FrameWorkPhase::Wait);
 
 		// pump all the events
 		Sys_GenerateEvents();
+		Common_MarkFrameWork(openq4::FrameWorkPhase::Events);
 
 		// Settings cleanup/confirmation is independent of GUI/input ownership and
 		// SP pause. Finish it before deciding which values may reach disk.
@@ -6316,6 +6337,7 @@ void idCommonLocal::Frame( void ) {
 		if ( com_forceGenericSIMD.IsModified() ) {
 			InitSIMD();
 		}
+		Common_MarkFrameWork(openq4::FrameWorkPhase::Configuration);
 
 		eventLoop->RunEventLoop();
 
@@ -6330,6 +6352,7 @@ void idCommonLocal::Frame( void ) {
 		// called by the ordinary multiplayer branch below.
 		arenaCampaign.Frame();
 #endif
+		Common_MarkFrameWork(openq4::FrameWorkPhase::Commands);
 
 	if ( idAsyncNetwork::IsActive() ) {
 		if ( idAsyncNetwork::serverDedicated.GetInteger() != 1 ) {
@@ -6337,15 +6360,20 @@ void idCommonLocal::Frame( void ) {
 			soundSystem->Render();
 			session->GuiFrameEvents();
 			openQ4_RecordMultiplayerFramePacing();
+			Common_MarkFrameWork(openq4::FrameWorkPhase::Session);
 			session->UpdateScreen( false );
+		} else {
+			Common_MarkFrameWork(openq4::FrameWorkPhase::Session);
 		}
 	} else {
 			session->Frame();
+			Common_MarkFrameWork(openq4::FrameWorkPhase::Session);
 
 			// normal, in-sequence screen update
 			session->UpdateScreen( false );
 		}
 		Common_RecordFrameInputToSwap();
+		Common_MarkFrameWork(openq4::FrameWorkPhase::Draw);
 
 		// report timing information
 		if ( com_speeds.GetBool() ) {
@@ -6362,6 +6390,7 @@ void idCommonLocal::Frame( void ) {
 
 		// set idLib frame number for frame based memory dumps
 		idLib::frameNumber = com_frameNumber;
+		Common_EndFrameWork(com_frameNumber-1);
 
 		// the FPU stack better be empty at this point or some bad code or compiler bug left values on the stack
 		//if ( !Sys_FPU_StackIsEmpty() ) {
@@ -6371,6 +6400,7 @@ void idCommonLocal::Frame( void ) {
 	}
 
 	catch( idException & ) {
+		commonFrameWorkProfile.Abort();
 		return;			// an ERP_DROP was thrown
 	}
 }
@@ -6997,6 +7027,7 @@ idCommonLocal::UnloadGameDLL
 =================
 */
 void idCommonLocal::UnloadGameDLL( void ) {
+	RetainedUI_ClearModelWorlds();
 #ifdef __DOOM_DLL__
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_BINARY_UNLOAD );
@@ -7042,124 +7073,31 @@ void idCommonLocal::ApplyAutomaticPlatformProfile( void ) {
 	}
 }
 
-static double Common_AdjustMachineSpecGHz( double ghz, cpuid_t cpu ) {
-	// Retail Quake 4 applies a CPU-vendor adjustment before classifying the
-	// quality tier. openQ4 does not expose a separate AMD64 flag, so keep the
-	// conservative legacy AMD adjustment without changing the public CPU enum.
-	if ( ( cpu & CPUID_AMD ) != 0 ) {
-		return ghz * 1.15f;
-	}
-	return ghz;
-}
-
-static int Common_DetectMachineSpec( double ghz, int vidRam, int sysRam, bool oldCard ) {
-#if defined( __aarch64__ ) || defined( __arm64__ ) || defined( _M_ARM64 )
-	// No arm64 host reports a usable CPU frequency: Apple Silicon has no
-	// hw.cpufrequency, aarch64 Linux has no "cpu MHz" line in /proc/cpuinfo,
-	// and Windows on ARM has no "~MHz" registry value. Every arm64 desktop
-	// part comfortably exceeds the 2005-era retail CPU thresholds, so
-	// classify by memory alone rather than dropping every arm64 machine to
-	// the lowest tier. Unified or shared memory also means a missing VRAM
-	// probe should fall back to a share of system memory.
-	if ( ghz <= 0.0 && !oldCard ) {
-		int effectiveVidRam = vidRam;
-		const bool guessedVidRam = ( effectiveVidRam <= 0 );
-		if ( guessedVidRam ) {
-			effectiveVidRam = sysRam / 2;
-		}
-
-		// Thresholds for the upper tiers. A real VRAM probe is trusted and uses
-		// the stock numbers. A *guessed* one is not: sysRam / 2 says nothing
-		// about GPU capability, so a 8 GB single-board computer produces the
-		// same number as a workstation.
-		//
-		// This matters because tier 0 is the only tier that downsizes textures
-		// (image_downSize, image_ignoreHighQuality, image_downSizeSpecular and
-		// image_downSizeBump - see Com_ExecMachineSpec_f), and openQ4 currently
-		// uploads ordinary textures uncompressed, so promoting out of tier 0
-		// multiplies the texture budget. Both arm64 hosts that have reported
-		// memory failures were 8 GB boards killed by the OOM reaper during load
-		// (issues #76 on a Pi 5 and #78 on aarch64 Linux). So when we are
-		// guessing, require clearly abundant system memory before leaving the
-		// downsizing tier.
-		//
-		// Apple Silicon keeps the stock thresholds regardless: it has genuine
-		// unified memory on a GPU class known to run the game well, and no arm64
-		// Mac has reported a memory-pressure failure.
-#if defined( MACOS_X )
-		const int ultraSysRam = 1000;
-		const int highSysRam = 1000;
-		const int mediumSysRam = 750;
-#else
-		const int ultraSysRam = guessedVidRam ? 24000 : 1000;
-		const int highSysRam = guessedVidRam ? 16000 : 1000;
-		const int mediumSysRam = guessedVidRam ? 12000 : 750;
-#endif
-
-		if ( effectiveVidRam >= 300 && sysRam >= ultraSysRam ) {
-			return 3;
-		}
-		if ( effectiveVidRam >= 160 && sysRam >= highSysRam ) {
-			return 2;
-		}
-		if ( effectiveVidRam >= 160 && sysRam >= mediumSysRam ) {
-			return 1;
-		}
-		return 0;
-	}
-#endif
-	if ( ghz >= 2.89f && vidRam >= 300 && sysRam >= 1000 && !oldCard ) {
-		return 3;
-	}
-	if ( ghz >= 2.89f && vidRam >= 160 && sysRam >= 1000 && !oldCard ) {
-		return 2;
-	}
-	if ( ghz >= 2.29f && vidRam >= 160 && sysRam >= 750 && !oldCard ) {
-		return 1;
-	}
-	return 0;
-}
-
-static const char *Common_MachineSpecQualificationMessage( int machineSpec ) {
-	switch ( machineSpec ) {
-		case 3:
-			return "This system qualifies for Ultra quality!\n";
-		case 2:
-			return "This system qualifies for High quality!\n";
-		case 1:
-			return "This system qualifies for Medium quality.\n";
-		default:
-			return "This system qualifies for Low quality.\n";
-	}
-}
-
 /*
 =================
 idCommonLocal::SetMachineSpec
 =================
 */
 void idCommonLocal::SetMachineSpec( void ) {
-	// Sys_ClockTicksPerSecond is the timer rate (QPC/monotonic), not CPU speed
-	cpuid_t cpu = Sys_GetProcessorId();
-	const double cpuHz = Sys_GetApproximateProcessorFrequencyHz();
-	const double ghz = Common_AdjustMachineSpecGHz( cpuHz * 0.000000001f, cpu );
-	int vidRam = Sys_GetVideoRam();
-	int sysRam = Sys_GetSystemRam();
-	bool oldCard = false;
-	bool nv10or20 = false;
-
-	renderSystem->GetCardCaps( oldCard, nv10or20 );
-
-	Printf( "Detected\n\tCPU: %s\n\tSystem memory: %s\n\tVideo memory: %s on %s\n\n",
-		Sys_GetProcessorString(),
-		Sys_FormatMemoryMB( sysRam ).c_str(),
-		Sys_FormatMemoryMB( vidRam ).c_str(),
-		( oldCard ) ? "a less than optimal video architecture" : "an optimal video architecture" );
-
-	const int machineSpec = Common_DetectMachineSpec( ghz, vidRam, sysRam, oldCard );
-	Printf( "%s", Common_MachineSpecQualificationMessage( machineSpec ) );
-	com_machineSpec.SetInteger( machineSpec );
-	com_videoRam.SetInteger( vidRam );
+	openq4::PerformancePresetSignals signals;
+	std::string error;
+	if ( !Common_CapturePerformancePresetSignals( signals, error ) ) {
+		// Before a device exists, keep only actual host memory/power facts.
+		// CPU frequency, ISA and an OS-wide VRAM inventory cannot rank its GPU.
+#if defined( USE_SDL3 )
+		signals.systemRamMB = SDL_GetSystemRAM();
+#else
+		signals.systemRamMB = Sys_GetSystemRam();
+#endif
+		signals.explicitLowPower = Common_HasExplicitLowPowerHostSignal();
+		signals.raspberryPi = Common_HasRaspberryPiHostSignal();
+		signals.steamDeck = idStr::Icmp( com_platformProfile.GetString(), "steamdeck" ) == 0 || Common_HasSteamDeckHostSignal();
+	}
+	const auto detected = openq4::DetectPerformancePreset( signals );
+	com_machineSpec.SetInteger( detected.preset->machineSpec );
+	com_videoRam.SetInteger( detected.videoRamMB );
+	Printf( "Detected performance profile '%s': GPU=%s, system memory=%d MiB, dedicated video memory=%d MiB (0=unknown/shared).\n",
+		detected.preset->name, RendererGpuClassName( signals.gpuClass ), detected.systemRamMB, detected.videoRamMB );
 }
 
 /*
@@ -7328,6 +7266,9 @@ idCommonLocal::Shutdown
 */
 void idCommonLocal::Shutdown( void ) {
 
+	// A committed checkpoint is a user operation, not cancellable preload work.
+	// Finish its preview and storage job while both services still exist.
+	Session_FinishPendingSave();
 	com_shuttingDown = true;
 	LevelEditor_Shutdown();
 
@@ -7435,16 +7376,19 @@ void idCommonLocal::InitGame( void ) {
 	bool sysDetect = ( file == NULL );
 	if ( file ) {
 		fileSystem->CloseFile( file );
-	} else {
-		file = fileSystem->OpenFileWrite( CONFIG_SPEC );
-		fileSystem->CloseFile( file );
 	}
 	
 	idCmdArgs args;
-	if ( sysDetect ) {
-		SetMachineSpec();
-		Com_ExecMachineSpec_f( args );
+	bool detectStartupPreset = false;
+	openQ4PerformancePresetCVarBackup_t startupPresetBootstrap[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT];
+	bool startupPresetAssigned[OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT] = {};
+	openq4::CVarAssignmentCapture startupPresetCapture;
+#ifndef ID_DEDICATED
+	detectStartupPreset = sysDetect && !SafeMode() && fileSystem->ReadFile( CONFIG_FILE, NULL ) < 0;
+	if ( detectStartupPreset ) {
+		detectStartupPreset = Common_BootstrapStartupPerformancePreset( startupPresetBootstrap );
 	}
+#endif
 
 	// initialize the renderSystem data structures, but don't start OpenGL yet
 	renderSystem->Init();
@@ -7485,6 +7429,15 @@ void idCommonLocal::InitGame( void ) {
 	if ( fileSystem->ReadFile( "openq4_defaults.cfg", NULL ) >= 0 ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec openq4_defaults.cfg\n" );
 	}
+	if ( detectStartupPreset ) {
+		// Finish shipped defaults before taking the bootstrap baseline: they
+		// are not user overrides. Keep the marker a valid profile name. Platform,
+		// autoexec and launch choices execute after this point and take priority.
+		cmdSystem->ExecuteCommandBuffer();
+		detectStartupPreset = Common_BootstrapStartupPerformancePreset( startupPresetBootstrap );
+		if ( detectStartupPreset ) startupPresetCapture.Begin( OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVARS.data(),
+			OPENQ4_PERFORMANCE_PRESET_TOUCHED_CVAR_COUNT, startupPresetAssigned );
+	}
 	const idStr platformProfileConfig = Common_BuildPlatformProfileConfigName( com_platformProfile.GetString() );
 	if ( platformProfileConfig.Length() > 0 && fileSystem->ReadFile( platformProfileConfig, NULL ) >= 0 ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "exec %s\n", platformProfileConfig.c_str() ) );
@@ -7520,6 +7473,7 @@ void idCommonLocal::InitGame( void ) {
 
 	// re-override anything from the config files with command line args
 	StartupVariable( NULL, false );
+	startupPresetCapture.End();
 	if ( preservePendingGameType ) {
 		// A queued campaign/module handoff owns its mode. Replayed base configs
 		// and one-shot launch settings must not turn a requested CTF game into DM.
@@ -7538,7 +7492,9 @@ void idCommonLocal::InitGame( void ) {
 	if ( com_machineSpec.GetInteger() < 0 ) {
 		Printf( "com_machineSpec is unset; detecting system quality tier.\n" );
 		SetMachineSpec();
-		Com_ExecMachineSpec_f( args );
+		// Repair only the legacy classification. The old four-tier command also
+		// overwrites resolution, AA, textures and VSync using host-wide VRAM.
+		// A missing marker is not permission to replace an existing config.
 		repairedUnsetMachineSpec = true;
 	}
 
@@ -7641,19 +7597,21 @@ void idCommonLocal::InitGame( void ) {
 	session->Init();
 	initializationScope.Finish();
 
-	// have to do this twice.. first one sets the correct r_mode for the renderer init
-	// this time around the backend is all setup correct.. a bit fugly but do not want
-	// to mess with all the gl init at this point.. an old vid card will never qualify for 
-	// Detection rewrites catalog settings that a pending recovery owns. Skip it
-	// for this launch and remove the marker this launch created, so the next
-	// launch without a recovery detects.
-	if ( sysDetect && ( UI_SettingsStartupActive() || UI_SettingsRecoveryPending() ) ) {
-		fileSystem->RemoveFile( CONFIG_SPEC );
-	} else if ( sysDetect ) {
-		SetMachineSpec();
-		Com_ExecMachineSpec_f( args );
-		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
+	// A pending settings recovery owns these fields. Publish the detection
+	// marker only after successful startup, so a renderer fallback that re-enters
+	// InitGame cannot mistake the temporary bootstrap for completed detection.
+	const bool startupRecovery = UI_SettingsStartupActive() || UI_SettingsRecoveryPending();
+	bool startupPresetReady = !detectStartupPreset;
+	if ( detectStartupPreset && !startupRecovery && Common_ApplyStartupPerformancePreset( startupPresetBootstrap, startupPresetAssigned ) ) {
+		// Apply the selected AA/texture/resource policy to the live device before
+		// startup map commands run. Detection never changes the window mode.
+		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart\ns_restart\n" );
 		cmdSystem->ExecuteCommandBuffer();
+		startupPresetReady = true;
+	}
+	if ( sysDetect && startupPresetReady && !startupRecovery ) {
+		file = fileSystem->OpenFileWrite( CONFIG_SPEC );
+		if ( file != NULL ) fileSystem->CloseFile( file );
 	}
 }
 

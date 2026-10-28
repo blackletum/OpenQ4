@@ -80,12 +80,12 @@ def validate_abi_contract() -> None:
     )
     require(
         read(ROOT, "src/renderer/RenderModuleAPI.h"),
-        "#define RENDER_API_VERSION\t\t\t25",
+        "#define RENDER_API_VERSION\t\t\t29",
         "renderer module ABI",
     )
     require(
         read(GAME_ROOT, "src/game/Game.h"),
-        "GAME_API_VERSION\t\t= 55",
+        "GAME_API_VERSION\t\t= 57",
         "game module ABI",
     )
 

@@ -1265,7 +1265,7 @@ restricts delivery by the team field.
 | `bot_debug` | `0` | `1` logs navigation events, `2` adds a periodic per-bot status line. |
 | `bot_debugNav` | `0` | `1` draws the navmesh near the local player, `2` adds each bot's current route. |
 | `bot_debugAim` | `0` | Log the reaction, settle and lead values behind every shot. |
-| `bot_profile` | `0` | Every N seconds print one `botprofile:` line: bot think time (average and worst frame), path searches and their failures by cause (snap, search, final leg), A* expansions per search, goal-pricing searches, and navigation milliseconds per frame with the goal-pricing share. |
+| `bot_profile` | `0` | Every N seconds print `botprofile:` costs (average/worst think, searches/failures, expansions and pricing/navigation time) plus `botprofile-percentiles:` conservative p50/p95/p99 think-time ceilings from a bounded quarter-millisecond histogram. |
 | `bot_navCellSize` | `24` | Sampling resolution in world units. Smaller finds more ground and costs more to build. |
 | `bot_pause` | `0` | Freeze all bot input. |
 
@@ -1410,6 +1410,53 @@ result-flow pass for that mode.
   team switch kills and respawns the player.
 
 ## Testing
+
+### Unpressed WALK falls and timing evidence, 28 October 2026
+
+The five-minute six-bot DM8 audit in
+`.tmp/mp-completion-20261028/bots-dm8/` retains one navigation death and one
+stuck event in 284.928 simulated seconds, with 56 combat kills. Strauss fell
+near `(601, 685, 314)` without a logged enemy impulse. The 2.192 ms weighted
+mean and 12 ms worst-window p95 are diagnostic only: `bot_debug 3` adds
+per-frame trace work and compilers/other runtimes overlapped this match.
+
+`bot_probeWalk` installs an ordinary walking leg without the artificial
+knockback state that `bot_probeMove` intentionally uses for impulse recovery.
+It accepts the same origin/velocity/target arguments and an optional following
+jump target, under the existing isolated local cheat-server restrictions.
+The earlier and later retained grounded poses both survive walking toward
+`(628,700,328.25)`, with or without the following jump. Steering diagonally
+from the later pose toward `(652,660,328.25)` instead reproduces a world fall
+in both cases. Those artificial legs isolate a defect; they do not establish
+the original match's complete input sequence.
+
+The grounded edge brake can lose support on a sloping rim before it stops.
+Air recovery previously admitted only knock-caused falls, so the bot resumed
+steering for its WALK corner through the void. It now admits a descending,
+unpressed WALK fall whose coast is proven unsafe. Planned drop/transport
+departures, voluntary jumps, ascent, liquids and safe arcs keep their prior
+ownership. A jump following WALK cannot claim a takeoff that was never pressed.
+Native production-function cases cover these boundaries, and reverting to
+knock-only admission fails. All six actual-map probes survive with exit 0 and
+unchanged engine/module hashes in `walk-recovery/`; the two diagonal cases die
+with the prior module in `walk-diagonal/`. The reusable runner is
+`tools/tests/mp_bot_walk_replay.py` (`--expect-unsafe` checks the old control).
+
+The separate `bots-dm8-trace/` debug-4 match completed but its fourth causality
+replay refused an out-of-date stage after another build advanced. Its
+`diagnostic.json` retains all five world deaths as unqualified impulse
+candidates. It is neither a passing safety run nor timing evidence. Replays
+now retain their process exit, completion and runtime identity in `run.json`;
+a launch/staleness failure returns a counted death and diagnostic instead of
+discarding the enclosing audit report.
+
+For controlled budgets, use `mp_bot_audit.py --debug 1` or `2`, an explicit
+`--max-think-mean-ms`, `--max-think-p95-ms`, `--max-nav-build-ms` and
+`--require-uncontended`. The runner rejects timing budgets with frame-by-frame
+debug levels, records overlapping runtime/compiler processes, and rejects a
+changed runtime. Percentiles are conservative ceilings per complete profiling
+window, not an aggregate of percentile values. The full long-match/catalog
+qualification remains under MP-02/MP-03.
 
 Everything below runs in-tree and in CI with no game assets; the compiled
 fixtures need a C++17 compiler (`clang++` or `g++`, or `CXX`).

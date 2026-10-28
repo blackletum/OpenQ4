@@ -1,11 +1,11 @@
 # macOS MoltenVK Provider Policy
 
-Updated: 2026-07-25
+Updated: 2026-10-28 (provider pin unchanged)
 
 This document records how openQ4 acquires, pins, stages, validates, and signs
 the MoltenVK runtime that the macOS Vulkan renderer module depends on. It is the
 companion to `docs/dev/archive/2026-10-18/macos-moltenvk-decision.md`, which records *why* macOS
-Vulkan is opt-in; this document records *where the library comes from* and what
+Vulkan originally shipped as opt-in; this document records *where the library comes from* and what
 must be true of it before it may ship.
 
 `tools/build/prepare_macos_moltenvk.sh` is the executable form of this policy.
@@ -31,10 +31,12 @@ package — bundle the pinned `libMoltenVK.dylib` and the Vulkan renderer module
 The renderer is a runtime cvar, not a package axis: there is no third package
 variant and no new `macos_graphics_bridge` choice.
 
-OpenGL remains the macOS default renderer. Vulkan is selected explicitly with
-`r_renderApi vulkan`, and `best` still resolves to `gl` on macOS. Bundling
-MoltenVK is defaults-neutral: it adds a library to the package, not a change in
-what any user gets by default.
+Fresh macOS configurations use `r_renderApi best`, which tries Vulkan through
+MoltenVK with OpenGL fallback under the user-requested 28 October 2026
+high-performance GPU policy. Existing explicit OpenGL selections are retained.
+Backend and device preferences can be changed in the retained System menu.
+Vulkan remains experimental on macOS; this default change does not qualify it.
+The packaging/provider pin is unchanged by the selection policy.
 
 Staging MoltenVK is mandatory for a macOS package that ships the Vulkan renderer
 module. A package that ships the module without the library would advertise an

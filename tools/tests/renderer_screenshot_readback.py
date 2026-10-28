@@ -184,7 +184,7 @@ def test_save_preview_resamples_a_coherent_full_frame() -> None:
     )
 
 
-def test_capture_skips_rgb_pack_padding() -> None:
+def test_capture_uses_aligned_rgba() -> None:
     renderer_cpp = read("src/renderer/RenderSystem.cpp")
     capture = function_body(
         renderer_cpp,
@@ -193,31 +193,15 @@ def test_capture_skips_rgb_pack_padding() -> None:
     require_order(
         capture,
         (
-            "const int sourceStride = ( rc->width * 3 + 3 ) & ~3;",
-            "const size_t sourceBytes = (size_t)sourceStride * (size_t)rc->height;",
-            "R_StaticAlloc( sourceBytes )",
-            "memset( data, 0, sourceBytes );",
-            "glReadPixels(",
-            "const byte *sourceRow = data + (size_t)y * sourceStride;",
-            "byte *destinationRow = data2 + (size_t)y * rc->width * 4;",
-            "R_StaticFree( data );",
+            "R_StaticAlloc( (size_t)sourcePixelCount * 4 )",
+            "memset( data2, 0, (size_t)sourcePixelCount * 4 );",
+            "glReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGBA, GL_UNSIGNED_BYTE, data2 );",
+            "data2[pixel * 4 + 3] = 0xff;",
         ),
-		"zeroed padded GL_RGB capture conversion",
+        "aligned RGBA capture with the existing opaque-alpha contract",
     )
-
-    width = 3
-    rows = (
-        bytes((1, 2, 3, 4, 5, 6, 7, 8, 9)),
-        bytes((11, 12, 13, 14, 15, 16, 17, 18, 19)),
-    )
-    stride = (width * 3 + 3) & ~3
-    packed = b"".join(row + bytes(stride - len(row)) for row in rows)
-    converted = b"".join(
-        packed[offset : offset + width * 3]
-        for offset in range(0, len(packed), stride)
-    )
-    if converted != b"".join(rows):
-        raise AssertionError("row-stride model included GL_RGB pack padding")
+    if 'GL_RGB,' in capture or 'sourceStride' in capture:
+        raise AssertionError("capture reintroduced the padded RGB intermediate")
 
 
 def aspect_crop(
@@ -271,7 +255,6 @@ def test_capture_center_crops_and_resamples_safely() -> None:
     require_order(
         capture,
         (
-            "R_StaticFree( data );",
             "outputData = R_ResampleCaptureToAspectRGBA(",
             "R_StaticFree( data2 );",
             "R_WriteTGA(",
@@ -373,7 +356,7 @@ def main() -> None:
     test_vulkan_capture_resumes_the_acquired_back_buffer()
     test_vulkan_swapchain_preserves_legacy_sdr_code_values()
     test_save_preview_resamples_a_coherent_full_frame()
-    test_capture_skips_rgb_pack_padding()
+    test_capture_uses_aligned_rgba()
     test_capture_center_crops_and_resamples_safely()
     test_cube_face_captures_span_the_virtual_screen()
     print("renderer_screenshot_readback: ok")

@@ -104,7 +104,7 @@ struct idUserInterfaceLocal {
     bool loading=false,interactive=false,evaluatedHudValid=false;
     Dict state,evaluatedHudState;
     idWindow* desktop=nullptr;
-    idRemasteredHud* remastered=nullptr;
+    idRemasteredHud* remastered=nullptr; idRemasteredHud* essentialHud=nullptr;
     std::string source="guis/hud.gui";
     void SetStateString(const char*,const char*);
     void SetStateBool(const char*,bool);
@@ -154,8 +154,12 @@ int main(){
     assert(publisher.state.writes==4 && publisher.state.numericReads==0 && peer.forwards==4000);
     peer.published["width"]="event value";publisher.SetStateFloat("width",1280);
     assert(peer.published["width"]=="1280.000000" && publisher.state.writes==4);
+    idRemasteredHud essential; publisher.essentialHud=&essential;
+    publisher.SetStateInt("player_air",56);
+    assert(peer.published["player_air"]=="56" && essential.published["player_air"]=="56");
+    publisher.essentialHud=nullptr;
     publisher.state.Set("width","640.000000");publisher.SetStateFloat("width",1280);
-    assert(std::string(publisher.state.GetString("width"))=="1280.000000" && publisher.state.writes==6);
+    assert(std::string(publisher.state.GetString("width"))=="1280.000000" && publisher.state.writes==7);
     publisher.SetStateFloat("width",-0.f);assert(std::string(publisher.state.GetString("width"))=="-0.000000");
     publisher.SetStateFloat("width",.25f);assert(std::string(publisher.state.GetString("width"))=="0.250000");
     publisher.SetStateString("text",publisher.state.GetString("text"));assert(peer.published["text"]=="hello");

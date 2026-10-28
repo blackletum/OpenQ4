@@ -12,6 +12,7 @@
 #include <vector>
 #include <variant>
 #include "Vector.h"
+#include "ModelScene.h"
 
 namespace openq4::ui {
 
@@ -43,6 +44,29 @@ struct Expression {
 	int component = -1; // Scalar aliases have no component; vectors require one.
 	bool inputValue = false; // Invocation-local operand; never application state.
 };
+inline Expression ModelNumber(double value) { Expression result; result.literal=value; return result; }
+inline Expression ModelText() { Expression result; result.literal=std::string(); result.type=2; return result; }
+template<std::size_t N>
+std::array<Expression,N> ModelNumbers(const std::array<double,N>& values) {
+    std::array<Expression,N> result;
+    for (std::size_t i=0;i<N;++i) result[i]=ModelNumber(values[i]);
+    return result;
+}
+struct ModelPartSpec {
+    Expression model=ModelText(), skin=ModelText(), animation=ModelText(), animationClass=ModelText();
+    std::string joint;
+};
+struct ModelLightSpec {
+    std::array<Expression,3> origin=ModelNumbers<3>({-128,0,0}), colour=ModelNumbers<3>({1,1,1});
+};
+struct ModelSceneSpec {
+    std::vector<ModelPartSpec> parts;
+    std::vector<ModelLightSpec> lights;
+    std::array<Expression,3> origin{}, rotation{}, camera=ModelNumbers<3>({-128,0,0});
+    std::array<Expression,4> outline{}, rimlight{}, brightSkin{};
+    Expression fov=ModelNumber(90), outlineWidth=ModelNumber(2);
+};
+bool ResolveModelScene(const ModelSceneSpec&, const StateValues&, ModelScene&, std::string& error);
 // Typed public presentation values are independent of CSS and application
 // State(). Boolean values occupy data[0] as 0/1; unused components stay zero.
 enum class PresentationType { Number, Boolean, String, Vector2, Vector3, Vector4 };
@@ -227,6 +251,7 @@ struct Node {
 	std::optional<std::vector<VectorPath>> mask;
 	std::optional<Control> control;
 	std::optional<ModalSpec> modal;
+	std::optional<ModelSceneSpec> model;
 };
 // UV translation and centre scaling use normalized texture coordinates.
 bool HasImageCoordinates(const Node& node);

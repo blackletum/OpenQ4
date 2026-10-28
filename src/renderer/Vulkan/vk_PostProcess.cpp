@@ -49,6 +49,7 @@
 #pragma hdrstop
 
 #include "../tr_local.h"
+#include "VulkanGpuFrameTiming.h"
 #include "../CelShading.h"
 #include "../ScenePackets.h"
 #include "../HDRExposureCore.h"
@@ -109,8 +110,12 @@ extern idCVar r_hdrMinExposure;
 extern idCVar r_hdrMaxExposure;
 extern idCVar r_hdrAdaptUpSpeed;
 extern idCVar r_hdrAdaptDownSpeed;
+static idCVar r_vkSSAODeferredNormal( "r_vkSSAODeferredNormal", "0", CVAR_RENDERER | CVAR_BOOL,
+	"defer SSAO normal reconstruction until after its distance fade rejects untouched pixels" );
 static idCVar r_vkHDRPrepareFailure( "r_vkHDRPrepareFailure", "0", CVAR_RENDERER | CVAR_INTEGER,
 	"diagnostic linear HDR preparation failure: 0=off, 1=exposure, 2=bloom, 3=output", 0, 3 );
+static idCVar r_vkPostDepthTransitionReference( "r_vkPostDepthTransitionReference", "0", CVAR_RENDERER | CVAR_BOOL,
+	"transition unused scene depth for post-processing intermediates as a validation reference" );
 extern idCVar r_motionBlur;
 extern idCVar r_motionBlurStrength;
 extern idCVar r_motionBlurMaxPixels;
@@ -1246,6 +1251,7 @@ static void VK_Post_FillSSAOBlock( vkPostSSAOBlock_t &block, const viewDef_t *vi
 	block.params2[ 1 ] = (float)idMath::ClampInt( 4, 32, r_ssaoSamples.GetInteger() );
 	block.modeInfo[ 0 ] = mode;
 	block.modeInfo[ 1 ] = flip ? 1.0f : 0.0f;
+	block.modeInfo[ 3 ] = r_vkSSAODeferredNormal.GetBool() ? 1.0f : 0.0f;
 }
 
 static bool VK_Post_SSAOFieldValid( const viewDef_t *viewDef ) {
@@ -1262,6 +1268,9 @@ bool VK_PostProcess_SSAOField( const viewDef_t *viewDef, idImage **image, bool *
 	return true;
 }
 
+static idCVar r_vkSSAOReferenceComposition( "r_vkSSAOReferenceComposition", "0", CVAR_RENDERER | CVAR_BOOL,
+	"use the resolved-color SSAO composition reference for validation" );
+
 static bool VK_Post_DrawSSAO( const viewDef_t *viewDef ) {
 	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_SSAO );
 	if ( fragModule == VK_NULL_HANDLE || !VK_Post_ProjectionUsable( viewDef ) ) {
@@ -1270,12 +1279,30 @@ static bool VK_Post_DrawSSAO( const viewDef_t *viewDef ) {
 	}
 	const int width = VK_Post_ViewWidth( viewDef );
 	const int height = VK_Post_ViewHeight( viewDef );
-	idImage *finalDepth = VK_Post_FinalDepth( viewDef );
+	idImage *finalDepth;
+	{
+		vkGpuPhaseScope timing(VK_Exec_ActiveCmd(),VK_GPU_PHASE_SSAO_DEPTH);
+		finalDepth = VK_Post_FinalDepth( viewDef );
+	}
 	if ( finalDepth == NULL ) {
 		vkPostFailReason = "the depth copy failed";
 		return false;
 	}
-	idImage *scene = VK_Post_CaptureScene( viewDef );
+	// AO is a scalar multiplier. Blend it into each existing scene sample,
+	// preserving alpha, instead of resolving/copying the whole scene only to
+	// multiply that copy in the shader. Keep the reference for debug views and
+	// targets whose color domain is not explicitly known here.
+	const idRenderTexture *target = VK_Exec_ActiveRenderTexture();
+	const idImage *color = target != NULL && target->GetNumColorImages() == 1 ? target->GetColorImage( 0 ) : NULL;
+	const bool field = VK_Post_SSAOFieldValid( viewDef );
+	const bool multiply = !field && !r_vkSSAOReferenceComposition.GetBool() && !r_ssaoDebug.GetBool() && color != NULL
+		&& ( color->GetOpts().format == FMT_RGBA8 || color->GetOpts().format == FMT_RGBA16F );
+	idImage *scene = globalImages->whiteImage;
+	if ( !multiply )
+	{
+		vkGpuPhaseScope timing(VK_Exec_ActiveCmd(),VK_GPU_PHASE_SSAO_COLOR);
+		scene = VK_Post_CaptureScene( viewDef );
+	}
 	if ( scene == NULL ) {
 		vkPostFailReason = "the scene copy failed";
 		return false;
@@ -1289,9 +1316,10 @@ static bool VK_Post_DrawSSAO( const viewDef_t *viewDef ) {
 	}
 
 	// A view with an occlusion field only applies its classic factor.
-	const bool field = VK_Post_SSAOFieldValid( viewDef );
+	vkGpuPhaseScope drawTiming(VK_Exec_ActiveCmd(),VK_GPU_PHASE_SSAO_DRAW);
 	vkPostSSAOBlock_t block;
 	VK_Post_FillSSAOBlock( block, viewDef, width, height, field ? 2.0f : 0.0f, field && vkPostScene.ssaoFieldFlip );
+	block.modeInfo[ 2 ] = multiply ? 1.0f : 0.0f;
 
 	const VkDescriptorSet sets[ 5 ] = {
 		VK_Post_Descriptor( scene ), VK_Post_Descriptor( worldDepth ), VK_Post_Descriptor( finalDepth ),
@@ -1299,7 +1327,7 @@ static bool VK_Post_DrawSSAO( const viewDef_t *viewDef ) {
 	};
 	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
 	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_SSAO, vkPost.fullscreenVert, fragModule,
-			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+			( multiply ? GLS_SRCBLEND_DST_COLOR : GLS_SRCBLEND_ONE ) | GLS_DSTBLEND_ZERO );
 	return VK_Post_DrawSceneRect( viewDef, pipeline, sets, 5, uniformOffset );
 }
 
@@ -1341,7 +1369,7 @@ bool VK_PostProcess_PrepareSSAOField( const viewDef_t *viewDef ) {
 		return false;
 	}
 	bool drawn = false, fieldLowerOrigin = false;
-	if ( VK_Exec_SetRenderTarget( vkPostScene.ssaoFieldTarget ) ) {
+	if ( VK_Exec_SetRenderTarget( vkPostScene.ssaoFieldTarget, 0, r_vkPostDepthTransitionReference.GetBool() ) ) {
 		fieldLowerOrigin = VK_Exec_ActiveLowerOrigin();
 		vkPostSSAOBlock_t block;
 		VK_Post_FillSSAOBlock( block, viewDef, width, height, 1.0f, false );
@@ -1649,7 +1677,13 @@ static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostM
 				width, height, TF_NEAREST, "Vulkan motion vectors" ) ) {
 		return false;
 	}
-	if ( !VK_Exec_SetRenderTarget( vectorTarget ) ) {
+	// Motion blur reads a separate final-depth capture. Temporal consumers may
+	// instead pass the scene attachment itself; retain its sampled transition.
+	idImage *sceneDepth = sceneTarget != NULL ? sceneTarget->GetDepthImage() : NULL;
+	const bool samplesSceneDepth = sceneDepth != NULL
+		&& sceneDepth->GetDeviceHandle() == depthImage->GetDeviceHandle();
+	if ( !VK_Exec_SetRenderTarget( vectorTarget, 0,
+			samplesSceneDepth || r_vkPostDepthTransitionReference.GetBool() ) ) {
 		VK_Exec_SetRenderTarget( sceneTarget, sceneCubeFace );
 		return false;
 	}
@@ -1923,13 +1957,12 @@ static bool VK_Post_MotionBlur( const viewDef_t *viewDef, idRenderTexture *scene
 		return false;
 	}
 	if ( !VK_Post_IsMainMotionBlurView( viewDef ) ) {
-		// like OpenGL, any other 3D view (portal sky, mirror, remote camera)
-		// drawn this frame costs the main view its history
-		if ( viewDef->viewEntitys != NULL ) {
-			VK_Post_ResetMotionBlurHistory();
-		}
+		// Subviews have independent cameras and must not invalidate the main
+		// camera's timeline. Its world, time, projection and restart checks
+		// below reject discontinuities when the next main view arrives.
 		return false;
 	}
+	vkGpuPhaseScope timing( VK_Exec_ActiveCmd(), VK_GPU_PHASE_MOTION );
 	if ( !r_motionBlurDebug.GetBool() && ( r_motionBlurStrength.GetFloat() <= 0.0f
 			|| r_motionBlurMaxPixels.GetFloat() <= 0.0f || r_motionBlurSamples.GetInteger() <= 0 ) ) {
 		VK_Post_ResetMotionBlurHistory();
@@ -2053,7 +2086,7 @@ struct vkPostPreparedSteps_t {
 static bool VK_Post_ExecuteSteps( const vkPostPreparedSteps_t &plan ) {
 	for ( int i = 0; i < plan.count; ++i ) {
 		const vkPostPreparedStep_t &step = plan.steps[i];
-		if ( !VK_Exec_SetRenderTarget( step.target )
+		if ( !VK_Exec_SetRenderTarget( step.target, 0, r_vkPostDepthTransitionReference.GetBool() )
 				|| !VK_Post_DrawTarget( step.pipeline, &step.sourceSet, 1, step.uniformOffset ) ) { return false; }
 	}
 	return true;
@@ -2065,7 +2098,7 @@ static bool VK_Post_ExecuteSteps( const vkPostPreparedSteps_t &plan ) {
 static bool VK_Post_DrawBloomStep( idRenderTexture *target, int kind, int module, idImage *source,
 		const void *block, int blockBytes, vkPostPreparedSteps_t *plan = NULL ) {
 	const VkShaderModule fragModule = VK_Post_SceneModule( module );
-	if ( fragModule == VK_NULL_HANDLE || !VK_Exec_SetRenderTarget( target ) ) {
+	if ( fragModule == VK_NULL_HANDLE || !VK_Exec_SetRenderTarget( target, 0, r_vkPostDepthTransitionReference.GetBool() ) ) {
 		return false;
 	}
 	const VkDescriptorSet sourceSet = VK_Post_Descriptor( source );
@@ -2484,6 +2517,7 @@ static bool VK_Post_DrawPreparedLinearOutput( const viewDef_t *view, idRenderTex
 
 static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneTarget,
 		bool linearScene ) {
+	vkGpuPhaseScope timing(VK_Exec_ActiveCmd(),VK_GPU_PHASE_BLOOM);
 	if ( linearScene && VK_HDRScene_LinearActive() ) {
 		return VK_Post_DrawPreparedLinearOutput( viewDef, sceneTarget );
 	}
@@ -3139,7 +3173,7 @@ static bool VK_Post_DrawSceneEffectsInView( const viewDef_t *viewDef ) {
 			VK_Post_WarnOnce( ssaoWarned, "r_ssao" );
 		}
 	}
-	// the motion blur runs its history bookkeeping on every 3D view
+	// Only the main camera advances the motion-blur history.
 	if ( VK_Post_MotionBlur( viewDef, sceneTarget ) ) {
 		drew = true;
 		VK_Post_LogFirstDraw( motionBlurLogged, "motion blur",

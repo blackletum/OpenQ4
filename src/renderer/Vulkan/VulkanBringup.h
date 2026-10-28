@@ -21,6 +21,10 @@
 */
 
 struct renderModuleServices_s;
+struct renderDeviceCatalog_t;
+// No logical device, allocation or presentation. Only for an inactive module;
+// a live Vulkan renderer queries its existing instance instead.
+bool VK_Bringup_QueryCatalog(renderDeviceCatalog_t* catalog);
 
 void	VK_Bringup_SetServices( const struct renderModuleServices_s *services );
 

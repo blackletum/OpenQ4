@@ -167,6 +167,19 @@ bool State::Evaluate(const StateValues& candidate, PropertyValues& props, std::m
 }
 bool State::EvaluateDerived(const StateValues& base, const StateValues* overlay, StatePresentationSnapshot& output,
 	std::map<std::string,ControlReadback>& readbacks, std::string& error) const {
+	if (!modelDeclarations->empty()) {
+		StateValues combined;
+		const StateValues* values=&base;
+		if (overlay) {
+			combined=base;
+			for (const auto& [id,value]:*overlay) combined[id]=value;
+			values=&combined;
+		}
+		for (const auto* spec:*modelDeclarations) {
+			ModelScene resolved;
+			if (!ResolveModelScene(*spec,*values,resolved,error)) return false;
+		}
+	}
 	for (const auto& [id,declaration] : *presentationDeclarations) {
 		auto& cell = output.variables.at(id);
 		if (cell.expressionDisabled || declaration.expressions.empty()) continue;
@@ -264,13 +277,16 @@ bool State::Reset(std::shared_ptr<const DocumentModel> shared, std::string& erro
 	candidate.bindings = std::shared_ptr<const std::vector<Binding>>(shared,&model.bindings);
 	candidate.presentationDeclarations = std::shared_ptr<const std::map<std::string,PresentationVariable>>(shared,&model.presentationVariables);
 	auto controls = std::make_shared<std::map<std::string,const Control*>>();
+	auto scenes = std::make_shared<std::vector<const ModelSceneSpec*>>();
 	const auto collect = [&](const auto& self, const Node& node) -> void {
+		if (node.model) scenes->push_back(&*node.model);
 		if (node.control && node.control->role != ControlRole::Scrollbar &&
 			(node.control->role != ControlRole::Button || node.control->context)) controls->emplace(node.id,&*node.control);
 		for (const auto& child : node.children) self(self,child);
 	};
 	collect(collect,model.root);
 	candidate.controlDeclarations = std::move(controls);
+	candidate.modelDeclarations = std::move(scenes);
 	candidate.model = std::move(shared);
 	// openQ4: index the bindings by the state they read, so a change
 	// re-evaluates only its dependents.
@@ -378,7 +394,7 @@ bool State::SetIncremental(const StateValues& overlay, std::string& error) {
 			error = "Binding '"+binding.id+"' ("+binding.node+"."+binding.property+"): "+problem.what(); return false;
 		}
 	}
-	const bool derived = !presentationDeclarations->empty() || !controlDeclarations->empty();
+	const bool derived = !presentationDeclarations->empty() || !controlDeclarations->empty() || !modelDeclarations->empty();
 	StatePresentationSnapshot nextPresentation;
 	std::map<std::string,ControlReadback> readbacks;
 	if (derived) {

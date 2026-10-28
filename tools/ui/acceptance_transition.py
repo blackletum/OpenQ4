@@ -36,6 +36,7 @@ from datetime import date
 import hashlib
 from pathlib import Path
 import re
+import struct
 import subprocess
 
 
@@ -64,6 +65,7 @@ class Repository:
         self.audit, self.root = audit, root
         self.baseline = self.git("rev-parse", "--verify", baseline + "^{commit}").decode("ascii").strip()
         self.records, self.problems, self.commits, self.ancestors = {}, {}, set(), {}
+        self.current_problems = {}
 
     def git(self, *items, check=True, stdin=None):
         result = subprocess.run(["git", "-c", "core.safecrlf=false", *items], cwd=self.root, input=stdin,
@@ -100,7 +102,8 @@ class Repository:
         return contents
 
     def path(self, value, label):
-        self.audit.require(isinstance(value, str), f"{label} is not a path")
+        self.audit.require(isinstance(value, str) and all(ord(char) >= 32 and ord(char) != 127 for char in value),
+                           f"Invalid acceptance evidence path: {label}")
         return self.audit.archive_path(self.root, value)
 
     def text_digests(self, data):
@@ -143,6 +146,9 @@ def load_record(repo, register, name):
     path = repo.path(path_text, name)
     audit.require(path.is_file(), f"Missing acceptance record: {name}")
     audit.require(entry["sha256"] in audit.line_ending_digests(path), f"Stale acceptance record binding: {name}")
+    committed = repo.contents_at("HEAD", [path_text])[path_text]
+    audit.require(committed is not None and entry["sha256"] in repo.text_digests(committed),
+                  f"Acceptance record must be committed with its current bytes: {name}")
     require_text(audit, entry["scope"], f"scope: {name}")
     record = audit.read_json(path.read_text(encoding="utf-8"))
     policy = register["evidence_policy"]["per_acceptance_record_required"]
@@ -233,6 +239,47 @@ def check_artifacts(repo, name, record):
             repo.audit.require(repo.audit.digest(path) == recorded, f"Artifact hash mismatch: {name}: {value}")
 
 
+def rendered_image(repo, value):
+    """Recognize the bounded headers of engine screenshot formats.
+
+    This identifies image evidence rather than treating a log as artwork. It
+    does not decode pixels or establish that the image proves a visual claim.
+    """
+    path = repo.path(value, "rendered image")
+    if not path.is_file():
+        return False
+    with path.open("rb") as stream:
+        header = stream.read(32)
+    if path.suffix.lower() == ".png":
+        return (len(header) >= 29 and header[:16] == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" and
+                all(struct.unpack(">II", header[16:24])))
+    if path.suffix.lower() == ".tga":
+        if len(header) < 18:
+            return False
+        width, height = struct.unpack("<HH", header[12:16])
+        # Engine captures are true-color or grayscale; indexed artwork is
+        # not a screenshot produced by the registered screenshot command.
+        return (header[1] == 0 and header[2] in (2, 3, 10, 11) and width > 0 and height > 0 and
+                header[16] in (8, 24, 32) and path.stat().st_size > 18 + header[0])
+    if path.suffix.lower() in (".jpg", ".jpeg"):
+        return len(header) >= 4 and header[:3] == b"\xff\xd8\xff"
+    return False
+
+
+def current_record_problems(repo, name, record):
+    """Earlier acceptance needs its sources and executed/rendered artifacts."""
+    if name in repo.current_problems:
+        return repo.current_problems[name]
+    problems = list(stale_sources(repo, name, record))
+    for field in ("binary_hashes_if_executed", "log_and_image_hashes_if_rendered"):
+        for value, recorded in record[field].items():
+            path = repo.path(value, f"{name}.{field}")
+            if not path.is_file() or repo.audit.digest(path) != recorded:
+                problems.append(f"{name}: executed/rendered artifact changed or missing: {value}")
+    repo.current_problems[name] = problems
+    return problems
+
+
 def references(record):
     return (set(record["source_or_asset_hashes"]) | set(record["binary_hashes_if_executed"]) |
             set(record["log_and_image_hashes_if_rendered"]) |
@@ -283,7 +330,7 @@ def check_requirement(repo, register, rows, chain, name, record, req):
             audit.require(entry == {"verified_by": dep_row["acceptance_evidence"]},
                           f"Dependency proof must cite its acceptance records: {name}.{req}.{dep}")
             for cited in dep_row["acceptance_evidence"]:
-                problems = stale_sources(repo, cited, load_record(repo, register, cited))
+                problems = current_record_problems(repo, cited, load_record(repo, register, cited))
                 audit.require(not problems, f"Dependency acceptance is stale: {req} needs {dep}: " + "; ".join(problems))
         elif gate and dep_row["status"] == "partial" and not dep.startswith(("GATE-", "FINAL-")):
             # A milestone gate accepts its bounded exit scope; the dependency
@@ -323,7 +370,8 @@ def check_resource(repo, register, manifest, name, record, resource_id):
             require_text(audit, item["claim"], f"{kind} claim: {name}")
             check_proof(audit, record, item, f"{name}.{resource_id} {kind} {index + 1}")
             # Artwork is judged from rendered output, never from source alone.
-            audit.require(kind != "artwork" or bool(set(item["evidence"]) & set(record["log_and_image_hashes_if_rendered"])),
+            audit.require(kind != "artwork" or any(rendered_image(repo, value) for value in
+                          set(item["evidence"]) & set(record["log_and_image_hashes_if_rendered"])),
                           f"Unqualified resource: {resource_id} artwork proof cites no rendered image")
 
 
@@ -349,13 +397,13 @@ def accepted_record_problems(repo, register, manifest_rows, rows):
     for req, row in rows.items():
         if row["status"] == "verified":
             for name in row["acceptance_evidence"]:
-                found = stale_sources(repo, name, load_record(repo, register, name))
+                found = current_record_problems(repo, name, load_record(repo, register, name))
                 if found:
                     problems.setdefault(req, []).extend(found)
     for resource_id, entry in manifest_rows.items():
         if entry["translation_status"] == ACCEPTED:
             for name in sorted(set(entry["behavior_evidence"]) | set(entry["visual_evidence"])):
-                found = stale_sources(repo, name, load_record(repo, register, name))
+                found = current_record_problems(repo, name, load_record(repo, register, name))
                 if found:
                     problems.setdefault(resource_id, []).extend(found)
     return problems

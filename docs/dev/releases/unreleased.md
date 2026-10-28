@@ -10,6 +10,62 @@ See [release status](../../user/release-status.md) and the
 
 ## Highlights
 
+- **Choose your renderer and GPU in System settings.** The retained menu groups
+  backend and device selection with quality presets and Auto-Detect, shows the
+  active renderer, and offers a checked restart after applying a change. Choosing
+  a GPU selects Vulkan automatically. Fresh desktop configurations prefer a
+  compatible high-performance GPU through Vulkan, with OpenGL fallback; existing
+  saved backend choices are preserved, Android keeps OpenGL ES, and Automatic
+  keeps OpenGL for PC OpenXR. GPU choices
+  survive changes in driver enumeration order. Replace engine and renderer
+  modules together. Vulkan remains experimental on Linux and macOS.
+
+- **More useful graphics presets and hardware detection.** Enhanced fills the
+  gap between Balanced and Quality with lighter modern shadows and effects.
+  Auto-Detect uses the active GPU, distinguishes shared memory, and accounts for
+  resolution and CPU capacity. Unknown hardware gets a conservative starting
+  point; Quality and maximum-setting Ultra remain manual choices. Reapply a
+  preset to adopt the revised values, and replace engine and renderer modules
+  together.
+  Fresh installations now use that same detector after the GPU initializes;
+  existing saved settings and launch overrides are preserved. Android gets a
+  conservative mobile limit, and platform hints no longer override a smaller
+  verified memory budget.
+  Capable Macs using Apple's compatibility renderer are no longer forced to
+  Minimum because modern post effects are unavailable. An unset legacy quality
+  marker no longer resets saved graphics settings at startup.
+  On high-resolution displays, Auto-Detect also reduces scene render scale to
+  suit the hardware, keeping the interface sharp, and leaves unsupported post
+  AA off. Stock quality controls now use the same presets and preserve your
+  display mode and VSync preference.
+
+- **Less wasted Vulkan rendering work.** High-resolution shadow maps avoid clearing
+  unused atlas space and repeating shared opaque caster draws. PCSS shadows
+  also avoid copying large shared depth blocks, and post-processing avoids
+  unnecessary image transitions and copies while preserving graphics quality.
+  Shadow passes also avoid clearing and storing unused stencil data.
+- Vulkan also clears stale rendering state during video restart, preventing a
+  crash when diagnostic rendering runs before the next normal view.
+
+- **Shorter checkpoint pauses.** Game-state buffering, reuse of unchanged script checksums
+  and dictionary data prepared between saves,
+  deferred thumbnails and background storage, including thumbnail persistence,
+  reduce the saving interruption while preserving existing
+  save files and recovery checks. Loading or quitting waits for a pending save
+  to finish, and the saved message appears only after it commits. A short pause
+  can still occur while game state is captured. Developer launches also avoid
+  unnecessary logging during recovery checks. Replace the engine, renderer
+  and game modules together.
+
+- **Ultra now selects maximum graphics quality.** It requests the highest
+  supported MSAA, SMAA Ultra, maximum shadow resolution and filtering, and
+  higher-quality ambient occlusion and motion blur, with bloom and tone mapping
+  enabled. Quality provides an intermediate step. Reapply your preset to adopt
+  the new values; native resolution and DDS replacement packs remain supported.
+  Four stabilized cascades use an expanded shadow atlas to retain maximum
+  resolution without dropping a required shadow pass. Motion blur also works
+  in areas with portal skies, which previously cleared its camera history.
+
 - **Find multiplayer objectives at a glance.** Flag bases, Arena CTF assault
   points and DeadZone zones now have compact HUD symbols with distance and
   directions when they are outside your view. The icons show flag availability,
@@ -110,6 +166,10 @@ See [release status](../../user/release-status.md) and the
   moving on slower systems. Reduced Motion keeps it still.
   Campaign difficulty and Turbo options open on a
   fourth menu level with matching breadcrumbs and smooth Back transitions.
+  The Settings hub includes a confirmation before restoring defaults and
+  returns to the correct Marine or Strogg pause screen.
+- Player previews apply separate head skins and keep attachments aligned when
+  their position changes.
 - **Clearer focus and cinematic transitions.** All three scopes keep the aim
   area sharp while softly defocusing the surroundings. The MCC treatment
   opening regains focus gradually. Kane's crash awakening in Air Defense

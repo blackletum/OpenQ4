@@ -1756,8 +1756,10 @@ menu's do: CONTROLS, GAME OPTIONS and AUDIO their retained pages, DISPLAY
 the stock panel (the retained SYSTEM page where opted into) and LOAD
 DEFAULTS the stock dialog. Back from a page returns to the screen as it
 was. Captured from the title in English and German, through CONTROLS and
-through the stock DISPLAY panel. The screen itself, and LOAD DEFAULTS'
-dialog, remain stock.
+through the stock DISPLAY panel. The
+[SETTINGS page](#the-settings-page-26-october-2026) now stands in for the
+screen and its LOAD DEFAULTS dialog; the stock screen still shows a stock
+panel the page sends it to, and serves where the page cannot.
 
 `openq4-ui-retained-controls` checks the 49 rows, the keys shown, the wait,
 the clear and Back; the gate pins the bindings to the stock page and the
@@ -1856,6 +1858,76 @@ request, Back and a portrait fit. The gate compiles the session code against
 its doubles: the route, the readback from a quoted device list, each verb's
 CVar and command, malformed and stale requests, Back and both fallbacks.
 Captured at 16:9 in English and German and at 9:16, with the fallback.
+
+## The SETTINGS page (26 October 2026)
+
+SETTINGS on the title or the single-player pause now hands off to a retained
+page, `guis/menu/settings.q4ui` (`tools/ui/retained_settings_page.py`), as
+MULTIPLAYER hands off to its page (`BeginRetainedPage`): the home docks its
+bands and carries SETTINGS into the title slot, and at 550 ms the page
+presents. It is the stock settings screen's level of the menu: CONTROLS, GAME
+OPTIONS, DISPLAY, AUDIO and LOAD DEFAULTS on the home's navigation plates in
+the stock order and words, BACK under them, and one line in the content
+column saying what the page is for (`#str_231546`, in every language).
+
+| Button | Opens |
+| --- | --- |
+| CONTROLS, GAME OPTIONS, AUDIO | Their retained pages; Back returns here onto the button |
+| DISPLAY | The retained SYSTEM page where it is on, otherwise the stock screen on its DISPLAY panel |
+| LOAD DEFAULTS | The stock dialog's question in its words; YES restores the defaults as the stock YES did, NO closes it |
+| BACK, the back input | The title or the pause, as it was |
+
+Each button is a session verb (`settingsControls` through `settingsDefaults`
+and `settingsBack`, in the adapter's `SessionMenuCommand` allowlist). A page
+that cannot open, and DISPLAY without the SYSTEM page, send the page away as
+the Multiplayer page leaves for a stock page: its plates fade over 150 ms as
+it sweeps toward the trailing edge, and at 500 ms the stock settings screen
+takes over on that panel (`RETAINED_SETTINGSPAGE stock dest=<n>`). Back from
+the stock screen returns here (`settingsOpen`) onto the button that left. A
+page that is missing or stops drawing leaves the stock screen to SETTINGS,
+which then opens as before, as with `ui_retained 0`.
+
+LOAD DEFAULTS' YES runs the stock dialog's commands (`cvar_restart`, the
+selection sound, `resetdefaults` and `s_restart`). `cvar_restart` resets
+every CVar, the log's included, so the capture sets the log again after it.
+
+`openq4-ui-retained-settings` checks the buttons, their verbs, the question,
+YES and NO, the return onto each button and a portrait fit. The gate compiles
+the session code against its doubles: the section table against the
+generator, each route, the stock hand-off and its return, the defaults
+commands against the stock dialog's, and Back to the title before and after
+a stock panel. Captured at 16:9 in English and German and at 9:16 from the
+title, with the defaults, and from the pause and back to it.
+
+### Main-checkout verification, 28 October 2026
+
+The uncommitted SETTINGS work was recovered from the earlier UI worktree into
+the main checkout. Its Strogg-pause route incorrectly selected the Strogg Load
+Game slot before it looked up the hub; SETTINGS now uses its own document and
+returns to the same pause family. The gate covers that route and missing-page
+fallback. The portrait native check uses the document's actual canvas height
+and minimum width, as the engine does, and checks label bounds: section 9's
+navigation plates deliberately bleed off the leading edge.
+
+The optimized main build and six native settings/menu/pointer suites pass.
+Current OpenGL captures cover the title route, the defaults confirmation and
+reset, and both Marine and Strogg gameplay pauses. Vulkan captures cover both
+gameplay pauses. German portrait captures cover the hub, its confirmation,
+stock DISPLAY return and a broken-document fallback. The reset reads mouse
+sensitivity back as 5, its declared default, after setting it to 9.
+
+Two Vulkan front-end runs and their two retries exited with code 4294967295,
+without an engine error or new crash report; they are retained as failures.
+The retry's engine, renderer and SP/MP module hashes did not change. After
+coordinating exclusive runtime windows with the preset and multiplayer chats,
+both front-end cases pass on Vulkan too: six title-route captures and the
+defaults reset capture, with unchanged before/after module hashes. This does
+not establish the cause of the earlier exits or erase their failed evidence. A lazy
+`player_marine_mp_ui` declaration warning remains in the gameplay logs.
+All output comes from registered engine `screenshot` commands in hidden,
+windowed processes with mouse/controller input disabled. No host input or OS
+screen capture was used. Evidence is under `.tmp/retained-ui-completion/`;
+this is a bounded working-copy checkpoint, with no product acceptance.
 
 ## Tall views grow the lists (25 October 2026)
 

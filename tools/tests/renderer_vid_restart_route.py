@@ -560,6 +560,7 @@ struct {
     const char* version_string="test";
 } glConfig;
 struct { bool initialized=false; struct { uint32_t width=640,height=480; } swapchainExtent; } vkCtx;
+struct { void* viewDef=nullptr; } backEnd;
 struct idStr {template<class... T> static void snPrintf(char* out,int size,const char* format,T... args){std::snprintf(out,size,format,args...);}};
 static const char* vkStartupDeviceStage="window system";
 static bool VK_Device_InjectStartupFailure(int){return false;}
@@ -630,9 +631,11 @@ static bool VK_Device_Init(Services* value, uint32_t firstCandidate, vkDeviceAtt
     attempt.automatic=forcedDevice<0;
     if(!deviceOkay)return false;
     if(forcedDevice>=0&&firstCandidate>0)return false;
-    for(uint32_t i=firstCandidate;i<adapters.size();++i){
+    uint32_t rank=0;
+    for(uint32_t i=0;i<adapters.size();++i){
         if(forcedDevice>=0&&i!=static_cast<uint32_t>(forcedDevice))continue;
         if(!adapters[i].compatible)continue;
+        if(forcedDevice<0 && rank++<firstCandidate)continue;
         attempt.admitted=true;attempt.index=i;std::snprintf(attempt.deviceName,sizeof(attempt.deviceName),"adapter %u",i);
         if(!adapters[i].deviceOkay)return false;
         currentAdapter=static_cast<int>(i);deviceAlive=vkCtx.initialized=true;

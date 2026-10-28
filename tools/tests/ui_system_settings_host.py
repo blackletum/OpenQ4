@@ -31,6 +31,7 @@ SUPPORT = r'''
 #include <vector>
 #include "src/ui/application/SystemSettingsHost.h"
 #include "src/framework/PerformancePreset.h"
+#include "src/renderer/RendererDeviceCatalog.h"
 struct idStr : std::string { using std::string::string; using std::string::operator=; };
 enum { CVAR_BOOL=1, CVAR_INTEGER=2, CVAR_FLOAT=4, CVAR_ROM=8, CVAR_INIT=16,
     CVAR_NETWORKSYNC=32, CVAR_CHEAT=64, CVAR_PRIVATE=128 };
@@ -133,7 +134,7 @@ static void Seed() {
         variable.flags=item.type==1?CVAR_BOOL:item.type==0?(item.integer?CVAR_INTEGER:CVAR_FLOAT):0;
         StateValue value;
         if(item.type==1)value=false;
-        else if(item.type==2) { value=item.stringChoices.front();variable.choices=item.stringChoices; }
+        else if(item.type==2) { value=item.stringChoices.empty()?std::string("auto"):item.stringChoices.front();variable.choices=item.stringChoices; }
         else value=item.numberChoices.empty()?item.minimum:item.numberChoices.front();
         if(item.key=="r_renderer")variable.choices.push_back("modern");
         if(item.type==0) { variable.minimum=static_cast<float>(item.minimum);variable.maximum=static_cast<float>(item.maximum); }
@@ -162,8 +163,8 @@ static void Seed() {
 MAIN = r'''
 int main() {
     Seed();SystemSettingsHost host;std::string error;StateValues original;
-    assert(SystemSettingsHost::Schema().size()==55 && host.Read(original,error));
-    assert(original.size()==55 && writes==0);
+    assert(SystemSettingsHost::Schema().size()==76 && host.Read(original,error));
+    assert(original.size()==76 && writes==0);
     assert(std::get<double>(original.at("r_brightness"))==1.2345678901234567);
     assert(original.at("r_screenFraction")==StateValue(90.0));
     assert(original.at("image_usePrecompressedTextures")==StateValue(2.0));
@@ -178,7 +179,7 @@ int main() {
     StateValues failed={{"sentinel",true}};
     assert(!host.Read(failed,error) && failed==StateValues({{"sentinel",true}}));
     brightness.flags&=~CVAR_PRIVATE;
-    StateValues defaults;assert(host.Defaults(defaults,error) && defaults.size()==55 && writes==0);
+    StateValues defaults;assert(host.Defaults(defaults,error) && defaults.size()==76 && writes==0);
     assert(defaults.at("r_brightness")==StateValue(1.0));
     assert(defaults.at("ui_retainedScale")==StateValue(1.0) && defaults.at("ui_retainedTextScale")==StateValue(1.0));
     for(const auto* key:{"ui_retainedScale","ui_retainedTextScale"}) {
@@ -202,7 +203,13 @@ int main() {
     assert(!host.Write({{"r_brightness",std::numeric_limits<double>::infinity()}},error) && writes==beforeWrites);
     assert(!host.Write({{"r_brightness",.4}},error) && writes==beforeWrites);
     assert(!host.Write({{"r_mode",1.5}},error) && writes==beforeWrites);
-    assert(!host.Write({{"r_renderApi",std::string("vulkan")}},error) && error.find("engine restart")!=std::string::npos);
+    // Backend/device edits persist preferences without pretending to restart a device.
+    auto rendering=original; rendering["r_renderApi"]=std::string("vulkan");
+    rendering["r_renderDevice"]=std::string("0123456789abcdef0123456789abcdef");
+    assert(host.Validate(original,rendering,error) && !host.RequiresDeviceWork(original,rendering) &&
+        !host.NeedsConfirmation(original,rendering) && SystemSettingsHost::ApplyClassOf(original,rendering)==SystemApplyClass::Immediate);
+    rendering["r_renderDevice"]=std::string("2");assert(!host.Validate(original,rendering,error));
+    rendering["r_renderDevice"]=std::string("AUTO");assert(!host.Validate(original,rendering,error));
     assert(!host.Write({{"r_renderer",std::string("bad;quit")}},error) && writes==beforeWrites);
     for(int flag:{CVAR_ROM,CVAR_INIT,CVAR_NETWORKSYNC,CVAR_CHEAT,CVAR_PRIVATE}) {
         brightness.flags|=flag;
@@ -268,7 +275,7 @@ int main() {
         const auto kind=classOf();
         if(kind==SystemApplyClass::Deferred)deferredKeys.push_back(item.key);
         if(kind==SystemApplyClass::Renderer)rendererKeys.push_back(item.key);
-        if(item.effects==SystemSettingImmediate)assert(kind==SystemApplyClass::Immediate);
+        if(item.effects==SystemSettingImmediate || item.effects==SystemSettingEngineRestart)assert(kind==SystemApplyClass::Immediate);
         else if(item.effects==SystemSettingDisplayRestart)assert(kind==SystemApplyClass::Display);
         else assert(kind==SystemApplyClass::Unsupported || kind==SystemApplyClass::Deferred || kind==SystemApplyClass::Renderer);
     }
@@ -351,7 +358,7 @@ int main() {
     Seed();
     localCVarSystem.variables.at("r_brightness").value="1.2junk";failed={{"sentinel",true}};
     assert(!host.Read(failed,error) && failed==StateValues({{"sentinel",true}}));
-    std::puts("SYSTEM settings host: 55-key catalog, defaults, exact decimals, validation/rollback, patch refusal and display classification passed");
+    std::puts("SYSTEM settings host: 76-key catalog, defaults, exact decimals, validation/rollback, patch refusal and display classification passed");
 }
 '''
 
@@ -366,10 +373,10 @@ def source_checks(host_source):
     page = set(re.findall(r'\bcvar\s+"?([a-zA-Z_]\w*)', system)) - {'gui_set_sys_scroll'}
     page |= {'r_mode', 'r_skipBump', 'r_skipSky', 'r_skipSpecular'}
     # The retained replacement adds independent interface preferences.
-    page |= {'ui_retainedScale', 'ui_retainedTextScale'}
+    page |= {'ui_retainedScale', 'ui_retainedTextScale', 'r_renderApi', 'r_renderDevice'}
     catalog = set(re.findall(r'(?:Number|Boolean|String)\("(\w+)"', host_source))
     assert {key.lower() for key in page | preset_keys} == {key.lower() for key in catalog}
-    assert len(preset_keys) == 32 and len(catalog) == 55
+    assert len(preset_keys) == 55 and len(catalog) == 76
     renderer = (ROOT / 'src/renderer/RenderSystem_init.cpp').read_text(encoding='utf-8')
     modes = renderer.split('vidmode_t r_vidModes[] = {', 1)[1].split('};', 1)[0]
     expected = {int(mode): (int(width), int(height)) for mode, width, height in re.findall(r'\{\s*(\d+),\s*(\d+),\s*(\d+)\s*\}', modes)}

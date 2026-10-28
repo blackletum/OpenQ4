@@ -993,7 +993,7 @@ idVarDef::PrintInfo
 ============
 */
 void idVarDef::PrintInfo( idFile *file, int instructionPointer ) const {
-	statement_t	*jumpst;
+	const statement_t	*jumpst;
 	int			jumpto;
 	etype_t		etype;
 	int			i;
@@ -1498,6 +1498,7 @@ idProgram::AllocDef
 ============
 */
 idVarDef *idProgram::AllocDef( idTypeDef *type, const char *name, idVarDef *scope, bool constant ) {
+	saveChecksumValid = false;
 	idVarDef	*def;
 	idStr		element;
 	idVarDef	*def_x;
@@ -1684,6 +1685,7 @@ idProgram::FreeDef
 ============
 */
 void idProgram::FreeDef( idVarDef *def, const idVarDef *scope ) {
+	saveChecksumValid = false;
 	idVarDef *e;
 	int i;
 
@@ -1900,6 +1902,7 @@ idProgram::AllocStatement
 ================
 */
 statement_t *idProgram::AllocStatement( void ) {
+	saveChecksumValid = false;
 	if ( statements.Num() >= statements.Max() ) {
 		throw idCompileError( va( "Exceeded maximum allowed number of statements (%d)", statements.Max() ) );
 	}
@@ -2031,6 +2034,7 @@ void idProgram::FinishCompilation( void ) {
 	for( i = 0; i < numVariables; i++ ) {
 		variableDefaults[ i ] = variables[ i ];
 	}
+	GetSaveChecksum();
 }
 
 /*
@@ -2185,6 +2189,7 @@ bool idProgram::CompileText( const char *source, const char *text, bool console 
 		CompileStats();
 	}
 
+	GetSaveChecksum();
 	return true;
 }
 
@@ -2241,6 +2246,7 @@ idProgram::FreeData
 ================
 */
 void idProgram::FreeData( void ) {
+	saveChecksumValid = false;
 	int i;
 
 	// free the defs
@@ -2346,7 +2352,19 @@ void idProgram::Save( idSaveGame *savefile ) const {
 	savefile->WriteInt ( top_defs );		// cnicholson: Added unsaved var
 	savefile->WriteInt ( top_files );		// cnicholson: Added unsaved var
 
-	int checksum = CalculateChecksum();
+	const bool verifyChecksum = cvarSystem->GetCVarInteger( "com_saveGameProfile" ) >= 2;
+	const bool cacheHit = saveChecksumValid;
+	const int checksum = GetSaveChecksum();
+	if ( verifyChecksum ) {
+		const double start = idLib::sys->GetClockTicks();
+		const int reference = CalculateChecksum();
+		const double elapsed = ( idLib::sys->GetClockTicks() - start ) * 1000.0 / idLib::sys->ClockTicksPerSecond();
+		common->Printf( "Script save checksum: cached=%d matched=%d reference=%.3f ms statements=%d\n",
+			cacheHit ? 1 : 0, checksum == reference ? 1 : 0, elapsed, statements.Num() );
+		if ( checksum != reference ) {
+			gameLocal.Error( "Script save checksum cache mismatch" );
+		}
+	}
 	savefile->WriteInt( checksum );
 }
 
@@ -2425,6 +2443,16 @@ bool idProgram::Restore( idRestoreGame *savefile ) {
 	return result;
 }
 
+// Keep the original checksum calculation independent for load validation and
+// the diagnostic save oracle. The compiler warms the cache before gameplay.
+int idProgram::GetSaveChecksum( void ) const {
+	if ( !saveChecksumValid ) {
+		saveChecksum = CalculateChecksum();
+		saveChecksumValid = true;
+	}
+	return saveChecksum;
+}
+
 /*
 ================
 idProgram::CalculateChecksum
@@ -2485,6 +2513,7 @@ Restores all variables to their initial value
 ==============
 */
 void idProgram::Restart( void ) {
+	saveChecksumValid = false;
 	int i;
 
 	idThread::Restart();
@@ -2518,6 +2547,7 @@ void idProgram::Restart( void ) {
 	for( i = 0; i < numVariables; i++ ) {
 		variables[ i ] = variableDefaults[ i ];
 	}
+	GetSaveChecksum();
 }
 
 /*

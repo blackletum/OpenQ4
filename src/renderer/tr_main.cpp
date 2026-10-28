@@ -1497,7 +1497,7 @@ void R_RenderView( viewDef_t *parms ) {
 	}
 
 	// write everything needed to the demo file
-	if ( session->writeDemo ) {
+	if ( session->writeDemo && !(parms->renderFlags & RF_INDEPENDENT_VIEW) ) {
 		static_cast<idRenderWorldLocal *>(parms->renderWorld)->WriteVisibleDefs( tr.viewDef );
 	}
 

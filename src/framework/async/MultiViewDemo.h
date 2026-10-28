@@ -85,6 +85,7 @@ public:
 	static void				Play_f( const idCmdArgs &args );
 	static void				Info_f( const idCmdArgs &args );
 	static void				Status_f( const idCmdArgs &args );
+	static void				Library_f( const idCmdArgs &args );
 	static void				Pause_f( const idCmdArgs &args );
 	static void				Seek_f( const idCmdArgs &args );
 	static void				Skip_f( const idCmdArgs &args );
@@ -148,6 +149,7 @@ private:
 	header_t				header;
 
 	int						recordingStartRealTime;
+	int64_t					recordingLibraryByteLimit;
 	int						lastSnapshotGameFrame;
 	int						lastSnapshotGameTime;
 	int						lastSnapshotFileOffset;

@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "SavePreviewCapture.h"
 #if !defined( OPENQ4_RENDERER_GLES_MODULE )
 #include "draw_pbr.h"
 #endif
@@ -693,6 +694,7 @@ const void	RB_SwapBuffers( const void *data ) {
 	// presenting an EGL window surface may discard its contents immediately.
 	// All ordinary frames retain the existing presentation path.
 	RB_ForceOpaquePresentAlpha();
+	RB_QueueSavePreview();
 
 	if ( !r_frontBuffer.GetBool() && !tr.takingScreenshot ) {
 	    GLimp_SwapBuffers();

@@ -2030,6 +2030,8 @@ void idPlayer::Init( void ) {
 
 	// air always initialized to maximum too
 	airTics = pm_airTics.GetFloat();
+	airReadout.Reset( gameLocal.time );
+	airPublishClock.Reset();
 	airless = false;
 
 // openQ4 BEGIN
@@ -2880,6 +2882,8 @@ void idPlayer::Save( idSaveGame *savefile ) const {
 
 #ifndef _XENON
  	if ( hud ) {
+		// Save notifications mutate the HUD after its payload was written.
+		savefile->InvalidateUserInterface( hud );
 		hud->SetStateString( "message", common->GetLocalizedString( "#str_102916" ) );
 		hud->HandleNamedEvent( "Message" );
  	}
@@ -3081,6 +3085,8 @@ void idPlayer::Restore( idRestoreGame *savefile ) {
 
  	savefile->ReadBool( airless );
 	savefile->ReadInt( airTics );
+	airReadout.Reset( gameLocal.time );
+	airPublishClock.Reset();
 	savefile->ReadInt( lastAirDamage );
 
 // openQ4 BEGIN
@@ -4241,6 +4247,7 @@ void idPlayer::UpdateHudStats( idUserInterface *_hud ) {
 	int temp;
 	
 	assert ( _hud );
+	_hud->SetStateInt( "player_air", GetAirReadoutPercent() );
 
 	temp = _hud->State().GetInt ( "player_health", "-1" );
 	if ( temp != health ) {		
@@ -7518,6 +7525,13 @@ void idPlayer::UpdateWeapon( void ) {
 	if ( !weapon ) {
 		if ( idealWeapon != -1 ) {
 			SetWeapon( idealWeapon );
+			// A snapshot can replace the weapon while a demo seek skips its
+			// animation frames. Honour that catch-up request before clearing it,
+			// just as Weapon_Combat does for an existing weapon. Otherwise the
+			// first paused frame starts a fresh raise animation below the view.
+			if ( weaponCatchup ) {
+				weapon->NetCatchup();
+			}
 			weaponCatchup = false;
 			assert( weapon );
 		} else {
@@ -9498,10 +9512,38 @@ void idPlayer::UpdateAir( void ) {
 	}
 
 	airless = newAirless;
+	if ( gameLocal.isServer && gameLocal.isNewFrame &&
+		airPublishClock.Admit( gameLocal.time, MPAirPercent( airTics, pm_airTics.GetInteger() ) ) ) {
+		byte bytes[32];
+		idBitMsg message;
+		message.Init( bytes, sizeof( bytes ) );
+		WriteAirReadoutMessage( message, false );
+		gameLocal.SendUnreliableMessage( message, -1 );
+	}
 
 	if ( hud ) {
-		hud->SetStateInt( "player_air", 100 * airTics / pm_airTics.GetInteger() );
+		hud->SetStateInt( "player_air", GetAirReadoutPercent() );
 	}
+}
+
+int idPlayer::GetAirReadoutPercent( void ) const {
+	return gameLocal.isClient && airReadout.percent >= 0 ? airReadout.percent :
+		MPAirPercent( airTics, pm_airTics.GetInteger() );
+}
+
+// Use the existing length-delimited entity-event envelope. This optional HUD
+// state changes no snapshot layout, demo format or gameplay air reservoir.
+void idPlayer::WriteAirReadoutMessage( idBitMsg &msg, bool reliable ) const {
+	msg.BeginWriting();
+	msg.WriteByte( reliable ? GAME_RELIABLE_MESSAGE_EVENT : GAME_UNRELIABLE_MESSAGE_EVENT );
+	msg.WriteBits( gameLocal.GetSpawnId( this ), 32 );
+	msg.WriteByte( EVENT_AIR_READOUT );
+	if ( reliable ) {
+		msg.WriteLong( gameLocal.time );
+		msg.WriteBits( 5, idMath::BitsForInteger( MAX_EVENT_PARAM_SIZE ) );
+	}
+	msg.WriteLong( gameLocal.time );
+	msg.WriteByte( MPAirPercent( airTics, pm_airTics.GetInteger() ) );
 }
 
 // RAVEN BEGIN
@@ -15772,6 +15814,11 @@ bool idPlayer::ClientReceiveEvent( int event, int time, const idBitMsg &msg ) {
 	bool start;
 
 	switch ( event ) {
+		case EVENT_AIR_READOUT: {
+			const int stamp = msg.ReadLong();
+			const int percent = msg.ReadByte();
+			return !msg.IsReadOverflowed() && airReadout.Apply( stamp, percent );
+		}
 		case EVENT_EXIT_TELEPORTER:
 			Event_ExitTeleporter();
 			return true;

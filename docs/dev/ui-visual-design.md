@@ -2089,6 +2089,16 @@ y 419. Remastered centers the three gauges as one status bar (section 14.4).
     3.7 u. Added at the stock color it reads as a faint olive line, about 15
     levels over the drained track.
 
+**Air (MP-06).** Below full air, show the remaining percentage in a small
+rounded, 0.22-sheared instrument immediately above health. It shares the
+Marine/Strogg fill and numeral families, a trailing-anchored fill and a localized
+AIR label; at 25% or less its fill and number use the low warning colour.
+The status anchor and HUD scale carry it in Remastered/Minimal. Classic uses
+the same vector component on the bottom-attached stock canvas above its
+health gauge; it overlays the original HUD rather than replacing it. Hide it
+at full air, on death, during HUD suppression and in a vehicle. Values come
+from the followed player's authoritative readout in multiplayer.
+
 ### 14.4 Remastered layout
 
 **Screens.** The Remastered HUD keeps the 4:3 stock canvas as its center screen

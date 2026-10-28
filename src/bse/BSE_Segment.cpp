@@ -13,6 +13,7 @@
 #include "BSE_Particle.h"
 #include "BSE_SpawnDomains.h"
 #include "BSE.h"
+#include "ParticleOrder.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -1088,44 +1089,28 @@ void rvSegment::Render(rvBSE* effect, const renderEffect_s* owner, idRenderModel
 		}
 	}
 	else {
-		idList<rvParticle*> drawList;
-		drawList.Clear();
+		idList<openq4::bse::DrawParticle<rvParticle>> drawList;
 		drawList.SetGranularity(64);
 		for (rvParticle* p = mUsedHead; p; p = p->GetNext()) {
-			drawList.Append(p);
+			drawList.Append({p, depthSort ? p->UpdateViewDist(view[0]) : 0.0f,
+				static_cast<std::size_t>(drawList.Num())});
 		}
 		const int drawCount = drawList.Num();
 
 		if (depthSort) {
-			const idVec3 eyePos = view[0];
-			for (int i = 1; i < drawCount; ++i) {
-				rvParticle* key = drawList[i];
-				const float keyDist = key->UpdateViewDist(eyePos);
-				int j = i - 1;
-
-				while (j >= 0) {
-					const float curDist = drawList[j]->UpdateViewDist(eyePos);
-					if (curDist >= keyDist) {
-						break;
-					}
-					drawList[j + 1] = drawList[j];
-					--j;
-				}
-
-				drawList[j + 1] = key;
-			}
+			openq4::bse::SortParticleDepth(drawList.Ptr(), drawCount);
 		}
 
 		if (inverseOrder) {
 			for (int i = drawCount - 1; i >= 0; --i) {
-				if (!renderParticle(drawList[i])) {
+				if (!renderParticle(drawList[i].particle)) {
 					break;
 				}
 			}
 		}
 		else {
 			for (int i = 0; i < drawCount; ++i) {
-				if (!renderParticle(drawList[i])) {
+				if (!renderParticle(drawList[i].particle)) {
 					break;
 				}
 			}

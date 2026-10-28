@@ -489,6 +489,7 @@ void VK_ModuleBindServices( const renderModuleServices_t *services );
 const renderModuleDiagnostics_t *VK_GetModuleDiagnostics( void );
 void VK_Bringup_Shutdown( void );
 bool VK_PrepareStartupDevice( char *outReason, int reasonLength );
+bool VK_Device_QueryCatalog(renderDeviceCatalog_t*);
 #endif
 
 static void RGM_Shutdown( void ) {
@@ -571,6 +572,7 @@ renderExport_t *GetRenderAPI( renderImport_t *moduleImport ) {
 	// on-demand rendererVkProbe flow
 	rgm_export.diagnostics = VK_GetModuleDiagnostics();
 	rgm_export.PrepareStartupDevice = VK_PrepareStartupDevice;
+	rgm_export.GetRenderingDevices = VK_Device_QueryCatalog;
 #endif
 	return &rgm_export;
 }

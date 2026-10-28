@@ -22,6 +22,7 @@ SUPPORT = r'''
 #include <functional>
 #include <string>
 #include <vector>
+#include "src/framework/async/MvdStorageBudget.h"
 using byte = unsigned char;
 @ABI@
 @CONSTANTS@
@@ -102,6 +103,8 @@ struct idMultiViewDemo {
     int state = MVD_RECORDING, recordCount = 0, snapshotCount = 2, reliableCount = 3;
     int indexWrites = 0, clears = 0;
     bool finalizing = false, indexOK = true, recordingResultValid = false;
+    int64_t recordingLibraryByteLimit = 0;
+    struct Index { int count = 0; int Num() const { return count; } } recordingIndex;
     idStr fileName = "demos/fixture.mvd", tempFileName = "demos/fixture.mvd.part", lastError;
     serverMVDRecordingResult_t recordingResult{};
     bool WouldExceedLimits(int additionalBytes) const;
@@ -159,6 +162,20 @@ int main() {
         assert(demo.WouldExceedLimits(24));
         mvd_maxSizeMB.value = 0;
         assert(!demo.WouldExceedLimits(24));
+    }
+    // The library quota applies even when the per-recording limit is off,
+    // reserves the final index/end, and never performs the offending write.
+    {
+        ResetDependencies(); idFile file; idMultiViewDemo demo; demo.file = &file;
+        mvd_maxSizeMB.value = 0; demo.recordingLibraryByteLimit = 1000;
+        file.bytes = 876; assert(!demo.WouldExceedLimits(24));
+        file.bytes = 877; assert(demo.WouldExceedLimits(24));
+        assert(!demo.WriteRecord(10, 1, 1, nullptr, 0));
+        assert(file.bytes == 877 && file.writes == 0);
+        demo.recordingIndex.count = 5;
+        file.bytes = 816; assert(!demo.WouldExceedLimits(24));
+        file.bytes = 817; assert(demo.WouldExceedLimits(24));
+        demo.recordingLibraryByteLimit = 0; assert(!demo.WouldExceedLimits(24));
     }
     // Finalization failure matrix: index, end-header, end-payload, sync,
     // promotion and an explicit stream abort, plus the clean control case.
@@ -221,7 +238,7 @@ def main() -> None:
     compiler = next((p for n in ("clang++", "g++", "c++") if (p := shutil.which(n))), None)
     if compiler is None:
         raise RuntimeError("a native C++ compiler is required")
-    flags = ["-std=c++17", "-Wall", "-Wextra", "-Werror"]
+    flags = ["-std=c++17", "-Wall", "-Wextra", "-Werror", f"-I{ROOT}"]
     if args.sanitize:
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     (ROOT / ".tmp").mkdir(exist_ok=True)

@@ -1988,7 +1988,7 @@ static int ShadowMapProjectedTileSize(
 	const int atlasDiv = Max( 1, classification.atlasDiv );
 	const int maxTextureSize = glConfig.maxTextureSize > 0
 		? glConfig.maxTextureSize : 4096;
-	const int atlasSize = idMath::ClampInt( 2048, 8192,
+	const int atlasSize = idMath::ClampInt( 2048, 16384,
 		r_shadowMapAtlasSize.GetInteger() );
 	const int maxTileSize = Min( maxTextureSize, atlasSize ) / atlasDiv;
 	return maxTileSize >= 128

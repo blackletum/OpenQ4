@@ -171,8 +171,10 @@ Both macOS package variants now also carry the Vulkan renderer module
 (`renderer-vk_<arch>.dylib`) and MoltenVK, a Vulkan-on-Metal translation layer
 (`libMoltenVK.dylib`), inside `openQ4.app/Contents/Frameworks`. This adds no
 package variant, no artifact name, and no architecture to the matrix above:
-OpenGL remains the default renderer and Vulkan is opt-in through
-`r_renderApi vulkan`. The decision plan is
+The 28 October hardware-selection policy makes fresh desktop configurations
+try Vulkan with OpenGL fallback; existing explicit OpenGL selections persist.
+The retained System menu selects backend and GPU without expanding macOS
+Vulkan hardware qualification. The decision plan is
 [macos-moltenvk-decision.md](archive/2026-10-18/macos-moltenvk-decision.md).
 
 The matrix consequence is the OS floor. MoltenVK is pinned to `v1.4.1`, which is

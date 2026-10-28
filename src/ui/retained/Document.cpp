@@ -1096,15 +1096,76 @@ private:
 		Require(ValidProperty(name,value),at,parent+leaf,"Unsupported property or invalid value for '"+name+"'");
 	}
 
+	template<std::size_t N>
+	void ReadModelVector(const Json::Value& value, const std::string& path, std::array<Expression,N>& out) {
+		Require(value.isArray() && value.size()==N,value,path,"Incorrect model vector component count");
+		for (Json::ArrayIndex i=0;i<N;++i) {
+			out[i]=ReadExpression(value[i],path+"/"+std::to_string(i));
+			Require(out[i].type==0,value[i],path,"Model vectors require numeric expressions");
+		}
+	}
+	ModelSceneSpec ReadModelScene(const Json::Value& value, const std::string& path) {
+		Require(++modelCount<=32,value,path,"A document supports at most 32 model scenes");
+		Fields(value,path,{"parts","lights","origin","rotation","camera","fov","outline","outlineWidth","rimlight","brightSkin","extensions"});
+		ModelSceneSpec result;
+		const auto& parts=value["parts"];
+		Require(parts.isArray() && !parts.empty() && parts.size()<=3,parts,path+"/parts","A model scene needs one root and at most two attachments");
+		for (Json::ArrayIndex i=0;i<parts.size();++i) {
+			const auto& part=parts[i]; const auto p=path+"/parts/"+std::to_string(i);
+			Fields(part,p,{"model","skin","anim","animClass","joint","extensions"});
+			Require(part.isMember("model"),part,p,"A model part requires its model expression");
+			ModelPartSpec parsed;
+			for (const auto& [key,target] : std::array<std::pair<const char*,Expression*>,4>{{
+				{"model",&parsed.model},{"skin",&parsed.skin},{"anim",&parsed.animation},{"animClass",&parsed.animationClass}}}) {
+				if (part.isMember(key)) *target=ReadExpression(part[key],p+"/"+key);
+				Require(target->type==2,part,p,"Model assets require string expressions");
+			}
+			if (part.isMember("joint")) {
+				Require(part["joint"].isString(),part,p+"/joint","An attachment joint must be a string");
+				parsed.joint=part["joint"].asString();
+			}
+			result.parts.push_back(std::move(parsed));
+		}
+		if (value.isMember("lights")) {
+			const auto& lights=value["lights"];
+			Require(lights.isArray() && lights.size()<=5,lights,path+"/lights","A model scene supports at most five lights");
+			for (Json::ArrayIndex i=0;i<lights.size();++i) {
+				const auto& light=lights[i]; const auto p=path+"/lights/"+std::to_string(i);
+				Fields(light,p,{"origin","colour","extensions"});
+				ModelLightSpec parsed;
+				if (light.isMember("origin")) ReadModelVector(light["origin"],p+"/origin",parsed.origin);
+				if (light.isMember("colour")) ReadModelVector(light["colour"],p+"/colour",parsed.colour);
+				result.lights.push_back(std::move(parsed));
+			}
+		} else result.lights.emplace_back();
+		for (const auto& [key,target] : std::array<std::pair<const char*,std::array<Expression,3>*>,3>{{
+			{"origin",&result.origin},{"rotation",&result.rotation},{"camera",&result.camera}}})
+			if (value.isMember(key)) ReadModelVector(value[key],path+"/"+key,*target);
+		for (const auto& [key,target] : std::array<std::pair<const char*,std::array<Expression,4>*>,3>{{
+			{"outline",&result.outline},{"rimlight",&result.rimlight},{"brightSkin",&result.brightSkin}}})
+			if (value.isMember(key)) ReadModelVector(value[key],path+"/"+key,*target);
+		for (const auto& [key,target] : std::array<std::pair<const char*,Expression*>,2>{{
+			{"fov",&result.fov},{"outlineWidth",&result.outlineWidth}}}) {
+			if (value.isMember(key)) *target=ReadExpression(value[key],path+"/"+key);
+			Require(target->type==0,value,path,"Model camera and effect widths require numeric expressions");
+		}
+		StateValues initial;
+		for (const auto& [id,state]:model.state) initial.emplace(id,state.initial);
+		ModelScene resolved; std::string error;
+		Require(ResolveModelScene(result,initial,resolved,error),value,path,error);
+		return result;
+	}
 	Node ReadNode(const Json::Value& value, const std::string& path, unsigned depth) {
 		Require(depth <= 48 && ++nodeCount <= 65536,value,path,"Document hierarchy exceeds the node/depth limit");
-		Fields(value,path,{"id","type","properties","children","paths","mask","control","modal","legacyText","extensions"});
+		Fields(value,path,{"id","type","properties","children","paths","mask","control","modal","legacyText","scene","extensions"});
 		Node result;
 		result.id = Id(value["id"],path,"/id");
 		Require(nodeIds.insert(result.id).second,value["id"],path+"/id","Duplicate node ID '"+result.id+"'");
 		const auto& typeValue = value["type"];
-		Require(typeValue == "group" || typeValue == "text" || typeValue == "vector" || typeValue == "image",typeValue,path+"/type","Supported node types are group, text, vector and image; unsupported nodes cannot be silently rendered");
+		Require(typeValue == "group" || typeValue == "text" || typeValue == "vector" || typeValue == "image" || typeValue == "model",typeValue,path+"/type","Supported node types are group, text, vector, image and model; unsupported nodes cannot be silently rendered");
 		result.type = typeValue.asString();
+		if (result.type=="model") result.model=ReadModelScene(value["scene"],path+"/scene");
+		else Require(!value.isMember("scene"),value,path+"/scene","A model scene requires a model node");
 		if (value.isMember("legacyText")) {
 			Require(value["legacyText"].isString() && result.type == "text" &&
 				(value["legacyText"].asString()=="window" || value["legacyText"].asString()=="simple"),
@@ -1749,7 +1810,7 @@ private:
 	size_t expressionCount = 0;
 	size_t eventStepCount = 0;
 	std::set<std::string> nodeIds;
-	unsigned nodeCount = 0;
+	unsigned nodeCount = 0, modelCount = 0;
 	std::vector<std::pair<std::string,std::string>> detailControls; // Controls naming a detail, with their JSON pointers.
 	// The (node, property) pairs that timeline tracks and bindings own, so
 	// ownership checks look a pair up instead of scanning every track.
@@ -1906,7 +1967,7 @@ void DocumentModel::IndexNodes() {
 	}
 }
 bool HasImageCoordinates(const Node& node) {
-	return node.properties.contains("image-offset-x") || node.properties.contains("image-offset-y") ||
+	return node.type=="model" || node.properties.contains("image-offset-x") || node.properties.contains("image-offset-y") ||
 		node.properties.contains("image-scale-x") || node.properties.contains("image-scale-y");
 }
 std::string ImageDecorator(const Node& node, const std::string& source) {

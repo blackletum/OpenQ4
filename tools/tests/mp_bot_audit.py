@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import statistics
@@ -120,6 +121,14 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=28972)
     parser.add_argument("--timeout", type=int, default=0, help="defaults to seconds + 150")
     parser.add_argument("--profile-period", type=int, default=10)
+    parser.add_argument("--max-think-mean-ms", type=float,
+                        help="maximum weighted mean bot think time per server frame")
+    parser.add_argument("--max-think-p95-ms", type=float,
+                        help="maximum conservative p95 in any complete profiling window")
+    parser.add_argument("--max-nav-build-ms", type=int,
+                        help="maximum one-time navigation generation cost")
+    parser.add_argument("--require-uncontended", action="store_true",
+                        help="fail timing qualification if another openQ4 runtime or compiler is observed")
     parser.add_argument("--speeds", action="store_true", help="log com_speeds frame timings")
     parser.add_argument("--set", action="append", default=[], metavar="CVAR=VALUE",
                         help="extra server cvar, e.g. si_warmup=1 for Tourney's bracket; repeatable")
@@ -133,6 +142,14 @@ def main() -> int:
         parser.error("--min-sim-seconds must be positive")
     if args.classify_impulses and (args.debug < 2 or args.max_world_deaths is None):
         parser.error("--classify-impulses needs --debug 2 (BOT_IMPULSE traces) and --max-world-deaths")
+    if args.require_uncontended and psutil is None:
+        parser.error("--require-uncontended requires psutil")
+    if args.debug > 2 and any(value is not None for value in
+                              (args.max_think_mean_ms, args.max_think_p95_ms)):
+        parser.error("use --debug 1 or 2 for timing qualification; frame-by-frame traces measure logging overhead")
+    for value in (args.max_think_mean_ms, args.max_think_p95_ms, args.max_nav_build_ms):
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            parser.error("timing budgets must be positive")
     timeout = args.timeout or args.seconds + 150
     runtime, output = args.runtime_dir.resolve(), args.output_dir.resolve()
     exe = runtime / args.executable_name
@@ -202,6 +219,8 @@ def main() -> int:
     # (wall seconds, process CPU seconds) samples, so the audit window's CPU
     # cost can be separated from loading and navmesh generation.
     cpu_samples: list[tuple[float, float]] = []
+    competing_workloads: set[tuple[int, str]] = set()
+    competing_details: dict[tuple[int, float], dict] = {}
     with (output / "console.log").open("w", encoding="utf-8") as console:
         process = subprocess.Popen(command, cwd=runtime, stdout=console, stderr=subprocess.STDOUT,
                                    creationflags=creationflags)
@@ -209,6 +228,26 @@ def main() -> int:
         code = None
         deadline = started + timeout
         while code is None:
+            if args.require_uncontended:
+                for other in psutil.process_iter(["pid", "name"]):
+                    name = (other.info["name"] or "").lower().removesuffix(".exe")
+                    if other.info["pid"] != process.pid and (
+                            name.startswith("openq4-client") or name.startswith("openq4-ded") or
+                            name in ("cl", "clang", "clang++", "cc1", "cc1plus", "ninja", "link", "ld", "ld.lld")):
+                        competing_workloads.add((other.info["pid"], other.info["name"]))
+                        try:
+                            # Preserve process identity and overlap times. Do
+                            # not retain arbitrary arguments, which may contain
+                            # credentials unrelated to this qualification.
+                            created = other.create_time()
+                            detail = competing_details.setdefault((other.pid, created), {
+                                "pid": other.pid, "name": other.info["name"], "created": created,
+                                "executable": other.exe(), "parent_pid": other.ppid(),
+                                "first_seen_seconds": round(time.time() - started, 3),
+                            })
+                            detail["last_seen_seconds"] = round(time.time() - started, 3)
+                        except psutil.Error:
+                            pass  # The observed overlap still counts if it exits.
             try:
                 code = process.wait(timeout=0.5)
             except subprocess.TimeoutExpired:
@@ -259,8 +298,14 @@ def main() -> int:
         # Only deaths after a logged enemy impulse whose isolated replay falls
         # with every fixed air input are excluded; everything else counts.
         from mp_bot_impulse_replay import classify_log
-        classification = classify_log(clean, bot_names, args.gametype, args.map_name, runtime, args.executable_name,
-                                      args.basepath.resolve(), output / "impulse-replays", args.port + 1)
+        try:
+            classification = classify_log(clean, bot_names, args.gametype, args.map_name, runtime, args.executable_name,
+                                          args.basepath.resolve(), output / "impulse-replays", args.port + 1)
+        except (Exception, SystemExit) as error:
+            # Keep the match report even if the replay service fails; an
+            # interrupted proof must never exclude a world death.
+            classification = {"navigation_world_deaths": len(all_died), "excluded_impulse_deaths": 0, "deaths": []}
+            failures.append("impulse classification failed: " + str(error))
         counted = classification["navigation_world_deaths"]
         if counted > args.max_world_deaths:
             failures.append(f"{counted} complete-run navigation/control world deaths "
@@ -287,6 +332,23 @@ def main() -> int:
                               "settle_per_field", "nav_ms_per_frame", "field_ms_per_frame", "fail_snap",
                               "fail_search", "fail_leg"), (float(v) if v else 0.0 for v in row)))
                     for row in profile]
+    percentile_rows = [dict(zip(("frames", "p50_upper_ms", "p95_upper_ms", "p99_upper_ms"), map(float, row)))
+                       for row in re.findall(
+                           r"^botprofile-percentiles: (\d+) frames p50_upper ([\d.]+) ms "
+                           r"p95_upper ([\d.]+) ms p99_upper ([\d.]+) ms", sample, re.M)]
+    total_profile_frames = sum(row["frames"] for row in profile_rows)
+    mean_think_ms = (sum(row["frames"] * row["think_avg_ms"] for row in profile_rows) /
+                     total_profile_frames if total_profile_frames else None)
+    max_window_p95_ms = max((row["p95_upper_ms"] for row in percentile_rows), default=None)
+    navmesh = re.search(r"^rvNavMesh: (\d+) nodes, (\d+) links[^\n]*in (\d+) ms", clean, re.M)
+    if args.require_uncontended and competing_workloads:
+        failures.append("timing run overlapped other runtimes or compilers: " + str(sorted(competing_workloads)))
+    if args.max_think_mean_ms is not None and (mean_think_ms is None or mean_think_ms > args.max_think_mean_ms):
+        failures.append(f"mean bot think {mean_think_ms} ms exceeds {args.max_think_mean_ms} ms budget")
+    if args.max_think_p95_ms is not None and (max_window_p95_ms is None or max_window_p95_ms > args.max_think_p95_ms):
+        failures.append(f"worst window bot think p95 {max_window_p95_ms} ms exceeds {args.max_think_p95_ms} ms budget")
+    if args.max_nav_build_ms is not None and (not navmesh or int(navmesh.group(3)) > args.max_nav_build_ms):
+        failures.append(f"navigation generation exceeds {args.max_nav_build_ms} ms budget or is missing")
 
     poses: dict[str, list[tuple[float, ...]]] = {}
     for slot, coordinates in re.findall(r"MP_POSE slot=(\d+) entity=\S+ origin=([^\r\n]+?) hidden=", sample):
@@ -314,8 +376,6 @@ def main() -> int:
         if mates:
             observer_distance.append(round(statistics.fmean(
                 sum((a - b) ** 2 for a, b in zip(where[slot], where[me])) ** 0.5 for slot in mates), 1))
-
-    navmesh = re.search(r"^rvNavMesh: (\d+) nodes, (\d+) links[^\n]*in (\d+) ms", clean, re.M)
 
     # Objectives and combat: the last report's team scores (CTF captures,
     # DeadZone/One Flag points) and the bots' own scores.
@@ -345,12 +405,20 @@ def main() -> int:
             window_cpu = round((end_cpu - start[1]) / (end_wall - start[0]), 3)
 
     loop_frames = [float(v) for v in re.findall(r"^frame:\s*\d+\s+all:\s*(\d+)", sample, re.M)][1:]
+    try:
+        runtime_unchanged = all(Path(path).is_file() and file_sha256(Path(path)) == digest
+                                for path, digest in runtime_identity.items())
+    except OSError:
+        runtime_unchanged = False
+    if not runtime_unchanged:
+        failures.append("staged runtime changed during the match or its causal replays")
     minutes = max(args.seconds / 60.0, 1e-6)
     bot_minutes = minutes * args.bots
     report = {
         "map": args.map_name, "gametype": args.gametype, "bots": args.bots, "skill": args.skill,
         "seconds": args.seconds, "exit_code": code, "elapsed_seconds": round(time.time() - started, 1),
         "runtime_identity": runtime_identity,
+        "runtime_unchanged": runtime_unchanged,
         "navmesh": {"nodes": int(navmesh.group(1)), "links": int(navmesh.group(2)),
                     "build_ms": int(navmesh.group(3))} if navmesh else None,
         "navmesh_line": next(iter(re.findall(r"^rvNavMesh: [^\n]*nodes[^\n]*$", clean, re.M)), ""),
@@ -385,6 +453,15 @@ def main() -> int:
                                            "mean": round(statistics.fmean(frames), 3) if frames else None,
                                            "p95": percentile(frames, 0.95), "max": max(frames, default=0)},
         "bot_profile": profile_rows,
+        "bot_profile_percentiles": percentile_rows,
+        "timing_qualification": {"weighted_mean_think_ms": mean_think_ms,
+                                 "worst_window_p95_upper_ms": max_window_p95_ms,
+                                 "max_think_mean_ms": args.max_think_mean_ms,
+                                 "max_think_p95_ms": args.max_think_p95_ms,
+                                 "max_nav_build_ms": args.max_nav_build_ms,
+                                 "uncontended_required": args.require_uncontended,
+                                 "competing_workloads": sorted(competing_workloads),
+                                 "competing_workload_details": list(competing_details.values())},
         "bot_path_length": path_length,
         "team_order": args.team_order,
         "teammate_distance_to_observer": observer_distance,

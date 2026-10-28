@@ -572,6 +572,34 @@ def strogg_gauge(doc: HudDocument, kind: str, gx: float, gy: float) -> dict:
     return box(kind + "-gauge", u(gx), u(gy), u(w), u(h), children)
 
 
+def air_gauge(doc: HudDocument, strogg: bool, *, classic: bool = False) -> dict:
+    """An air instrument in the status bar's rounded, sheared HUD family."""
+    doc.number("player_air", 100)
+    amount = op("clamp", S("player_air"), 0, 100)
+    palette = STROGG if strogg else MARINE
+    colour = sel(op("<=", amount, 25), rgb(palette["low"]), rgb(palette["fill"]))
+    outline = "M2 0H123Q125 0 125 2V14Q125 16 123 16H2Q0 16 0 14V2Q0 0 2 0Z"
+    track = box("air-track", u(54), u(6), u(45), u(4),
+                **{"background-color": ui.colour(rgb(palette["fill"], .2))})
+    fill = box("air-fill", u(54), u(6), u(45), u(4),
+               **{"background-color": ui.colour(rgb(palette["fill"]))})
+    width = op("*", op("/", amount, 100), u(45))
+    doc.bind("air-fill.width", fill["id"], "width", width)
+    doc.bind("air-fill.left", fill["id"], "left", op("-", u(99), width))
+    doc.bind("air-fill.colour", fill["id"], "background-color", colour)
+    label = text_box("air-label", "#str_231326", face="lowpixel", size=u(7.5),
+                     colour=rgb(palette["ink"]), baseline=u(12), x=u(5), width=u(46))
+    value = text_box("air-value", "", face="r_strogg" if strogg else "chain", size=u(10.5),
+                     colour=rgb(palette["ink"]), baseline=u(12.5), right=u(120), width=u(20))
+    doc.bind("air-value.text", value["id"], "text", op("numberText", op("floor", amount)))
+    doc.bind("air-value.colour", value["id"], "color", sel(op("<=", amount, 25), rgb(palette["low"]), rgb(palette["ink"])))
+    gauge = shear_group("air-gauge", u(190 if classic else 277.5 if strogg else 278), u(397), u(125), u(16), .22,
+                        [*backing_nodes(doc, "air", outline), track, fill, label, value])
+    doc.show("air-gauge", AND(op("<", amount, 100), op(">", S("player_health"), 0),
+                              NOT(S("oq4.hidden")), NOT(S("oq4.ride"))))
+    return gauge
+
+
 def status_bar(doc: HudDocument, *, strogg: bool = False, mp_variants: bool = False) -> list:
     """The three gauges as one group centred on the bottom edge with the stock
     gaps: Marine 52 u and 11 u (438 u, ammo at 101 u), Strogg 51 u and 11 u
@@ -614,4 +642,4 @@ def status_bar(doc: HudDocument, *, strogg: bool = False, mp_variants: bool = Fa
     doc.on("setTeam_marine", {"op": "setState", "values": {"oq4.teamStrogg": False}})
     doc.on("setTeam_strogg", {"op": "setState", "values": {"oq4.teamStrogg": True}})
     doc.joins.append({"op": "setState", "values": {"oq4.low": op("<", S("player_healthpct"), threshold)}})
-    return gauges
+    return [*gauges, air_gauge(doc, strogg)]

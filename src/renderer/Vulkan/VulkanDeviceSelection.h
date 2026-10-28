@@ -19,8 +19,9 @@ struct vkDeviceSelectionApi_t {
 	PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR getSurfaceCapabilities;
 	PFN_vkGetPhysicalDeviceSurfaceFormatsKHR getSurfaceFormats;
 	PFN_vkGetPhysicalDeviceFormatProperties getFormatProperties;
-	// Used only by the no-surface capability probe.
+	// Shared preference policy and stable physical-device identity.
 	PFN_vkGetPhysicalDeviceMemoryProperties getMemoryProperties = nullptr;
+	PFN_vkGetPhysicalDeviceProperties2 getProperties2 = nullptr;
 };
 
 struct vkDeviceSelection_t {
@@ -29,6 +30,8 @@ struct vkDeviceSelection_t {
 	uint32_t index;
 	uint32_t queueFamily;
 	uint32_t timestampValidBits;
+	char id[33];
+	uint64_t score;
 	// Read from the complete admission extension list, so device creation never
 	// consults a second, separately bounded lookup.
 	bool hasPortabilitySubset;
@@ -41,13 +44,13 @@ struct vkDeviceSelection_t {
 typedef void (*vkDeviceRejection_t)( uint32_t index, const VkPhysicalDeviceProperties &properties,
 		const char *reason, VkResult result, void *user );
 
-// Automatic selection (forcedIndex < 0) takes the first admitted candidate at or
-// after firstIndex; a caller resumes there after a candidate that later failed
-// logical-device, swapchain or resource creation. An explicit index is never
-// resumed past: a nonzero firstIndex with forcedIndex >= 0 fails without a query.
+// Automatic selection ranks admitted hardware before choosing. firstIndex is a
+// rank, NOT an enumeration index: retries must reach lower-index GPUs too.
+// A diagnostic index overrides the saved UUID. Explicit choices never substitute.
 VkResult VK_SelectPhysicalDevice( const vkDeviceSelectionApi_t &api, VkInstance instance,
 		VkSurfaceKHR surface, int forcedIndex, vkDeviceSelection_t &selected,
-		vkDeviceRejection_t report = nullptr, void *user = nullptr, uint32_t firstIndex = 0 );
+		vkDeviceRejection_t report = nullptr, void *user = nullptr, uint32_t firstIndex = 0,
+		const char *preferredId = "auto" );
 
 // Startup tries at most this many adapters before it gives up on Vulkan.
 static const int VK_MAX_STARTUP_ADAPTER_ATTEMPTS = 4;
@@ -94,15 +97,19 @@ struct vkDeviceProbeInfo_t {
 	bool hasDepthBounds;
 	bool meetsRequirements;
 	uint64_t score;
+	char id[33];
 };
 
 typedef void (*vkDeviceProbeReport_t)( const vkDeviceProbeInfo_t &info, VkResult queryResult, void *user );
 
-// Quiet activation stops at the first suitable device. Verbose diagnostics
-// inspect all candidates and score only suitable ones. Forced indices are
-// queried alone in either mode; failure clears selected and never substitutes.
+// Quiet activation and verbose diagnostics use exactly the same preference.
+// Forced indices are queried alone; failure clears selected and never substitutes.
 VkResult VK_SelectProbeDevice( const vkDeviceSelectionApi_t &api, VkInstance instance,
 		int forcedIndex, bool verbose, vkDeviceProbeInfo_t &selected,
-		vkDeviceProbeReport_t report = nullptr, void *user = nullptr );
+		vkDeviceProbeReport_t report = nullptr, void *user = nullptr, const char *preferredId = "auto" );
+
+struct renderDeviceCatalog_t;
+VkResult VK_QueryDeviceCatalog( const vkDeviceSelectionApi_t &api, VkInstance instance,
+		renderDeviceCatalog_t &catalog );
 
 #endif

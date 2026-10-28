@@ -12,7 +12,8 @@ enum SystemSettingEffect : unsigned {
 	SystemSettingAudioRestart = 1 << 2,
 	SystemSettingNextMap = 1 << 3,
 	SystemSettingRendererResources = 1 << 4,
-	SystemSettingPresetExpansion = 1 << 5
+	SystemSettingPresetExpansion = 1 << 5,
+	SystemSettingEngineRestart = 1 << 6 // Saved preference; consumed only at next engine startup.
 };
 
 // How an Apply runs. Immediate settings ride along with any class. Display
