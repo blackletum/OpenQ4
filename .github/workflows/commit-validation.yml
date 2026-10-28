@@ -1967,7 +1967,9 @@ jobs:
     name: macOS Intel x64 ${{ matrix.bridge_label }} Commit Validation
     runs-on: macos-15-intel
     needs: script-smoke
-    timeout-minutes: 90
+    # Allow the complete script/build/test/package corridor on hosted Intel
+    # Macs; its script checks alone can exceed the former job limit.
+    timeout-minutes: 240
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"

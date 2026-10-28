@@ -1053,9 +1053,9 @@ jobs:
     name: ${{ matrix.name }}
     needs: script-smoke
     runs-on: ${{ matrix.os }}
-    # About 300 Python checks, the build and the Meson suite: a passing run
-    # takes longer than 90 minutes on the hosted runners.
-    timeout-minutes: 150
+    # The full Python, build and Meson suites exceed 150 minutes on hosted
+    # Intel Macs: the script checks alone have taken over two hours.
+    timeout-minutes: ${{ matrix.os == 'macos-15-intel' && 240 || 150 }}
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
     strategy:
