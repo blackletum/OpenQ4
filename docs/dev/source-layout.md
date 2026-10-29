@@ -115,7 +115,9 @@ compile them, because tests still maintain their portability fixes:
   [level-editor-modernization.md](level-editor-modernization.md);
 - the native macOS backend in `src/sys/macos` (`DOOMController.mm`,
   `PreferencesDialog.cpp`, `macos_sound.cpp`);
-- the OSS and ALSA sound backends in `src/sys/linux`.
+- the OSS and ALSA sound backends in `src/sys/linux`;
+- the Linux PK4 maintenance helpers in `src/sys/linux/pk4`, which
+  `linux_pk4_legacy_tools.py` exercises.
 
 The SCons build, the Loki and NSIS installers, the m4 GL generators and the
 Doom 3 Xcode projects were removed in October 2026 because nothing referenced

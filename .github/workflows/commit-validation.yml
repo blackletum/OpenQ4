@@ -77,6 +77,7 @@ jobs:
             tools/build/sync_icons.py \
             tools/build/windows_runtime.py \
             tools/build/write_pak_manifest.py \
+            src/sys/linux/pk4/id_utils.py \
             tools/analysis/clang_tidy_input_safety.py \
             tools/assets/pack_pbr_orm.py \
             tools/validation/audit_source_provenance.py \
