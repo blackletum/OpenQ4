@@ -83,6 +83,10 @@ def validate_wrapper() -> None:
     # against 315.7 Hz for the same source on game/airdefense1.
     require(wrapper, "'debugoptimized'", "VS Code build must configure an optimized buildtype")
     reject(wrapper, "'debug',", "VS Code build must not configure an unoptimized buildtype")
+    # Release packages also set b_ndebug=true; keep the launch tree on the same
+    # options, and reconfigure an existing build directory that predates them.
+    require(wrapper, "'b_ndebug' = 'true'", "VS Code build must compile out C asserts like the release packages")
+    require(wrapper, "Get-StaleBuildOptions $buildDir", "VS Code compile reconfigures stale build options")
     require(wrapper, "check_staged_content_edits.py", "VS Code fast build staged content guard")
     require(wrapper, "'compile',", "VS Code fast build compiles through Meson")
     require(wrapper, "'--install-dir',", "VS Code fast build stages .install incrementally")

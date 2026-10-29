@@ -3,7 +3,7 @@
   "tasks": [
     {
       "label": "Configure openQ4 (Meson Optimized)",
-      "detail": "Configure builddir-perf as debugoptimized, reconfiguring it in place when it exists.",
+      "detail": "Configure builddir-perf as debugoptimized with b_ndebug=true (the release options), reconfiguring it in place when it exists.",
       "type": "shell",
       "command": "powershell",
       "args": [

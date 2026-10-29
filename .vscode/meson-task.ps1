@@ -38,40 +38,59 @@ function Test-MesonBuildDirectory([string]$Path) {
     return (Test-Path $coreData) -and (Test-Path $ninjaFile)
 }
 
+# Match the release packages: optimized code with symbols, and C assert() compiled
+# out (b_ndebug), including in the SDL3, GLEW and stb_vorbis subprojects.
+$expectedBuildOptions = [ordered]@{
+    'buildtype' = 'debugoptimized'
+    'b_ndebug' = 'true'
+}
+
+function Get-StaleBuildOptions([string]$Path) {
+    $optionsFile = Join-Path $Path 'meson-info\intro-buildoptions.json'
+    if (-not (Test-Path $optionsFile)) {
+        return @($expectedBuildOptions.Keys)
+    }
+    $configured = @{}
+    foreach ($option in (Get-Content $optionsFile -Raw | ConvertFrom-Json)) {
+        $configured[$option.name] = "$($option.value)".ToLowerInvariant()
+    }
+    return @($expectedBuildOptions.Keys | Where-Object { $configured[$_] -ne $expectedBuildOptions[$_] })
+}
+
+function Invoke-openQ4Setup {
+    $optionArgs = @('--backend', 'ninja', '--wrap-mode=forcefallback')
+    foreach ($name in $expectedBuildOptions.Keys) {
+        $optionArgs += "-D$name=$($expectedBuildOptions[$name])"
+    }
+    if (Test-MesonBuildDirectory $buildDir) {
+        Invoke-openQ4Meson (@('setup', $buildDir, $workspaceRoot, '--reconfigure') + $optionArgs)
+    } else {
+        Invoke-openQ4Meson (@('setup', '--wipe', $buildDir, $workspaceRoot) + $optionArgs)
+    }
+}
+
+# An existing build directory keeps whatever it was configured with, and the
+# compile tasks never reconfigure on their own, so bring it up to the expected
+# options before compiling.
+function Invoke-openQ4Compile {
+    $stale = @(Get-StaleBuildOptions $buildDir)
+    if ($stale.Count -gt 0) {
+        Write-Host "builddir-perf options out of date ($($stale -join ', ')); reconfiguring."
+        Invoke-openQ4Setup
+    }
+    Invoke-openQ4Meson @(
+        'compile',
+        '-C',
+        $buildDir
+    )
+}
+
 switch ($Action) {
     'setup' {
-        if (Test-MesonBuildDirectory $buildDir) {
-            Invoke-openQ4Meson @(
-                'setup',
-                $buildDir,
-                $workspaceRoot,
-                '--reconfigure',
-                '--backend',
-                'ninja',
-                '--buildtype',
-                'debugoptimized',
-                '--wrap-mode=forcefallback'
-            )
-        } else {
-            Invoke-openQ4Meson @(
-                'setup',
-                '--wipe',
-                $buildDir,
-                $workspaceRoot,
-                '--backend',
-                'ninja',
-                '--buildtype',
-                'debugoptimized',
-                '--wrap-mode=forcefallback'
-            )
-        }
+        Invoke-openQ4Setup
     }
     'compile' {
-        Invoke-openQ4Meson @(
-            'compile',
-            '-C',
-            $buildDir
-        )
+        Invoke-openQ4Compile
     }
     'fastbuild' {
         if (-not (Test-Path $fastStageScript)) {
@@ -81,11 +100,7 @@ switch ($Action) {
             throw "openQ4 staged content edit check script not found at '$checkStagedContentScript'."
         }
 
-        Invoke-openQ4Meson @(
-            'compile',
-            '-C',
-            $buildDir
-        )
+        Invoke-openQ4Compile
         Invoke-PythonTool @(
             $checkStagedContentScript,
             '--source-root',

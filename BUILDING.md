@@ -433,8 +433,12 @@ configurations run whatever this task stages into `.install/`. An unoptimized
 client is roughly half the frame rate: `game/airdefense1` measured 146.5 Hz
 against 315.7 Hz for the same source. `debugoptimized` keeps full debug symbols,
 so the `cppvsdbg` launch configurations still work; expect the usual optimized-code
-stepping and inlining behaviour. `tools/tests/vscode_fast_build.py` pins the
-optimization level so this cannot regress silently.
+stepping and inlining behaviour. Like the release packages it also sets
+`b_ndebug=true`, so C `assert()` checks are compiled out, subprojects included.
+The compile tasks reconfigure an existing `builddir-perf/` whose options have
+drifted from these, so the default build task never runs an older configuration.
+`tools/tests/vscode_fast_build.py` pins both options so this cannot regress
+silently.
 
 `builddir/` is left alone for `tools/validation/openq4_validate.py`, which
 configures it `debug` on purpose. Keep the two separate: pointing both at one
