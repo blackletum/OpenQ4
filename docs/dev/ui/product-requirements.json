@@ -4,7 +4,7 @@
   "date": "2026-10-26",
   "status": "Implementation incomplete; this register preserves full product scope and does not accept any production GUI.",
   "baseline": {
-    "engine_revision": "d105e4779d77f7ae9967bb9b3ee793b4741d2922",
+    "engine_revision": "92a4c58a384627d9fbd7f4b9344fe08354156dfb",
     "companion_revision": "18f000a7ff3b99f1da25a73282a0eca1dc1244f0",
     "effective_gui_count": 358,
     "translated_or_accepted_resources": 0,
@@ -108,7 +108,7 @@
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/document-format.md",
       "scope": "Typed JSONC, stable IDs, value edits and motion only; components, structure editing and full model unfinished.",
-      "sha256": "4f13023e51cae05ca23356fe38a5d2f78dae530143023b312c430cdd8e9baa1d"
+      "sha256": "1be74d0e3411be24dba99dcf37792ca24ff5a717c3d637f845cce76d38b0f587"
     },
     "binding-foundation": {
       "kind": "implementation_checkpoint",
@@ -132,7 +132,7 @@
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/vector-paths.md",
       "scope": "Native paths, fills, stroke unions and linear paints; all required primitive variants, production artwork and editor unfinished.",
-      "sha256": "fb5bae412712763d4987046343090bb2dc31dc71602a7b37b97dd7ce0c4f2aee"
+      "sha256": "9345e60e1286351f1abd72f9c430672f0696a766f38bb227719f546f5ad6326e"
     },
     "coverage-foundation": {
       "kind": "implementation_checkpoint",
@@ -253,7 +253,7 @@
       "scope": "M2 implementation subset: canonical typed toggle, stepped slider and constrained choice roles, atomic authoritative value/mixed/option readbacks, invocation-local immutable edit operands and acknowledged proposals. Authored stable vector parts have compiler-enforced geometry and property ownership; derived popup placement, tentative selection/drag state, source cancellation and versioned widget snapshots support the subset. The packaged openq4.system document declares the complete 53-field draft/baseline service schema and presents eight initial immediate image controls with local dirty-discard and eligible display-confirmation panels. A non-archived default-off ui_retainedSystem option selects the normal Session child route, preserving its exact parent and service-owned return guard. The final Windows build/package stage and 13 native UI suites pass; the production Session boundary passes 173 checks and the capture runner passes 15 tests with 444 rejected altered-log cases. Source/binary-bound hidden windowed Windows SP/OpenGL at 125% and MP/Vulkan at 200%, both at 1280x720, each pass 18 normal Session stages after active gameplay. Draft/readback/apply, dirty Back/continue/discard, tentative/committed choice, language/video recovery with an unapplied draft, exact parent return and fresh-owner reopen are covered. All 14 engine render-target images were reviewed, including column reflow, popup placement and distinct disabled Apply; SP has no warnings/errors, MP retains 94 baseline warnings with no new warning messages or errors. These are semantic integration and static-view checks, not full physical-input, transition, display/platform/language or artwork qualification. Precise numeric text entry/IME, complete controls and setting inventory, effect/preset executors, full source-derived artwork/transitions, touch/accessibility/scrollbars, editor round trips and full platform/corpus qualification remain required. Discard currently resets the draft and stays on the page. No requirement, milestone, production screen or migration entry is accepted.",
       "local_capture_summary": ".tmp/ui/value-controls-review/capture-evidence.json",
       "local_capture_summary_sha256": "2c5c14d4d0a9d0fb8cc8d45dab9af39fdc9e6c4ab017f93a1f6a3e49c3cf1a40",
-      "sha256": "6dc5a806e0038b995fffd67cf729e86e7fbc273fe55350d21c0210feb7e69dbd"
+      "sha256": "12c7d4687243e245f04ff801b2194ba1dfa967bd45864035500c214ea26b3552"
     },
     "system-exit-foundation": {
       "kind": "implementation_checkpoint",
@@ -772,7 +772,7 @@
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/value-controls.md",
       "scope": "Catalog lists for retained choices: state-sourced option labels and a state-bound option count, with hidden options ineligible, unmeasured and unreachable, the closed value naming a hidden selection, and an open list closing when its labels or length change. Qualified by native schema, readback, interaction and runtime tests.",
-      "sha256": "6dc5a806e0038b995fffd67cf729e86e7fbc273fe55350d21c0210feb7e69dbd"
+      "sha256": "12c7d4687243e245f04ff801b2194ba1dfa967bd45864035500c214ea26b3552"
     },
     "renderer-settings-reports": {
       "kind": "implementation_checkpoint",
@@ -1093,7 +1093,7 @@
     "audio-subtitles-playback": {
       "kind": "implementation_checkpoint",
       "path": "docs/dev/audio-voice-evidence.md",
-      "sha256": "d0465d22911618e0fe0257a03190e682a930b8d50e3f132bcd40b7aa30e8c573",
+      "sha256": "15bcf48848c68b631c1d58ffda11d8e2d5946c34f890de8cbce895cdd8768ed1",
       "scope": "Playback-driven installed-transcript subtitles and persistent controls; stock/Awakening runtime plus Classic and native layout checks. Portrait title-card collisions, full corpus and headset qualification remain open. No acceptance granted."
     },
     "inventory-android-setup-return": {

@@ -83,7 +83,7 @@ IMAGETOOLS_SOURCE_GLOBS = [
     "imagetools/Color/*.cpp",
     "imagetools/DXT/*.cpp",
     "imagetools/ETC/*.cpp",
-    "imagetools/jpeg-6/*.c",
+    "external/jpeg-6/*.c",
 ]
 
 # CPU render-geometry shared between the engine (dmap) and the renderer;

@@ -19,7 +19,7 @@ continue to define completion.
 RmlUi **6.3** is pinned by the [Meson wrap](../../../subprojects/rmlui.wrap).
 The release archive SHA-256 is
 `d977298bb6147610e5984d5db85ddf284020d655a8713913f6982074f1dbdede`.
-Its [MIT licence](../../licenses/RmlUi.txt) permits this GPLv3 integration; the
+Its [MIT licence](../../../LICENSES/RmlUi.txt) permits this GPLv3 integration; the
 notice is retained in source, credited in README and installed into the runtime
 package's `licenses/` directory. The native Meson overlay compiles 184 core,
 element and layout sources from that archive. It does not invoke CMake or add a

@@ -3355,8 +3355,7 @@ if build_renderer_vk and build_engine
   # or installed at runtime. Keep optional tools and external dependencies out.
   glslang_project = subproject('glslang')
   glslang_deps = [glslang_project.get_variable('glslang_dep')]
-  install_data('docs/licenses/glslang-LICENSE.txt',
-    install_dir: install_root_dir / 'licenses', rename: 'glslang-LICENSE.txt')
+  install_data('LICENSES/glslang.txt', install_dir: install_root_dir / 'licenses')
 
   material_compiler = static_library('openq4-material-compiler',
     'src/renderer/materialprogram/GLSLCompiler.cpp',
@@ -3559,13 +3558,13 @@ install_data('LICENSES/QUAKE-4-SDK-EULA.rtf',
   install_dir: install_root_dir / 'licenses')
 meson.add_install_script(py, files('tools/build/retire_game_layers.py'), install_root_dir)
 install_data('LICENSES/KHRONOS-GLES-MIT.txt', install_dir: install_root_dir / 'licenses')
-install_data('docs/licenses/RmlUi.txt', install_dir: install_root_dir / 'licenses')
-install_data('docs/licenses/JsonCpp.txt', install_dir: install_root_dir / 'licenses')
-install_data('docs/licenses/libtess2.txt', install_dir: install_root_dir / 'licenses')
-install_data('docs/licenses/MD4.txt', install_dir: install_root_dir / 'licenses')
+install_data('LICENSES/RmlUi.txt', install_dir: install_root_dir / 'licenses')
+install_data('LICENSES/JsonCpp.txt', install_dir: install_root_dir / 'licenses')
+install_data('LICENSES/libtess2.txt', install_dir: install_root_dir / 'licenses')
+install_data('LICENSES/MD4.txt', install_dir: install_root_dir / 'licenses')
 if build_openxr
   # the client links the Khronos OpenXR loader statically
-  install_data('docs/licenses/openxr-sdk.txt', install_dir: install_root_dir / 'licenses')
+  install_data('LICENSES/openxr-sdk.txt', install_dir: install_root_dir / 'licenses')
 endif
 
 install_data(

@@ -66,7 +66,7 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height, bool ma
  */
 
 extern "C" {
-#include "jpeg-6/jpeglib.h"
+#include "../external/jpeg-6/jpeglib.h"
 
 
 // hooks from jpeg lib to our system

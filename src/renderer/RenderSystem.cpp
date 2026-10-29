@@ -37,8 +37,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "RendererUpload.h"
 #include "ScenePackets.h"
 #include "TemporalPresentation.h"
-#include "smaa/AreaTex.h"
-#include "smaa/SearchTex.h"
+#include "../external/smaa/AreaTex.h"
+#include "../external/smaa/SearchTex.h"
 
 idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;

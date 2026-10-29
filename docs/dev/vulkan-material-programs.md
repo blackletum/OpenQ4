@@ -418,5 +418,5 @@ GPLv3 repository before incorporation. The native Meson overlay selects the
 upstream compiler/SPIR-V/resource-limit sources, without changing their source
 or notices. Optional HLSL, SPIRV-Tools, remapper and upstream test dependencies
 are excluded. The complete upstream license is retained in
-`docs/licenses/glslang-LICENSE.txt` and included in the staging manifest under
+`LICENSES/glslang.txt` and included in the staging manifest under
 `licenses/`; the README credits the original project.
