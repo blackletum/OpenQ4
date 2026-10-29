@@ -27,12 +27,12 @@ needed for open macOS renderer issues.
 
 The native backend owns the remaining legacy macOS platform APIs:
 
-- `src/sys/osx/macosx_event.mm` is the native Carbon event/input boundary.
-- `src/sys/osx/macosx_glimp.mm` is the native NSOpenGL/CGL context boundary.
+- `src/sys/macos/macos_event.mm` is the native Carbon event/input boundary.
+- `src/sys/macos/macos_glimp.mm` is the native NSOpenGL/CGL context boundary.
 
 SDL3 macOS sources must not import Carbon, link Carbon, or use NSOpenGL/CGL
-context APIs. `tools/build/meson_sources.py` must keep `macosx_event.mm` and
-`macosx_glimp.mm` out of `SDL3_DARWIN_SOURCES`.
+context APIs. `tools/build/meson_sources.py` must keep `macos_event.mm` and
+`macos_glimp.mm` out of `SDL3_DARWIN_SOURCES`.
 
 `meson.build` may link Carbon only when `platform_backend=native` is selected.
 The SDL3 macOS backend links Cocoa/OpenGL/ApplicationServices, and the Metal
@@ -72,7 +72,7 @@ through MoltenVK, a Vulkan-on-Metal translation layer. The decision plan is
 [macos-moltenvk-decision.md](archive/2026-10-18/macos-moltenvk-decision.md).
 
 That does not move the native Metal boundary above. Nothing in
-`src/renderer`, `src/sys/osx`, `src/sys/posix`, or `src/sys/sdl3` imports Metal,
+`src/renderer`, `src/sys/macos`, `src/sys/posix`, or `src/sys/sdl3` imports Metal,
 MetalKit, QuartzCore `CAMetalLayer`, or any `MTL*` type for the Vulkan path;
 presentation-surface creation goes through `SDL_Vulkan_CreateSurface` only, and
 the Metal work is entirely internal to the third-party translation layer.

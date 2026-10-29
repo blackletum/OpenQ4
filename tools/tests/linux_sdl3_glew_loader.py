@@ -151,7 +151,7 @@ def validate_platform_context_contract() -> None:
         "SDL3 backend": read("src/renderer/OpenGL/gl_ContextSDL3.cpp"),
         "native GLX backend": read("src/sys/linux/glimp.cpp"),
         "native WGL backend": read("src/sys/win32/win_glimp.cpp"),
-        "native macOS backend": read("src/sys/osx/macosx_glimp.mm"),
+        "native macOS backend": read("src/sys/macos/macos_glimp.mm"),
         "Linux dedicated GL stub": read("src/sys/stub/stub_gl.cpp"),
     }
 

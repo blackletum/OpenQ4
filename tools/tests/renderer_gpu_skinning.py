@@ -278,8 +278,8 @@ def validate_model_integration_and_ownership() -> None:
         "mirrored triangle-surface GPU contract ABI",
     )
 
-    geometry_header = read(ROOT / "src" / "render_geo" / "RenderGeometry.h")
-    geometry = read(ROOT / "src" / "render_geo" / "RenderGeometryTriSurf.cpp")
+    geometry_header = read(ROOT / "src" / "rendergeo" / "RenderGeometry.h")
+    geometry = read(ROOT / "src" / "rendergeo" / "RenderGeometryTriSurf.cpp")
     require_all(
         geometry_header + geometry,
         (
@@ -645,7 +645,7 @@ def validate_admission_cost_contract() -> None:
     shared = read(RENDERER / "GpuSkinning.cpp")
     md5 = read(RENDERER / "Model_md5.cpp")
     md5r = read(RENDERER / "Model_md5r.cpp")
-    geometry = read(ROOT / "src" / "render_geo" / "RenderGeometryTriSurf.cpp")
+    geometry = read(ROOT / "src" / "rendergeo" / "RenderGeometryTriSurf.cpp")
     tr_light = read(RENDERER / "tr_light.cpp")
     deform = read(RENDERER / "tr_deform.cpp")
     vk = read(RENDERER / "Vulkan" / "vk_GuiExecutor.cpp")

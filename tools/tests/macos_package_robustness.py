@@ -42,7 +42,7 @@ def function_body(source: str, signature: str) -> str:
 
 
 def validate_runtime_startup_error() -> None:
-    compat = read("src/sys/osx/macosx_compat.mm")
+    compat = read("src/sys/macos/macos_compat.mm")
 
     for token in (
         "Sys_ErrorIfMacOSAppBundleRuntimeIncomplete",
@@ -100,7 +100,7 @@ def validate_runtime_startup_error() -> None:
 
 def validate_game_module_package_root_probe() -> None:
     filesystem = read("src/framework/FileSystem.cpp")
-    compat = read("src/sys/osx/macosx_compat.mm")
+    compat = read("src/sys/macos/macos_compat.mm")
 
     find_dll = function_body(
         filesystem,
@@ -124,7 +124,7 @@ def validate_game_module_package_root_probe() -> None:
 
 
 def validate_app_bundle_cd_path() -> None:
-    compat = read("src/sys/osx/macosx_compat.mm")
+    compat = read("src/sys/macos/macos_compat.mm")
     posix = read("src/sys/posix/posix_main.cpp")
 
     cd_path = function_body(compat, "const char *Sys_DefaultCDPath( void ) {")

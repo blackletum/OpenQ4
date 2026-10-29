@@ -9,7 +9,7 @@
 
 	CPU render-geometry library shared between the engine and the renderer.
 
-	Everything in src/render_geo is CPU-side geometry work with no GPU or
+	Everything in src/rendergeo is CPU-side geometry work with no GPU or
 	renderer-global dependencies: triangle-surface allocation and cleanup,
 	silhouette/tangent derivation, light-volume derivation, polytope
 	generation, interaction facing/culling, and stencil shadow-volume

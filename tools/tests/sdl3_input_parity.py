@@ -56,20 +56,20 @@ def validate_shared_backend_sources() -> None:
     for token, context in (
         ('"src/sys/win32/win_sdl3.cpp"', "Windows SDL3 platform sources"),
         ('"sys/linux/linux_sdl3.cpp"', "Linux SDL3 platform sources"),
-        ('"sys/osx/macosx_sdl3.cpp"', "macOS SDL3 platform sources"),
+        ('"sys/macos/macos_sdl3.cpp"', "macOS SDL3 platform sources"),
     ):
         require(meson_sources, token, context)
 
     require(linux_block, "linux_sdl3.cpp", "Linux SDL3 wrapper source")
     require(linux_block, "sys/posix/posix_main.cpp", "Linux SDL3 POSIX event pump")
-    require(darwin_block, "macosx_sdl3.cpp", "macOS SDL3 wrapper source")
-    require(darwin_block, "macosx_sdl3_main.cpp", "macOS SDL_RunApp entry")
+    require(darwin_block, "macos_sdl3.cpp", "macOS SDL3 wrapper source")
+    require(darwin_block, "macos_sdl3_main.cpp", "macOS SDL_RunApp entry")
     require(darwin_block, "sys/posix/posix_main.cpp", "macOS SDL3 POSIX event pump")
 
     for relative_path, token in (
         ("src/sys/win32/win_sdl3.cpp", '#include "../sdl3/sdl3_backend.cpp"'),
         ("src/sys/linux/linux_sdl3.cpp", '#include "../sdl3/sdl3_backend.cpp"'),
-        ("src/sys/osx/macosx_sdl3.cpp", '#include "../sdl3/sdl3_backend.cpp"'),
+        ("src/sys/macos/macos_sdl3.cpp", '#include "../sdl3/sdl3_backend.cpp"'),
     ):
         require(read(relative_path), token, relative_path)
 

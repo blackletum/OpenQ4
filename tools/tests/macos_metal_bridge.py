@@ -2497,8 +2497,8 @@ def validate_macos_pk4_symlink_guard_runtime() -> None:
 
 def validate_legacy_macos_plist_runtime() -> None:
     package = load_package_module()
-    info_plist_path = ROOT / "src" / "sys" / "osx" / "Info.plist"
-    version_plist_path = ROOT / "src" / "sys" / "osx" / "version.plist"
+    info_plist_path = ROOT / "src" / "sys" / "macos" / "Info.plist"
+    version_plist_path = ROOT / "src" / "sys" / "macos" / "version.plist"
 
     with info_plist_path.open("rb") as handle:
         info_plist = plistlib.load(handle)
@@ -2923,10 +2923,10 @@ def validate_sdl3_runtime_contract() -> None:
 def validate_packaging_and_release_contract() -> None:
     package = read("tools/build/package_nightly.py")
     pak_helper = read("tools/build/openq4_pak.py")
-    plist = read("src/sys/osx/Info.plist")
+    plist = read("src/sys/macos/Info.plist")
     release = read(".github/workflows/manual-release.yml")
-    compat = read("src/sys/osx/macosx_compat.mm")
-    main = read("src/sys/osx/macosx_sdl3_main.cpp")
+    compat = read("src/sys/macos/macos_compat.mm")
+    main = read("src/sys/macos/macos_sdl3_main.cpp")
     posix = read("src/sys/posix/posix_main.cpp")
     validator = read("tools/validation/openq4_validate.py")
     commit = read(".github/workflows/commit-validation.yml")
@@ -3957,7 +3957,7 @@ def validate_docs_and_ci_hooks() -> None:
     require(release_notes, "Experimental macOS SDL3 release builds now avoid linking the legacy Carbon framework", "release completion Carbon isolation note")
     require(release_notes, "Large single-player levels on macOS no longer return to the menu", "release completion OpenAL Soft fix note")
     require(platform_support, "Linux and macOS now use the shared SDL3 runtime path", "platform support roadmap")
-    require(platform_support, "macOS SDL3 builds select `src/sys/osx/macosx_sdl3.cpp`", "platform support roadmap")
+    require(platform_support, "macOS SDL3 builds select `src/sys/macos/macos_sdl3.cpp`", "platform support roadmap")
     require(platform_support, "Credentialed release runs publish signed/notarized DMGs", "platform support macOS credential policy")
     require(platform_support, "`-unsigned.tar.gz` archives", "platform support macOS credential fallback")
     require(platform_support, "Preview manual macOS release artifacts are Apple Silicon/arm64 only", "platform support macOS architecture policy")

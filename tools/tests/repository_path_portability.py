@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression checks that every tracked path checks out identically on Windows, macOS and Linux."""
+"""Regression checks that tracked paths check out identically everywhere and follow the source layout."""
 
 import re
 import subprocess
@@ -86,6 +86,15 @@ def validate_lowercase_extensions(paths: list[str]) -> None:
         raise AssertionError("Tracked files with uppercase extensions:\n  " + "\n  ".join(uppercase))
 
 
+def validate_source_root_directories(paths: list[str]) -> None:
+    # First-level source directories are single lowercase words, as in
+    # imagetools, rendergeo and mayaimport; see docs/dev/source-layout.md.
+    names = {path.split("/")[1] for path in paths if path.startswith("src/") and path.count("/") >= 2}
+    outliers = sorted(name for name in names if not re.fullmatch(r"[a-z0-9]+", name))
+    if outliers:
+        raise AssertionError("Source directories must be lowercase words without separators: " + ", ".join(outliers))
+
+
 def validate_validation_coverage() -> None:
     validator = read("tools/validation/openq4_validate.py")
     push = read(".github/workflows/push-verification.yml")
@@ -104,6 +113,7 @@ def main() -> None:
     validate_no_case_collisions(paths)
     validate_portable_components(paths)
     validate_lowercase_extensions(paths)
+    validate_source_root_directories(paths)
     validate_validation_coverage()
     print(f"repository_path_portability: ok ({len(paths)} tracked paths)")
 

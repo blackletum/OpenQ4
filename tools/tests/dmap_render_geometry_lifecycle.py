@@ -51,7 +51,7 @@ def braced_body(source: str, marker: str, context: str) -> str:
 
 
 def validate_allocator_lifecycle() -> None:
-    source = read("src/render_geo/RenderGeometryTriSurf.cpp")
+    source = read("src/rendergeo/RenderGeometryTriSurf.cpp")
     require(source, "static bool\t\t\ttriSurfDataInitialized;", "triangle allocator state")
 
     init = braced_body(source, "void R_InitTriSurfData( void )", "triangle allocator initialization")
@@ -85,7 +85,7 @@ def validate_allocator_lifecycle() -> None:
 
 def validate_engine_tool_lifetime() -> None:
     common = read("src/framework/Common.cpp")
-    require(common, '#include "../render_geo/RenderGeometry.h"', "Common render-geometry API")
+    require(common, '#include "../rendergeo/RenderGeometry.h"', "Common render-geometry API")
 
     init = braced_body(common, "void idCommonLocal::Init(", "Common initialization")
     require_order(

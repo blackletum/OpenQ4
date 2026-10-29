@@ -35,7 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 //#include "../renderer/Image.h"
 #include "../bse/BSE_API.h"
 #include "../imagetools/ImageTools.h"
-#include "../render_geo/RenderGeometry.h"
+#include "../rendergeo/RenderGeometry.h"
 #include "../renderer/RendererModule.h"
 #include "../ui/RetainedUI.h"
 #include "../ui/SettingsService.h"

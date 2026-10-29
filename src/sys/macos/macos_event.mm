@@ -29,8 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 // -*- mode: objc -*-
 #import "../../idlib/precompiled.h"
 
-#import "macosx_local.h"
-#import "macosx_sys.h"
+#import "macos_local.h"
+#import "macos_sys.h"
 
 #import <AppKit/NSCursor.h>
 #import <AppKit/NSWindow.h>

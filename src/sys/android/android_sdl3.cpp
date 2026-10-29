@@ -18,7 +18,7 @@ the Free Software Foundation, either version 3 of the License, or
 */
 
 // Android's flavour of the shared SDL3 backend. Structurally the same trick as
-// sys/linux/linux_sdl3.cpp and sys/osx/macosx_sdl3.cpp: define the host tag,
+// sys/linux/linux_sdl3.cpp and sys/macos/macos_sdl3.cpp: define the host tag,
 // include the backend translation unit, then supply the handful of
 // platform-specific entry points it leaves to the host.
 

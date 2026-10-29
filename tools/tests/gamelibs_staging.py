@@ -27,7 +27,7 @@ SUPPORT_FIXTURES = {
     "ui/UserInterface.h": "// ui\n",
     "sys/sys_public.h": "// sys\n",
     "bse/BSE.h": "// bse\n",
-    "MayaImport/MayaImport.h": "// maya import\n",
+    "mayaimport/MayaImport.h": "// maya import\n",
 }
 TRACKED_PYTHON_FIXTURE = "sys/linux/pk4/id_utils.py"
 BYTECODE_FIXTURES = (
@@ -328,7 +328,7 @@ def validate_posix_support_refresh_probe(work: Path) -> None:
     rename_intermediate.rename(source)
     restage()
 
-    source = project_root / "src" / "MayaImport" / "MayaImport.h"
+    source = project_root / "src" / "mayaimport" / "MayaImport.h"
     source_mtime_ns = source.stat().st_mtime_ns
     write_file(source, "// MAYA import\n")
     os.utime(source, ns=(source_mtime_ns, source_mtime_ns))
@@ -664,7 +664,7 @@ Write-Output $refreshNeeded.ToString().ToLowerInvariant()
     support_rename_intermediate.rename(support_source)
     restage()
 
-    support_source = project_root / "src" / "MayaImport" / "MayaImport.h"
+    support_source = project_root / "src" / "mayaimport" / "MayaImport.h"
     support_mtime_ns = support_source.stat().st_mtime_ns
     write_file(support_source, "// MAYA import\n")
     os.utime(support_source, ns=(support_mtime_ns, support_mtime_ns))

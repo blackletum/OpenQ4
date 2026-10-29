@@ -10,7 +10,7 @@
 //#define USE_CGLMACROS
 
 #ifdef USE_CGLMACROS
-#include "macosx_local.h"
+#include "macos_local.h"
 #define cgl_ctx glw_state._cgl_ctx
 #include <OpenGL/CGLMacro.h>
 #endif

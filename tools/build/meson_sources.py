@@ -89,7 +89,7 @@ IMAGETOOLS_SOURCE_GLOBS = [
 # CPU render-geometry shared between the engine (dmap) and the renderer;
 # built as the openq4_render_geo static library
 RENDER_GEO_SOURCE_GLOBS = [
-    "render_geo/*.cpp",
+    "rendergeo/*.cpp",
 ]
 
 # renderer sources for the renderer-gl dynamic module; the loader stays
@@ -236,10 +236,10 @@ SDL3_DARWIN_SOURCES = (
     "sys/posix/posix_signal.cpp",
     "sys/posix/posix_syscon.cpp",
     "sys/posix/posix_threads.cpp",
-    "sys/osx/macosx_compat.mm",
-    "sys/osx/macosx_misc.mm",
-    "sys/osx/macosx_sdl3.cpp",
-    "sys/osx/macosx_sdl3_main.cpp",
+    "sys/macos/macos_compat.mm",
+    "sys/macos/macos_misc.mm",
+    "sys/macos/macos_sdl3.cpp",
+    "sys/macos/macos_sdl3_main.cpp",
 )
 
 LINUX_PLATFORM_SOURCES = (
@@ -276,11 +276,11 @@ DARWIN_PLATFORM_SOURCES = (
     "sys/posix/posix_signal.cpp",
     "sys/posix/posix_syscon.cpp",
     "sys/posix/posix_threads.cpp",
-    "sys/osx/macosx_compat.mm",
-    "sys/osx/macosx_event.mm",
-    "sys/osx/macosx_glimp.mm",
-    "sys/osx/macosx_misc.mm",
-    "sys/osx/macosx_sys.mm",
+    "sys/macos/macos_compat.mm",
+    "sys/macos/macos_event.mm",
+    "sys/macos/macos_glimp.mm",
+    "sys/macos/macos_misc.mm",
+    "sys/macos/macos_sys.mm",
 )
 
 

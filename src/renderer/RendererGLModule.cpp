@@ -170,7 +170,7 @@ MoltenVK loader search in VulkanDevice.cpp, which anchors its bundle-relative
 lookup on the executable directory.
 
 _NSGetExecutablePath is exactly what the engine's own macOS Sys_EXEPath is built
-on (src/sys/osx/macosx_compat.mm), so both halves resolve the same MoltenVK
+on (src/sys/macos/macos_compat.mm), so both halves resolve the same MoltenVK
 image - which is the whole point of that search, since two libraries behind one
 VkInstance is undefined behavior. The engine's NSBundle fallback is dropped
 here: it needs Objective-C, and it only ever runs when _NSGetExecutablePath

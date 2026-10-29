@@ -2710,7 +2710,7 @@ src_renderer_include_dir = include_directories('src/renderer')
 src_ui_include_dir = include_directories('src/ui')
 src_sys_include_dir = include_directories('src/sys')
 src_bse_include_dir = include_directories('src/bse')
-src_maya_import_include_dir = include_directories('src/MayaImport')
+src_maya_import_include_dir = include_directories('src/mayaimport')
 game_include_dirs = [
   root_include_dir,
   src_include_dir,

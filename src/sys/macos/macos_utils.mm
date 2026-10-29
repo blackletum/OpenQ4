@@ -36,8 +36,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #define CD_MOUNT_NAME "openQ4"
 
-#include "macosx_local.h"
-#include "macosx_sys.h"
+#include "macos_local.h"
+#include "macos_sys.h"
 
 //extern "C" void *vm_allocate(unsigned, unsigned*, unsigned, int);
 //extern "C" void vm_deallocate(unsigned, unsigned*, unsigned);

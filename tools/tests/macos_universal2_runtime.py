@@ -50,7 +50,7 @@ def validate_loader_fallback() -> None:
 
 
 def validate_bundle_integrity_fallback() -> None:
-    compat = read("src/sys/osx/macosx_compat.mm")
+    compat = read("src/sys/macos/macos_compat.mm")
     start = compat.index("static void Sys_CollectMacOSGameModulePairIssues")
     end = compat.index("static bool Sys_MacOSAppBundleHasEmbeddedRuntimeMarker", start)
     contract = compat[start:end]

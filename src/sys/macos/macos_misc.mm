@@ -45,7 +45,7 @@ If you have questions concerning this license or the applicable additional terms
 #if defined(USE_SDL3)
 #include <SDL3/SDL.h>
 #include <cmath>
-#include "macosx_common.h"
+#include "macos_common.h"
 #endif
 
 static const int MAX_OSX_PROCESS_ARGS = 32;

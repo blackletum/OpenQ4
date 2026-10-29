@@ -224,7 +224,7 @@ def validate_static_surface_gate() -> None:
 
 def validate_dynamic_surface_gate() -> None:
     source = read("src/renderer/Model_md5r.cpp")
-    tri_surf_source = read("src/render_geo/RenderGeometryTriSurf.cpp")
+    tri_surf_source = read("src/rendergeo/RenderGeometryTriSurf.cpp")
     update = braced_body(
         source,
         "bool rvRenderModelMD5R::UpdateDynamicSurface(",

@@ -50,7 +50,7 @@ def validate_release_facing_docs() -> None:
     getting_started = read("docs/user/getting-started.md")
     package_readme = read("assets/release/README.html")
     release_completion = read("docs/dev/release-completion.md")
-    compat = read("src/sys/osx/macosx_compat.mm")
+    compat = read("src/sys/macos/macos_compat.mm")
 
     for source, context in (
         (platform, "platform support documentation"),

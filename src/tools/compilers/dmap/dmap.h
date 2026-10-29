@@ -26,7 +26,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-#include "../../../render_geo/RenderGeometry.h"
+#include "../../../rendergeo/RenderGeometry.h"
 
 
 typedef struct primitive_s {

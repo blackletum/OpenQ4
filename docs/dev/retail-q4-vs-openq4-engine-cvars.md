@@ -271,8 +271,8 @@ Generated on 2026-04-19.
 | `r_lightGridBakeWorkers` | src/renderer/RenderSystem_init.cpp:230 |
 | `r_lightGridPreload` | src/renderer/RenderSystem_init.cpp:488 |
 | `r_logFile` | src/renderer/RenderSystem_init.cpp:258 |
-| `r_maxDisplayRefresh` | src/sys/osx/macosx_glimp.mm:47 |
-| `r_minDisplayRefresh` | src/sys/osx/macosx_glimp.mm:46 |
+| `r_maxDisplayRefresh` | src/sys/macos/macos_glimp.mm:47 |
+| `r_minDisplayRefresh` | src/sys/macos/macos_glimp.mm:46 |
 | `r_msaaAlphaToCoverage` | src/renderer/RenderSystem_init.cpp:148 |
 | `r_msaaResolveDepth` | src/renderer/RenderSystem_init.cpp:147 |
 | `r_multiScreen` | src/sys/sdl3/sdl3_backend.cpp:149 |
@@ -322,7 +322,7 @@ Generated on 2026-04-19.
 | `r_ssaoRadius` | src/renderer/RenderSystem_init.cpp:111 |
 | `r_ssaoSamples` | src/renderer/RenderSystem_init.cpp:116 |
 | `r_stencilTranslucentShadows` | src/renderer/RenderSystem_init.cpp:184 |
-| `r_stretched` | src/sys/osx/PreferencesDialog.cpp:36 |
+| `r_stretched` | src/sys/macos/PreferencesDialog.cpp:36 |
 | `r_useInfiniteFarZ` | src/renderer/RenderSystem_init.cpp:193 |
 | `r_useInteractionTable` | src/renderer/RenderSystem_init.cpp:181 |
 | `r_useLightGrid` | src/renderer/RenderSystem_init.cpp:229 |
@@ -342,7 +342,7 @@ Generated on 2026-04-19.
 | `s_cushionFadeOver` | src/sound/snd_world.cpp:38 |
 | `s_cushionFadeRate` | src/sound/snd_world.cpp:36 |
 | `s_debugHardware` | src/sound/OpenAL/AL_SoundVoice.cpp:76 |
-| `s_device` | src/sound/OpenAL/AL_SoundHardware.cpp:39<br>src/sys/osx/macosx_sound.cpp:35 |
+| `s_device` | src/sound/OpenAL/AL_SoundHardware.cpp:39<br>src/sys/macos/macos_sound.cpp:35 |
 | `s_driver` | src/sys/linux/sound.cpp:47<br>src/sys/linux/sound.cpp:49 |
 | `s_dsp` | src/sys/linux/sound.cpp:147 |
 | `s_lockListener` | src/sound/snd_world.cpp:32 |

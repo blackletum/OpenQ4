@@ -29,10 +29,10 @@ If you have questions concerning this license or the applicable additional terms
 // -*- mode: objc -*-
 #import "../../idlib/precompiled.h"
 
-#import "macosx_local.h"
-#import "macosx_sys.h"
+#import "macos_local.h"
+#import "macos_sys.h"
 
-#import "macosx_common.h"
+#import "macos_common.h"
 #import "dlfcn.h"
 
 #import <AppKit/AppKit.h>
@@ -47,7 +47,7 @@ If you have questions concerning this license or the applicable additional terms
 #import <time.h>
 
 #ifdef OMNI_TIMER
-#import "macosx_timers.h"
+#import "macos_timers.h"
 #endif
 
 #include "../posix/posix_public.h"

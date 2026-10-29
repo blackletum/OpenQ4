@@ -4,7 +4,7 @@
 // tokens outside the native fallback boundary
 // (docs/dev/macos-native-backend-containment-policy.md).
 
-#import "macosx_sys.h"
+#import "macos_sys.h"
 
 #import <OpenGL/CGLTypes.h>
 

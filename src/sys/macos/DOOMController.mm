@@ -38,9 +38,9 @@ If you have questions concerning this license or the applicable additional terms
 #import <AppKit/AppKit.h>
 #import <OpenGL/gl.h>
 
-#import "macosx_common.h"
-#import "macosx_local.h"
-#import "macosx_sys.h"
+#import "macos_common.h"
+#import "macos_local.h"
+#import "macos_sys.h"
 
 #import <fenv.h>
 #import <ucontext.h>

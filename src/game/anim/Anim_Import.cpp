@@ -4,7 +4,7 @@
 
 #include "../Game_local.h"
 
-#include "../../MayaImport/maya_main.h"
+#include "../../mayaimport/maya_main.h"
 
 /***********************************************************************
 

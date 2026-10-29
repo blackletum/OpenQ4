@@ -6,7 +6,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 
 // Native GL context state for the legacy native backend lives in
-// macosx_native_gl.h so the SDL3 release path never sees those tokens
+// macos_native_gl.h so the SDL3 release path never sees those tokens
 // (docs/dev/macos-native-backend-containment-policy.md).
 
 // sys
