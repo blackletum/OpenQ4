@@ -2119,6 +2119,9 @@ if host_system == 'windows' and resource_compiler.found()
   openq4_version_resources = windows_mod.compile_resources(
     'src/sys/win32/rc/openQ4Version.rc',
     include_directories: [root_include_dir],
+    # rc.exe reports no header dependencies, so without this the version
+    # strings stay at whichever commit first compiled the resource.
+    depends: generated_version_header,
   )
   openq4_engine_sources += openq4_version_resources
 endif
