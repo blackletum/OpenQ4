@@ -1211,6 +1211,51 @@ completed release material here and publish curated notes in `releases/`.
   credit. Distinguish its Apple Silicon/Intel Universal 2 download from our
   unsigned Apple Silicon preview packages on GitHub.
 
+- [ ] Keep script-choreographed movers at their authored speed in Turbo mode
+  (#184). Turbo doubled every mover, but map scripts time their own waits and
+  actors against a `func_mover`: hangar1's Viper Squad lift arrived about 3.5 s
+  early, `aiScriptedStop` released Tech Li before his scripted stand-and-turn
+  finished, and that thread then left him in an endless scripted idle, blocking
+  the level. Reproduced from a fresh map with the real lift trigger: stuck every
+  time with `g_turboMode 1`, released with it off and with this change. Plain
+  `func_mover`s now keep their timing; doors, platforms, elevators and decorative
+  movers are still sped up. `turbo_scripted_movers.py` checks the exemption.
+
+Candidate gameplay release wording: In Turbo mode, Tech Li no longer freezes
+after the Viper Squad lift in Hangar Perimeter; lifts and machinery that levels
+choreograph keep their normal speed so scripted scenes stay in step.
+
+- [ ] Keep saves loadable after long stretches with the blaster, gauntlet,
+  grenade launcher, lightning gun or dark matter gun (#192). Those weapons have
+  no view GUI, so the events every shot and weapon switch posted for it were
+  never delivered and piled up in each save; once more than 256 were queued,
+  the restore guard rejected the save ("invalid pending GUI event count 372")
+  even on the build that wrote it. `rvWeapon::UpdateGUI` now drops events no
+  GUI can take, and the restore bounds the count by the bytes left in the save
+  instead of a fixed cap, so existing saves holding such a backlog load again.
+  No save-format change. `weapon_gui_event_queue_contract.py` keeps SP and MP
+  aligned.
+
+Candidate save release wording: Saves made after firing or switching between
+weapons without an ammo display many times no longer fail to load with an
+"invalid pending GUI event count" error, and saves that already fail this way
+load again.
+
+- [ ] Keep HUD window state when an older save's HUD is read through its earlier
+  definition. Copying only the GUI state dictionary lost values scripts set on
+  windows: a save taken in a boss fight loaded without its boss bar, because
+  `showBossBar` sets `BossBar::visible` and restoring the boss does not replay it.
+  `idUserInterface::ReadFromSaveGameWithLayout` now carries every window value the
+  game changed from the saved definition, with whether it still follows its
+  expression, as well as the state, flags and cursor. A HUD a level script hid
+  (as `game/mcc_1` does from its start) stays hidden after loading an older save.
+- [ ] Add `savegame_gui_layout_contract.py`, which pins every serialized openQ4 GUI
+  and the `guis/savecompat/` revisions, and `savegame_restore_matrix.py`, an opt-in
+  runtime restore check whose `--self-test` runs in CI.
+
+Candidate save release wording: Older saves taken during a boss fight now load
+with the boss's health bar on screen.
+
 - [x] Add one managed audio-payload budget across CPU/OpenAL data, decoder arenas,
   streams and envelopes. Bound ordinary PCM fallback queues, decode RoQ through
   fixed input scratch and keep pressure-refused samples retryable. Stock and
