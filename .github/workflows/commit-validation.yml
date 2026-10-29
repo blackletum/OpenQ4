@@ -204,6 +204,7 @@ jobs:
             tools/tests/savegame_restore_recovery_runtime.py \
             tools/tests/ui_generated_image_runtime.py \
             tools/tests/filesystem_case_segments.py \
+            tools/tests/repository_path_portability.py \
             tools/tests/pinned_archive_headers.py \
             tools/tests/filesystem_mod_manifest.py \
             tools/tests/filesystem_write_qpath_safety.py \
@@ -682,6 +683,7 @@ jobs:
           python tools/tests/ui_engine_thread.py
           python tools/tests/ui_generated_images.py
           python tools/tests/filesystem_case_segments.py
+          python tools/tests/repository_path_portability.py
           python tools/tests/pinned_archive_headers.py
           python tools/tests/filesystem_mod_manifest.py
           python tools/tests/filesystem_write_qpath_safety.py

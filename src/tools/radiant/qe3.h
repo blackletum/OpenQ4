@@ -72,7 +72,7 @@ const float	HUGE_DISTANCE = 100000;
 #include "dialogtextures.h"
 #include "InspectorDialog.h"
 #include "undo.h"
-#include "PMESH.H"
+#include "pmesh.h"
 
 // the dec offsetof macro doesn't work very well...
 #define myoffsetof(type,identifier) ((size_t)&((type *)0)->identifier)
