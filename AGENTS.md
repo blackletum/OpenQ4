@@ -31,6 +31,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Dedicated server builds keep the disabled BSE manager path unless a change proves they genuinely need the full effect runtime.
 - Keep `baseoq4/` as the single unified game directory; do not split SP/MP into separate mod folders.
 - Keep repo-authored runtime overrides under `content/baseoq4/`; treat `.install/baseoq4/` as staged output rather than an editing target.
+- Follow `docs/dev/source-layout.md` for directory placement and file naming: vendored code under `src/external/` or `subprojects/`, licence notices under `LICENSES/`, single lowercase words for first-level `src/` directories, and the naming family of the surrounding code. Do not rename inherited id/Raven files to a new style. `tools/tests/repository_path_portability.py` enforces the path rules.
 - Prefer changes that match Quake 4 SDK expectations and shipped content behavior.
 - Document significant changes in the documentation and keep `README.md` accurate.
 - Use `docs/dev/roadmap.md` as the single active development plan. Extend its stable work items and acceptance gates instead of creating parallel plans or TODO backlogs. Archived plans preserve historical scope/evidence; technical contracts and acceptance registers remain supporting references, not independent scheduling authority.

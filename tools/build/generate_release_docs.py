@@ -20,7 +20,6 @@ ROOT_DOCS = (
     Path("BUILDING.md"),
     Path("TECHNICAL.md"),
     Path("LICENSING.md"),
-    Path("TODO.md"),
 )
 COMMUNITY_DOCS = (
     Path(".github") / "CONTRIBUTING.md",
@@ -744,8 +743,6 @@ def default_nav_title(relative: Path) -> str:
         return "Build Guide"
     if relative == Path("TECHNICAL.md"):
         return "Technical Reference"
-    if relative == Path("TODO.md"):
-        return "TODO"
     if relative == Path(".github") / "CONTRIBUTING.md":
         return "Contributing"
     if relative == Path(".github") / "CODE_OF_CONDUCT.md":

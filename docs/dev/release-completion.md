@@ -6,7 +6,18 @@ Later implementation and validation entries below are unreleased development
 work. Historical CI/publication success does not restore the withdrawn release.
 See [player release status](../user/release-status.md).
 
-## CI qualification follow-up, 26 October 2026
+## Source layout cleanup, 29 October 2026
+
+- Packages now ship the glslang notice as `licenses/glslang.txt` (previously
+  `licenses/glslang-LICENSE.txt`). The other licence files keep their names.
+- Source checkouts on Windows and macOS no longer show phantom changes from
+  nine files that were tracked under both `OpenQ4` and `openQ4` spellings.
+- Developer-only: `src/sys/osx` is now `src/sys/macos` (`macosx_*` files are
+  `macos_*`), `src/render_geo` is `src/rendergeo`, `src/MayaImport` is
+  `src/mayaimport`, vendored libjpeg and SMAA moved under `src/external/`, and
+  all licence notices live in `LICENSES/`. Unreferenced legacy build systems,
+  installers and Xcode projects were removed. See
+  [Source Layout and Naming](source-layout.md).
 
 - GOV-02/CORE-04: Windows durable-file validation now has a 900-second Meson
   budget. Its existing per-command 600-second timeout still fails hung commands;

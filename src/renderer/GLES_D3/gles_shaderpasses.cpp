@@ -979,7 +979,7 @@ static bool GLESD3_DrawCubeTexgenStage( const drawSurf_t *surf, const shaderStag
 
 	Deliberately matched to the Vulkan implementation
 	(vk_GuiExecutor.cpp:5820), down to the parms slot numbering, so a
-	side-by-side against ./run_vulkan.sh compares two ports of one program
+	side-by-side against tools/debug/run_renderer.sh vulkan compares two ports of one program
 	rather than two independent guesses.
 ===============================================================================
 */
