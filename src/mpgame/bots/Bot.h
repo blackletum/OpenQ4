@@ -22,6 +22,8 @@
 #ifndef __GAME_MP_BOT_H__
 #define __GAME_MP_BOT_H__
 
+#include "BotFrameProfile.h"
+
 // rvBot holds a botTraits_t by value and a character pointer, so the contract
 // header has to be complete here rather than forward declared.  Game_local.h
 // includes it immediately before this file too; the include guard makes saying
@@ -511,7 +513,8 @@ public:
 	// Local cheat diagnostic, restricted to one bot and the local observer.
 	bool					ProbeTraversal( int clientNum, const idVec3 &origin, const idVec3 &velocity,
 											const idVec3 &landing, navTravelType_t travel, idEntity *pad = NULL, bool dodge = false,
-									const idVec3 *airDirection = NULL, const idVec3 *entryOrigin = NULL );
+									const idVec3 *airDirection = NULL, const idVec3 *entryOrigin = NULL,
+									const idVec3 *nextJump = NULL, bool naturalWalk = false );
 	// The health, and knockback time, the next traversal probe gives its bot;
 	// 0 for unchanged.
 	bool					SetProbeHealth( int clientNum, int health, int knockbackMsec = 0 );
@@ -659,6 +662,7 @@ private:
 	double					profileThinkTicks;
 	double					profileMaxTicks;
 	int						profileFrames;
+	rvBotFrameProfile		profileDistribution;
 	int						nextProfileTime;
 
 	// AddBot allocates the client slot and the engine calls straight back into

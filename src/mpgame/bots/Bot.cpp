@@ -4900,7 +4900,13 @@ simulation finds the far side within reach and not the near, toward that
 let the throw carry a bot over a lower ledge's edge - and through a short
 runout after touchdown.
 
-Only a fall a strong knock caused starts it: one the knock threw off the
+An unsafe unpressed WALK fall also starts it: the ground edge guard can brake
+on a sloping rim just as support is lost, leaving no grounded frame to finish
+the brake. It must not then steer for the walking corner through the void.
+A walking approach to a jump has not taken off until jump is pressed; planned
+drops and transport entries retain their own flight controller.
+
+A fall a strong knock caused starts it too: one the knock threw off the
 ground, one that slid off a ledge in the knockback's friction-free time -
 q4ctf5's rail kicks slid grounded bots off the walkway at 550 units a
 second - or one hit in the air.  A pad's launch reads as a fall over the void
@@ -4945,8 +4951,16 @@ bool rvBot::RecoverInAir( idPlayer *self, usercmd_t &cmd ) {
 	const bool knocked = knockbackTime && gameLocal.time - knockbackTime <= BOT_AIR_RECOVER_KNOCK_MSEC &&
 		airborneSince && knockbackTime >= airborneSince -
 		( airborneVoluntary ? BOT_AIR_RECOVER_TAKEOFF_MSEC : BOT_AIR_RECOVER_SLIDE_MSEC );
+	const bool walking = pathCorner >= 0 && pathCorner < path.Num() &&
+		path[pathCorner].travelType == NAVTRAVEL_WALK;
+	const bool walkingDeparture = walking && pathCorner + 1 < path.Num() &&
+		( path[pathCorner + 1].travelType == NAVTRAVEL_DROP ||
+		  path[pathCorner + 1].travelType == NAVTRAVEL_JUMPPAD ||
+		  path[pathCorner + 1].travelType == NAVTRAVEL_TELEPORT );
+	const bool walkingFall = walking && !walkingDeparture && airborneSince &&
+		!airborneVoluntary && velocity.z <= 0.0f;
 	idVec3 touchdown;
-	if ( !airRecovering && ( !knocked || !BotAirLandingUnsafe( self, touchdown ) ) ) {
+	if ( !airRecovering && ( ( !knocked && !walkingFall ) || !BotAirLandingUnsafe( self, touchdown ) ) ) {
 		return false;
 	}
 	if ( !airRecovering || gameLocal.time - airRecoverPlanTime >= BOT_AIR_RECOVER_REPLAN_MSEC ) {
@@ -7417,6 +7431,7 @@ void rvBotManager::Init( void ) {
 	profileFrames		= 0;
 	nextProfileTime		= 0;
 	ResetAwareness();
+	profileDistribution.Clear();
 	BotResetWeaponInfo();
 	ResetReplyCooldowns();
 	for ( int i = 0; i < MAX_CLIENTS; i++ ) {
@@ -8496,10 +8511,12 @@ rvBotManager::ProbeTraversal
 */
 bool rvBotManager::ProbeTraversal( int clientNum, const idVec3 &origin, const idVec3 &velocity,
 								 const idVec3 &landing, navTravelType_t travel, idEntity *pad, bool dodge,
-								 const idVec3 *airDirection, const idVec3 *entryOrigin ) {
+								 const idVec3 *airDirection, const idVec3 *entryOrigin,
+								 const idVec3 *nextJump, bool naturalWalk ) {
 	if ( ( travel != NAVTRAVEL_WALK && travel != NAVTRAVEL_DROP && travel != NAVTRAVEL_JUMP && travel != NAVTRAVEL_JUMPPAD ) ||
 		( ( travel == NAVTRAVEL_JUMPPAD ) != ( pad != NULL ) ) || ( dodge && travel != NAVTRAVEL_WALK ) ||
-		( airDirection && ( travel != NAVTRAVEL_WALK || dodge ) ) || ( entryOrigin && travel != NAVTRAVEL_DROP ) ) {
+		( airDirection && ( travel != NAVTRAVEL_WALK || dodge ) ) || ( entryOrigin && travel != NAVTRAVEL_DROP ) ||
+		( naturalWalk && ( travel != NAVTRAVEL_WALK || dodge || airDirection ) ) || ( nextJump && !naturalWalk ) ) {
 		return false;
 	}
 	if ( !gameLocal.isServer || gameLocal.isClient || !gameLocal.GetLocalPlayer() ||
@@ -8529,7 +8546,7 @@ bool rvBotManager::ProbeTraversal( int clientNum, const idVec3 &origin, const id
 	self->GetPhysics()->SetLinearVelocity( velocity );
 	bot.aimAngles = facing;
 	bot.goalType = BOTGOAL_ROAM;
-	bot.goalOrigin = landing;
+	bot.goalOrigin = nextJump ? *nextJump : landing;
 	if ( travel == NAVTRAVEL_WALK ) {
 		// A walking probe has no committed jump action to defer goal selection.
 		// Keep its supplied leg long enough to observe the impulse response.
@@ -8538,6 +8555,9 @@ bool rvBotManager::ProbeTraversal( int clientNum, const idVec3 &origin, const id
 	bot.path.Clear();
 	bot.path.Append( entryOrigin ? *entryOrigin : origin, NAVTRAVEL_WALK );
 	bot.path.Append( landing, travel, pad ? pad->entityNumber : -1 );
+	if ( nextJump ) {
+		bot.path.Append( *nextJump, NAVTRAVEL_JUMP );
+	}
 	bot.pathCorner = 1;
 	bot.pathTime = gameLocal.time;
 	bot.traversalCorner = 1;
@@ -8566,7 +8586,7 @@ bool rvBotManager::ProbeTraversal( int clientNum, const idVec3 &origin, const id
 		bot.probeAirDirection.Set( airDirection->x, airDirection->y, 0.0f );
 		bot.probeAirDirection.Normalize();
 	}
-	if ( travel == NAVTRAVEL_WALK && !dodge && !airDirection ) {
+	if ( travel == NAVTRAVEL_WALK && !dodge && !airDirection && !naturalWalk ) {
 		// A walking probe replays a post-impulse state: the thrown bot's own
 		// recovery is what it measures.
 		bot.knockbackTime = gameLocal.time;
@@ -9343,9 +9363,12 @@ void rvBotManager::UpdateProfile( double thinkTicks ) {
 		profileMaxTicks = 0.0;
 		profileFrames = 0;
 		nextProfileTime = 0;
+		profileDistribution.Clear();
 		navMesh.ResetStats();
 		return;
 	}
+	const double msecPerTick = 1000.0 / idLib::sys->ClockTicksPerSecond();
+	profileDistribution.Add( thinkTicks * msecPerTick );
 	if ( !nextProfileTime ) {
 		nextProfileTime = gameLocal.time + SEC2MS( period );
 		return;
@@ -9354,7 +9377,6 @@ void rvBotManager::UpdateProfile( double thinkTicks ) {
 		return;
 	}
 
-	const double msecPerTick = 1000.0 / idLib::sys->ClockTicksPerSecond();
 	const navStats_t &nav = navMesh.GetStats();
 	const int frames = Max( 1, profileFrames );
 
@@ -9370,10 +9392,14 @@ void rvBotManager::UpdateProfile( double thinkTicks ) {
 					  (double)nav.fieldNodes / Max( 1, nav.fieldSearches ),
 					  nav.searchTicks * msecPerTick / frames, nav.fieldTicks * msecPerTick / frames,
 					  nav.snapFailures, nav.searchFailures, nav.legFailures );
+	gameLocal.Printf( "botprofile-percentiles: %u frames p50_upper %.3f ms p95_upper %.3f ms p99_upper %.3f ms\n",
+		profileDistribution.Samples(), profileDistribution.PercentileUpperMS( 50 ),
+		profileDistribution.PercentileUpperMS( 95 ), profileDistribution.PercentileUpperMS( 99 ) );
 
 	profileThinkTicks = 0.0;
 	profileMaxTicks = 0.0;
 	profileFrames = 0;
+	profileDistribution.Clear();
 	nextProfileTime = gameLocal.time + SEC2MS( period );
 	navMesh.ResetStats();
 }

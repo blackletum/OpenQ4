@@ -648,6 +648,21 @@ def validate_validation_wiring() -> None:
     # exercised by their native harnesses or runtime callers. Keep both out of
     # the argument-free lightweight suite; CI still checks their syntax.
     smoke_wiring_allowlist = {
+        # Runtime probes require staged binaries/assets; generators feed Meson native tests.
+        "airdefense_performance.py",
+        "checkpoint_performance.py",
+        "generate_capture_resample_test.py",
+        "generate_checkpoint_commit_test.py",
+        "generate_checkpoint_preview_test.py",
+        "generate_checkpoint_storage_test.py",
+        "generate_dict_identity_test.py",
+        "generate_save_dict_test.py",
+        "mp_bot_walk_replay.py",
+        "mp_liquid_air_smoke.py",
+        "mp_mvd_quota_smoke.py",
+        "mp_mvd_seek_smoke.py",
+        "performance_presets_smoke.py",
+        "rendering_selection_smoke.py",
         # Stage 2 drivers: each launches a staged client, dedicated server,
         # WSL peer or OpenXR runtime on retail assets; the workflows py_compile
         # them and their production-extraction siblings are wired.
@@ -902,6 +917,62 @@ def validate_workflow_wrap_paths() -> None:
                 )
 
 
+def workflow_jobs(text: str) -> dict[str, str]:
+    jobs = text[text.index("\njobs:\n"):]
+    starts = list(re.finditer(r"^  ([A-Za-z0-9_-]+):\n", jobs, re.MULTILINE))
+    return {
+        match.group(1): jobs[match.start():starts[index + 1].start() if index + 1 < len(starts) else len(jobs)]
+        for index, match in enumerate(starts)
+    }
+
+
+def validate_ci_job_scope() -> None:
+    # script-smoke runs the validator's Python checks once. Build jobs repeat
+    # them only on Windows x64 and arm64 macOS OpenGL, and none waits for the
+    # smoke job. Pull requests run Commit Validation, so Push Verification
+    # runs on pushes to main only.
+    push = (ROOT / ".github" / "workflows" / "push-verification.yml").read_text(encoding="utf-8")
+    commit = (ROOT / ".github" / "workflows" / "commit-validation.yml").read_text(encoding="utf-8")
+    if "\non:\n  push:\n    branches:\n      - main\n  workflow_dispatch:\n" not in push:
+        raise AssertionError("Push Verification must run on pushes to main and manual dispatch only")
+    if "\non:\n  pull_request:\n  workflow_dispatch:\n" not in commit:
+        raise AssertionError("Commit Validation must run on pull requests and manual dispatch")
+
+    push_jobs = workflow_jobs(push)
+    commit_jobs = workflow_jobs(commit)
+    for workflow, jobs in (("push", push_jobs), ("commit", commit_jobs)):
+        for name, body in jobs.items():
+            if "needs: script-smoke" in body:
+                raise AssertionError(f"{workflow} job {name} waits for script-smoke")
+
+    skip = "--skip-python-tests"
+    full_suite = {("push", "windows-build"), ("commit", "windows-x64")}
+    skipped = {("push", "windows-arm64-build"), ("commit", "linux-arm64"), ("commit", "windows-arm64"),
+               ("commit", "linux-sanitizer"), ("commit", "linux-wayland")}
+    for workflow, name in full_suite | skipped:
+        body = (push_jobs if workflow == "push" else commit_jobs)[name]
+        if ((workflow, name) in skipped) != (skip in body):
+            raise AssertionError(f"{workflow} job {name} has the wrong Python check scope")
+    for workflow, name, entry in (("push", "posix-builds", "name: macOS OpenGL Push Verification"),
+                                  ("commit", "macos-arm64", "bridge_label: OpenGL")):
+        body = (push_jobs if workflow == "push" else commit_jobs)[name]
+        if body.count("python_tests: true") != 1:
+            raise AssertionError(f"{workflow} job {name} must run the Python checks in exactly one entry")
+        entry_start = body.index(entry)
+        entry_end = body.find("\n          - ", entry_start)
+        if "python_tests: true" not in body[entry_start:entry_end if entry_end != -1 else len(body)]:
+            raise AssertionError(f"{workflow} job {name} runs the Python checks outside its {entry!r} entry")
+        if 'if [[ "${{ matrix.python_tests }}" != "true" ]]; then' not in body or skip not in body:
+            raise AssertionError(f"{workflow} job {name} does not skip Python checks for the other entries")
+
+    for workflow, jobs in (("push", push_jobs), ("commit", commit_jobs)):
+        smoke = jobs["script-smoke"]
+        commands = [line.strip() for line in smoke.splitlines() if line.strip().startswith("python tools/")]
+        repeated = sorted({command for command in commands if commands.count(command) > 1})
+        if repeated:
+            raise AssertionError(f"{workflow} script-smoke repeats {repeated}")
+
+
 def main() -> None:
     shutil.rmtree(WORK, ignore_errors=True)
     try:
@@ -920,6 +991,7 @@ def main() -> None:
         validate_python_test_failure_aggregation()
         validate_validation_wiring()
         validate_workflow_wrap_paths()
+        validate_ci_job_scope()
     finally:
         shutil.rmtree(WORK, ignore_errors=True)
     print("validation_hardening: ok")

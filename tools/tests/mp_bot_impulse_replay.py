@@ -37,6 +37,7 @@ inside a sector narrower than the sampling.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -310,6 +311,11 @@ def replay_session(runtime: Path, executable: str, basepath: Path, output: Path,
     """Run trials one after another with one isolated bot; returns (completed, clean log, exit code)."""
     from mp_round_remote_smoke import verify_runtime_is_current
     verify_runtime_is_current(runtime, executable)
+    identity_paths = [runtime / executable, *sorted((runtime / "baseoq4").glob("game-mp*"))]
+    identity_paths = [path for path in identity_paths if path.is_file() and path.suffix not in (".pdb", ".lib", ".exp")]
+    def identity():
+        return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in identity_paths}
+    before_identity = identity()
     game = output / "save/baseoq4"
     game.mkdir(parents=True, exist_ok=False)
     first = trials[0]["command"].split()
@@ -371,14 +377,30 @@ def replay_session(runtime: Path, executable: str, basepath: Path, output: Path,
     clean = strip_colours(log_path.read_text(encoding="utf-8", errors="replace")) if log_path.exists() else ""
     clean = "\n" + "\n".join(line.rstrip() for line in clean.splitlines()) + "\n"
     fatal = re.search(r"^.*(?:ERROR:|FATAL:|Assertion failed).*$", clean, re.M)
-    completed = code == 0 and "\nMP_BOT_REPLAY_END\n" in clean and not fatal
+    try:
+        unchanged = identity() == before_identity
+    except OSError:
+        unchanged = False
+    completed = code == 0 and "\nMP_BOT_REPLAY_END\n" in clean and not fatal and unchanged
+    (output / "run.json").write_text(json.dumps({
+        "complete": completed, "exit": code, "runtime_unchanged": unchanged,
+        "identity": before_identity, "log": str(log_path), "trials": trials,
+    }, indent=2) + "\n", encoding="utf-8")
     return completed, clean, code
+
+
+def replay_identity(runtime: Path, executable: str) -> dict[str, str]:
+    paths = [runtime / executable, *sorted((runtime / "baseoq4").glob("game-mp*")),
+             *sorted(runtime.glob("renderer-*")), runtime / "baseoq4/pak0.pk4", runtime / "baseoq4/pak1.pk4"]
+    return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths
+            if p.is_file() and p.suffix not in (".pdb", ".lib", ".exp")}
 
 
 def classify_log(clean: str, names: set[str], gametype: str, map_name: str, runtime: Path, executable: str,
                  basepath: Path, output: Path, port: int) -> dict:
     """Classify a match log and replay every impulse candidate; returns the summary."""
     decided = []
+    initial_identity = replay_identity(runtime, executable)
     for index, candidate in enumerate(classify(clean, names, gametype)):
         if candidate["status"] != "impulse-candidate":
             decided.append(decide(candidate, None, False))
@@ -387,12 +409,33 @@ def classify_log(clean: str, names: set[str], gametype: str, map_name: str, runt
             trials = trials_for(choice["impulse"])
             folder = output / f"replay-{index:02d}-{candidate['victim']}-cause{attempt}"
             per_trial = TRIAL_OBSERVE_MSEC + TRIAL_REMOVE_MSEC + TRIAL_RESPAWN_MSEC + 200
-            timeout = 150 + len(trials) * per_trial * 3 // 2000
-            completed, sample_log, code = replay_session(runtime, executable, basepath, folder, map_name, gametype,
-                                                         trials, port, timeout)
-            sample = sample_log.partition("\nMP_BOT_REPLAY_BEGIN\n")[2]
+            samples, batches = [], []
+            completed, code = True, None
+            try:
+                # Every trial already restores the world and bot. Bound each
+                # process lifetime too; a late failure must not waive any
+                # earlier/later trial or the counterfactual proof.
+                for first in range(0, len(trials), 8):
+                    batch = trials[first:first + 8]
+                    if replay_identity(runtime, executable) != initial_identity:
+                        raise RuntimeError("runtime changed between causality replay batches")
+                    timeout = 150 + len(batch) * per_trial * 3 // 2000
+                    done, sample_log, code = replay_session(runtime, executable, basepath,
+                        folder / f"batch-{first // 8:02d}", map_name, gametype, batch, port, timeout)
+                    batches.append({"first": first, "trials": len(batch), "complete": done, "exit": code})
+                    samples.append(sample_log.partition("\nMP_BOT_REPLAY_BEGIN\n")[2])
+                    completed = completed and done
+                    if replay_identity(runtime, executable) != initial_identity:
+                        raise RuntimeError("runtime changed during causality replay batches")
+                    if not done:
+                        break
+            except (OSError, RuntimeError, SystemExit) as error:
+                result = decide(choice, None, False)
+                result.update(replay_dir=str(folder), replay_exit=None, replay_failure=str(error), replay_batches=batches)
+                return result
+            sample = "\n".join(samples)
             result = decide(choice, assess_trials(sample, trials), completed)
-            result.update(replay_dir=str(folder), replay_exit=code)
+            result.update(replay_dir=str(folder), replay_exit=code, replay_batches=batches)
             return result
         decided.append(replay_chain(candidate, run))
     return summarise(decided)
@@ -408,6 +451,12 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=28973)
     args = parser.parse_args()
     report = json.loads(args.report.read_text(encoding="utf-8"))
+    runtime = args.runtime_dir.resolve()
+    for original, digest in report.get("runtime_identity", {}).items():
+        source = Path(original)
+        current = runtime / ("baseoq4" if source.parent.name.lower() == "baseoq4" else "") / source.name
+        if not current.is_file() or hashlib.sha256(current.read_bytes()).hexdigest() != digest:
+            parser.error(f"causality requires the match's recorded runtime: {source.name} differs")
     output = args.output_dir.resolve()
     if output.exists():
         parser.error("use a new output directory to preserve earlier evidence")

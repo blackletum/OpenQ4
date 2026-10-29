@@ -29,6 +29,9 @@ typedef struct classicInteractionDomainView_s classicInteractionDomainView_t;
 ===============================================================================
 */
 
+// Pipeline and rendering metadata must select the same optional stencil attachment.
+bool VK_ShadowMap_UseStencilAttachment();
+
 typedef enum vkShadowReceiverPass_e {
 	VK_SHADOW_RECEIVER_LOCAL = 0,
 	VK_SHADOW_RECEIVER_GLOBAL,
@@ -54,6 +57,7 @@ static const int VK_SHADOW_MAX_CACHE_SLOTS = 16;
 typedef struct vkShadowPassState_s {
 	bool				valid;
 	vkShadowReceiverPass_t resourcePass;
+	bool				unionLocalDepth; // fresh PCSS GLOBAL stores only local casters
 	bool				cacheHit;		// exact resident entry supplies this pass
 	bool				cacheUpdate;	// fresh render will publish this entry
 	bool				composeDynamic;	// projected only: the cached tile holds STATIC

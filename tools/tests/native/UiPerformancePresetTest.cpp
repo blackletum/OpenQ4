@@ -1,5 +1,6 @@
 // Copyright (C) 2026 DarkMatter Productions. GPL-3.0-or-later.
 #include "src/framework/PerformancePreset.h"
+#include "src/framework/CVarAssignmentCapture.h"
 #include "src/ui/application/SettingsTransaction.h"
 #include <cstdio>
 #include <cstdlib>
@@ -26,29 +27,48 @@ void operator delete(void* p) noexcept {std::free(p);}
 void operator delete(void* p,std::size_t) noexcept {std::free(p);}
 static int checks=0;
 static void Check(bool value,const char* message){++checks;if(!value){std::fprintf(stderr,"FAIL: %s\n",message);std::exit(1);}}
+static void AssignmentCapture(){
+ const char* names[]={"com_performancePreset","r_multiSamples"};bool flags[]={true,true},nested[]={true,true};
+ CVarAssignmentCapture::Record(names[0]);
+ CVarAssignmentCapture outer;outer.Begin(names,2,flags);
+ Check(!flags[0]&&!flags[1],"capture initializes only its bounded output");
+ CVarAssignmentCapture::Record("r_multiSample");CVarAssignmentCapture::Record("");
+ Check(!flags[0]&&!flags[1],"capture rejects partial/empty names");
+ {
+  CVarAssignmentCapture inner;inner.Begin(names,2,nested);
+  CVarAssignmentCapture::Record("R_MULTISAMPLES");
+  Check(flags[1]&&nested[1]&&!flags[0]&&!nested[0],"nested case-insensitive captures include equal-value assignments");
+  outer.End();CVarAssignmentCapture::Record(names[0]);
+  Check(!flags[0]&&nested[0],"early outer end preserves the inner chain");
+ }
+ flags[0]=false;CVarAssignmentCapture::Record(names[0]);Check(!flags[0],"scope exit detaches capture");
+ outer.Begin(names,2,flags);outer.Begin(nullptr,2,flags);CVarAssignmentCapture::Record(names[0]);
+ Check(!flags[0]&&!flags[1],"invalid reuse detaches old storage");
+}
 static void Profiles(){
- const std::vector<std::string> keys={"com_machineSpec","r_rendererBenchmarkPreset","r_screenFraction","r_multiSamples","r_postAA","com_maxfps","image_anisotropy","image_usePrecompressedTextures","image_downSize","image_downSizeLimit","image_downSizeSpecular","image_downSizeBump","image_downSizeSpecularLimit","image_downSizeBumpLimit","image_ignoreHighQuality","image_writeGeneratedImages","s_maxSoundsPerShader","r_useShadowMap","r_shadowMapSize","r_shadowMapMaxUpdatesPerView","r_bloom","r_ssao","r_hdrToneMap","r_motionBlur","r_crt","r_useLightGrid","r_rendererUploadMegs","r_rendererUploadFrameBuffers","s_numberOfSpeakers","s_useEAXReverb","s_maxEmitterChannels","com_performancePreset"};
- // Independent golden setter values from the pre-refactor production profiles.
+ const std::vector<std::string> keys={"com_machineSpec","r_rendererBenchmarkPreset","r_screenFraction","r_multiSamples","r_postAA","com_maxfps","image_anisotropy","image_usePrecompressedTextures","image_downSize","image_downSizeLimit","image_downSizeSpecular","image_downSizeBump","image_downSizeSpecularLimit","image_downSizeBumpLimit","image_ignoreHighQuality","image_writeGeneratedImages","s_maxSoundsPerShader","r_useShadowMap","r_shadowMapSize","r_shadowMapMaxUpdatesPerView","r_bloom","r_ssao","r_hdrToneMap","r_motionBlur","r_crt","r_useLightGrid","r_rendererUploadMegs","r_rendererUploadFrameBuffers","s_numberOfSpeakers","s_useEAXReverb","s_maxEmitterChannels","r_shadowMapPointSize","r_shadowMapFilterTaps","r_shadowMapPointFilterTaps","r_shadowMapFilterMode","r_shadowMapPointFilterMode","r_shadowMapAtlasSize","r_ssaoSamples","r_bloomMipCount","r_motionBlurSamples","r_shadowMapPointLights","r_hdrSceneTarget","r_shadows","r_skipBump","r_skipSpecular","r_skipSky","image_picmip","r_shadowMapCSM","r_shadowMapCascadeCount","r_shadowMapProjectedCSM","r_shadowMapCascadeStabilize","r_motionBlurObjectVectors","r_shadowMapHashedAlpha","r_shadowMapTranslucentReceivers","com_performancePreset"};
+ // Independent golden setter values for the revised quality progression.
  const std::vector<std::vector<int>> numbers={
- {0,50,0,0,30,1,1,1,512,1,1,64,256,1,1,1,0,512,1,0,0,0,0,0,1,8,3,0,1,24},
- {0,75,0,0,30,1,1,1,1024,1,1,64,256,1,1,1,0,512,1,0,0,0,0,0,1,8,3,0,1,32},
- {1,85,0,1,60,2,1,0,0,0,0,64,0,0,1,0,0,1024,2,0,0,0,0,0,1,16,4,0,1,40},
- {2,100,2,1,120,4,1,0,0,0,0,64,0,0,1,0,0,1024,0,0,0,0,0,0,1,16,4,0,1,48},
- {3,100,4,1,144,8,1,0,0,0,0,64,0,0,1,0,1,1024,0,0,0,0,0,0,1,32,4,0,1,48},
- {3,100,8,1,240,16,1,0,0,0,0,64,0,0,1,0,1,2048,0,0,0,0,0,0,1,32,4,0,1,48}};
- const char* names[]={"minimum","lowpower","performance","balanced","quality","ultra"};
- const char* renderer[]={"low","low","baseline","baseline","modern","high-end"};
+ {0,50,0,0,30,1,1,1,512,1,1,64,256,1,1,1,0,512,1,0,0,0,0,0,1,8,3,0,1,24,512,1,1,0,0,2048,4,1,4,1,0,1,0,0,0,0,0,4,1,1,1,1,1},
+ {0,75,0,0,30,1,1,1,1024,1,1,64,256,1,1,1,0,512,1,0,0,0,0,0,1,8,3,0,1,32,512,1,1,0,0,2048,4,1,4,1,0,1,0,0,0,0,0,4,1,1,1,1,1},
+ {1,85,0,1,60,2,1,0,0,0,0,64,0,0,1,0,0,1024,2,0,0,0,0,0,1,16,4,0,1,40,512,5,5,0,0,2048,8,3,8,1,0,1,0,0,0,0,0,4,1,1,1,1,1},
+ {2,100,2,1,120,4,1,0,0,0,0,64,0,0,1,0,0,1024,0,0,0,0,0,0,1,16,4,0,1,48,512,5,5,0,0,2048,8,3,8,1,0,1,0,0,0,0,0,4,1,1,1,1,1},
+ {2,100,2,2,120,4,1,0,0,0,0,64,0,0,1,0,1,1024,0,1,1,1,0,0,1,16,4,0,1,48,512,5,5,0,0,4096,12,5,8,1,1,1,0,0,0,0,0,4,1,1,1,1,1},
+ {3,100,4,2,144,8,1,0,0,0,0,64,0,0,1,0,1,2048,0,1,1,1,0,0,1,32,4,0,1,48,1024,9,9,2,0,4096,20,5,8,1,1,1,0,0,0,0,0,4,1,1,1,1,1},
+ {3,100,16,3,240,16,1,0,0,0,0,64,0,0,1,0,1,4096,0,1,1,1,1,0,1,32,4,0,1,48,2048,13,13,2,1,16384,32,5,16,1,1,1,0,0,0,0,1,4,1,1,1,1,1}};
+ const char* names[]={"minimum","lowpower","performance","balanced","enhanced","quality","ultra"};
+ const char* renderer[]={"low","low","baseline","baseline","modern","modern","high-end"};
  std::set<std::string> targets;for(const auto* key:PerformancePresetTargets())targets.insert(key);
- Check(targets.size()==32,"exact unique target count");
- for(int n=0;n<6;++n){
+ Check(targets.size()==55,"exact unique target count");
+ for(int n=0;n<PerformancePresetCount;++n){
   Check(FindPerformancePreset(names[n])==&PerformancePresets()[n],"canonical lookup");
   PerformancePresetAssignments out;std::string error;
   Check(ExpandPerformancePreset(PerformancePresets()[n],out,error),"expand actual profile");
   std::set<std::string> seen;size_t index=0;
   for(size_t i=0;i<out.size();++i){
-   Check(out[i].key==keys[i],"exact legacy setter order");seen.insert(out[i].key);
+   Check(out[i].key==keys[i],"exact setter order");seen.insert(out[i].key);
    if(i==1)Check(std::get<std::string>(out[i].value)==renderer[n],"benchmark classification");
-   else if(i==31)Check(std::get<std::string>(out[i].value)==names[n],"marker last");
+   else if(i==54)Check(std::get<std::string>(out[i].value)==names[n],"marker last");
    else Check(std::get<int>(out[i].value)==numbers[n][index++],"golden profile value");
   }Check(seen==targets,"all and only declared targets");
  }
@@ -57,22 +77,123 @@ static void Profiles(){
  PerformancePresetAssignments output;std::string error;Check(ExpandPerformancePreset(PerformancePresets()[0],output,error),"sentinel");
  auto saved=output;auto invalid=PerformancePresets()[1];invalid.name=nullptr;
  Check(!ExpandPerformancePreset(invalid,output,error),"invalid source name");
- for(size_t i=0;i<32;++i)Check(output[i].key==saved[i].key && output[i].value==saved[i].value,"failed expansion unchanged");
+ for(size_t i=0;i<output.size();++i)Check(output[i].key==saved[i].key && output[i].value==saved[i].value,"failed expansion unchanged");
  auto normalization=PerformancePresets()[2];normalization.anisotropy=17;
  Check(ExpandPerformancePreset(normalization,output,error)&&std::get<int>(output[6].value)==17,"legacy normalization probe reaches setter unchanged");
 }
 static void Detection(){
- const std::vector<int> ram={-1,0,1,4095,4096,4097,8191,8192,8193,16383,16384,16385,4194304,4194305};
- const std::vector<int> video={-1,0,1,1023,1024,1025,2047,2048,2049,6143,6144,6145,262144,262145};
- for(int flags=0;flags<32;++flags)for(int r:ram)for(int v:video){
-  PerformancePresetSignals s;s.explicitLowPower=flags&1;s.raspberryPi=flags&2;s.steamDeck=flags&4;s.legacyRenderer=flags&8;s.arm64=flags&16;s.systemRamMB=r;s.videoRamMB=v;
-  const int er=r<=0||r>4194304?8192:r,ev=v<=0||v>262144?2048:v;
-  const bool constrained=er<=4096||ev<=1024;
-  const char* expected=s.explicitLowPower||s.raspberryPi?"lowpower":s.steamDeck?"performance":s.legacyRenderer?"minimum":constrained?"lowpower":s.arm64?"performance":er<=8192||ev<=2048?"performance":er>=16384&&ev>=6144?"quality":"balanced";
-  const auto result=DetectPerformancePreset(s);
-  Check(result.preset && std::string(result.preset->name)==expected,"detection priority/boundary matrix");
-  Check(result.systemRamMB==er&&result.videoRamMB==ev,"bounded memory fallback");
+ using GPU=RendererGpuClass;
+ PerformancePresetSignals desktop;
+ desktop.systemRamMB=32768;desktop.videoRamMB=8192;desktop.gpuClass=GPU::Discrete;
+ desktop.modernEffects=true;desktop.logicalCpus=8;desktop.drawableWidth=1920;desktop.drawableHeight=1080;
+ auto expect=[](const PerformancePresetSignals& s,const char* name){
+  Check(std::string(DetectPerformancePreset(s).preset->name)==name,"hardware scenario recommendation");
+ };
+ expect({},"performance");expect(desktop,"enhanced");
+ auto s=desktop;s.drawableWidth=2560;s.drawableHeight=1440;expect(s,"enhanced");
+ s.drawableWidth=3840;s.drawableHeight=2160;expect(s,"balanced");
+ s.drawableWidth=7680;s.drawableHeight=4320;expect(s,"performance");
+ s=desktop;s.logicalCpus=2;expect(s,"performance");s.logicalCpus=0;expect(s,"performance");
+ s=desktop;s.gpuClass=GPU::Integrated;s.videoRamMB=128;expect(s,"balanced");
+ s.arm64=true;expect(s,"balanced"); // Apple Silicon is not penalized for ISA/UMA.
+ s.modernEffects=false;expect(s,"balanced"); // Apple GL 2.1 still runs classic quality.
+ s.drawableWidth=2560;s.drawableHeight=1600;expect(s,"performance");
+ s=desktop;s.gpuClass=GPU::Unknown;expect(s,"performance");
+ s.gpuClass=GPU::Virtual;expect(s,"performance");
+ s.gpuClass=GPU::Software;s.steamDeck=true;expect(s,"minimum");
+ s=desktop;s.legacyRenderer=true;s.explicitLowPower=true;expect(s,"minimum");
+ s=desktop;s.explicitLowPower=true;expect(s,"lowpower");
+ s=desktop;s.raspberryPi=true;expect(s,"lowpower");s.systemRamMB=2048;expect(s,"minimum");
+ s=desktop;s.steamDeck=true;expect(s,"performance");
+ s.videoRamMB=512;expect(s,"minimum");s.explicitLowPower=true;expect(s,"minimum");
+ s=desktop;s.videoRamMB=512;s.raspberryPi=true;expect(s,"minimum");
+ s=desktop;s.systemRamMB=4096;s.steamDeck=true;expect(s,"lowpower");
+ s=desktop;s.mobile=true;expect(s,"performance");
+ s.gpuClass=GPU::Integrated;expect(s,"performance");
+ s.systemRamMB=4096;expect(s,"lowpower");s.systemRamMB=2048;expect(s,"minimum");
+ s=desktop;s.modernEffects=false;expect(s,"balanced");
+ for(const auto& [ram,name]:std::vector<std::pair<int,const char*>>{{0,"performance"},{2048,"minimum"},{2049,"lowpower"},{4096,"lowpower"},{4097,"performance"},{8191,"performance"},{8192,"balanced"},{15359,"balanced"},{15360,"enhanced"},{16383,"enhanced"},{16384,"enhanced"},{4194305,"performance"}}){s=desktop;s.systemRamMB=ram;expect(s,name);}
+ for(const auto& [vram,name]:std::vector<std::pair<int,const char*>>{{-1,"performance"},{0,"performance"},{1,"minimum"},{512,"minimum"},{513,"lowpower"},{1024,"lowpower"},{1025,"performance"},{2048,"performance"},{2049,"balanced"},{7679,"balanced"},{7680,"enhanced"},{8188,"enhanced"},{8191,"enhanced"},{8192,"enhanced"},{262144,"enhanced"},{262145,"performance"}}){s=desktop;s.videoRamMB=vram;expect(s,name);}
+ for(const auto& [name,type]:std::vector<std::pair<const char*,GPU>>{
+  {"NVIDIA GeForce RTX 4060 Laptop GPU",GPU::Discrete},{"AMD Radeon RX 6800",GPU::Discrete},
+  {"ANGLE (Intel, Intel(R) Iris(R) Xe Graphics, D3D11)",GPU::Integrated},
+  {"Intel(R) Arc(TM) A770 Graphics",GPU::Discrete},{"Apple M4 Pro",GPU::Integrated},
+  {"AMD Radeon R7 Graphics",GPU::Integrated},{"AMD Radeon R7 260X",GPU::Discrete},
+  {"AMD Radeon 780M",GPU::Integrated},{"Intel(R) Arc(TM) Graphics",GPU::Integrated},
+  {"Apple GPU",GPU::Integrated},{"NVIDIA Tegra X1",GPU::Integrated},
+  {"AMD Radeon(TM) Graphics",GPU::Integrated},{"Mali-G610",GPU::Integrated},
+  {"Adreno (TM) 740",GPU::Integrated},{"V3D 7.1",GPU::Integrated},
+  {"llvmpipe (LLVM 19)",GPU::Software},{"SwiftShader Device",GPU::Software},
+  {"SVGA3D; build",GPU::Virtual},{"virgl",GPU::Virtual},{"Future Unknown GPU",GPU::Unknown},
+  {"",GPU::Unknown}})Check(RendererClassifyGLDevice(name)==type,"active GL driver classification");
+ // Memory cannot override hardware/power constraints, and ISA never ranks a GPU.
+ for(int flags=0;flags<64;++flags)for(auto gpu:{GPU::Unknown,GPU::Integrated,GPU::Discrete,GPU::Virtual,GPU::Software})
+ for(int ram:{-1,0,2048,4096,8192,16384,4194305})for(int vram:{-1,0,512,1024,2048,8192,262145}){
+  s=desktop;s.explicitLowPower=flags&1;s.raspberryPi=flags&2;s.steamDeck=flags&4;s.legacyRenderer=flags&8;s.arm64=flags&16;s.mobile=flags&32;
+  s.gpuClass=gpu;s.systemRamMB=ram;s.videoRamMB=vram;const auto result=DetectPerformancePreset(s);
+  Check(result.preset>=&PerformancePresets()[0]&&result.preset<=&PerformancePresets()[4],"auto never selects unmeasured top tiers");
+  s.arm64=!s.arm64;Check(DetectPerformancePreset(s).preset==result.preset,"CPU ISA cannot rank graphics");
+  if(gpu==GPU::Software||s.legacyRenderer)Check(result.preset==FindPerformancePreset("minimum"),"capability limits dominate environment hints");
+  if(gpu==GPU::Discrete&&vram>0&&vram<=512)Check(result.preset==FindPerformancePreset("minimum"),"dedicated memory limits dominate all power hints");
+  if(s.mobile)Check(result.preset<=FindPerformancePreset("performance"),"mobile power ceiling across hardware combinations");
+  Check(result.systemRamMB>=0&&result.systemRamMB<=4194304&&result.videoRamMB>=0&&result.videoRamMB<=262144,"bounded telemetry");
  }
+}
+static void DetectionResolution(){
+ using GPU=RendererGpuClass;
+ PerformancePresetSignals s;
+ s.systemRamMB=16384;s.videoRamMB=128;s.gpuClass=GPU::Integrated;
+ s.modernEffects=true;s.logicalCpus=8;s.drawableWidth=1920;s.drawableHeight=1080;
+ auto expect=[&](const char* name,int scale,int aa){
+  const auto detection=DetectPerformancePreset(s);PerformancePreset resolved;
+  Check(ResolveDetectedPerformancePreset(detection,resolved),"detected record resolves");
+  Check(std::string(resolved.name)==name&&resolved.screenFraction==scale&&resolved.postAA==aa,"independent automatic scene/AA expectation");
+  Check(resolved.screenFraction<=detection.preset->screenFraction,"automatic scale never supersamples or exceeds template");
+ };
+ expect("balanced",100,1);
+ s.drawableWidth=2560;s.drawableHeight=1440;expect("performance",75,1);
+ s.drawableWidth=3840;s.drawableHeight=2160;expect("performance",50,1);
+ s.drawableWidth=5120;s.drawableHeight=2880;expect("performance",25,1);
+ s.drawableWidth=1920;s.drawableHeight=1080;s.modernEffects=false;expect("balanced",100,0);
+ s.postAAAvailable=true;expect("balanced",100,1); // AA can exist without all modern effects.
+ s.modernEffects=true;s.gpuClass=GPU::Discrete;s.videoRamMB=4096;
+ s.drawableWidth=3840;s.drawableHeight=2160;expect("balanced",50,1);
+ s.videoRamMB=8192;expect("balanced",100,1);
+ s.drawableWidth=7680;s.drawableHeight=4320;expect("performance",50,1);
+ s.drawableWidth=3840;s.drawableHeight=2160;s.steamDeck=true;expect("performance",50,1);
+ s.steamDeck=false;s.raspberryPi=true;expect("lowpower",25,0);
+ s.raspberryPi=false;s.gpuClass=GPU::Software;expect("minimum",25,0);
+ s.gpuClass=GPU::Unknown;expect("performance",50,1);
+ s.gpuClass=GPU::Integrated;s.mobile=true;expect("performance",25,1);
+ s.drawableWidth=2560;s.drawableHeight=1440;expect("performance",50,1);
+ s.mobile=false;
+ for(int bad:{-1,0,32769,2147483647}){
+  s.drawableWidth=bad;s.drawableHeight=1080;expect("performance",85,1);
+  s.drawableWidth=1920;s.drawableHeight=bad;expect("performance",85,1);
+ }
+ // Pixel arithmetic stays bounded, scale is monotonic and selected from the UI
+ // catalog. Huge, valid drawables may exhaust the supported 10% scale floor.
+ for(auto gpu:{GPU::Unknown,GPU::Integrated,GPU::Discrete,GPU::Virtual,GPU::Software}){
+  s.gpuClass=gpu;int previous=100;
+  for(int width:{320,640,1280,1920,2560,3840,5120,7680,16384,32768}){
+   s.drawableWidth=width;s.drawableHeight=width*9/16;
+   const auto d=DetectPerformancePreset(s);
+   Check(d.screenFraction<=previous&&std::set<int>({10,25,50,75,85,100}).contains(d.screenFraction),"monotonic selectable automatic scale");
+   const long long work=1LL*s.drawableWidth*s.drawableHeight*d.screenFraction*d.screenFraction;
+   Check(d.screenFraction==10||work<=1LL*d.scenePixelBudget*10000,"scene pixel budget or supported minimum scale");
+   previous=d.screenFraction;
+  }
+ }
+ auto output=*FindPerformancePreset("ultra");PerformancePresetDetection missing;
+ Check(!ResolveDetectedPerformancePreset(missing,output)&&std::string(output.name)=="ultra","failed resolution leaves output unchanged");
+ auto invalid=DetectPerformancePreset(s);invalid.screenFraction=201;
+ Check(!ResolveDetectedPerformancePreset(invalid,output)&&output.screenFraction==100,"invalid recommendation cannot change output");
+ Check(FindPerformancePreset("performance")->screenFraction==85&&FindPerformancePreset("balanced")->postAA==1,"automatic adaptations leave manual recipes immutable");
+ for(int spec=0;spec<4;++spec){
+  const char* names[]={"lowpower","performance","balanced","ultra"};
+  Check(PerformancePresetForMachineSpec(spec)==FindPerformancePreset(names[spec]),"stock quality maps to canonical recipe");
+ }
+ for(int spec:{-2147483647,-1,4,2147483647})Check(!PerformancePresetForMachineSpec(spec),"invalid stock classification cannot apply a recipe");
 }
 struct Host:SettingsHost{
  StateValues live={{"number",1.0},{"flag",true},{"label",std::string("custom")}};
@@ -141,4 +262,4 @@ int main(){
  _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);_CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
  _CrtSetReportMode(_CRT_ERROR,_CRTDBG_MODE_FILE);_CrtSetReportFile(_CRT_ERROR,_CRTDBG_FILE_STDERR);
 #endif
- Profiles();Detection();Generated();std::printf("performance profiles and generated transaction: %d checks passed\n",checks);}
+ AssignmentCapture();Profiles();Detection();DetectionResolution();Generated();std::printf("performance profiles and generated transaction: %d checks passed\n",checks);}

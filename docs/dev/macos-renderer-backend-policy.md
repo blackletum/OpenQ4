@@ -112,10 +112,12 @@ is [plans/2026-07-25-macos-moltenvk.md](archive/2026-10-18/plans/2026-07-25-maco
 Clearing that gate did not change the default renderer, the package set, or the
 macOS support claim:
 
-- OpenGL remains the default and recommended macOS renderer in both package
-  variants.
-- Vulkan is opt-in only, through `r_renderApi vulkan`, applied at the next
-  engine start. `r_renderApi best` still resolves to `gl` on macOS.
+- The user-requested 28 October 2026 hardware policy makes fresh desktop
+  `best` configurations try Vulkan with OpenGL fallback. Existing explicit
+  OpenGL selections remain OpenGL in both package variants.
+- The retained System menu saves backend and stable device preferences and
+  offers a main-menu engine restart. Vulkan remains experimental on macOS;
+  this selection policy does not close its physical hardware gates.
 - No third package variant and no new `macos_graphics_bridge` value are
   introduced. The `renderer-vk_<arch>.dylib` module and the bundled
   `libMoltenVK.dylib` ship inside the existing `OpenGL` and `Metal bridge`

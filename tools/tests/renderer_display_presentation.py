@@ -110,7 +110,7 @@ struct Executor {
     vkRing_t vertexRings[2],indexRings[2],uniformRings[2];
     int temporalNativeWidth=0,temporalNativeHeight=0,temporalHistoryGenerationSeen=0;
     VkFormat temporalSwapchainFormat=VK_FORMAT_UNDEFINED,pipelineTargetFormat=VK_FORMAT_R8G8B8A8_UNORM;
-    VkPipeline casterPipeline{},pointCasterPipeline{},displayColorPipeline{};
+    VkPipeline casterPipeline[2]{},pointCasterPipeline[2]{},displayColorPipeline{};
     VkDescriptorPool descriptorPool{}; VkDescriptorSet retiredSets[2][4]{}; int numRetiredSets[2]{};
     void *activeRenderTexture=nullptr,*activeColorEntry=nullptr,*activeDepthEntry=nullptr;
     void *activeColorEntries[4]{};VkImageView activeColorAttachmentViews[4]{};int activeCubeFace=0;
@@ -119,6 +119,9 @@ struct Executor {
 PIPELINE_FIELDS
 } vkExec;
 static bool VK_GuiExecutor_FrameIsOpen(){return vkExec.frameOpen;}
+// Save-preview ownership is covered by the checkpoint capture fixtures.
+static void VK_ConsumeSavePreview(int){}
+static void RB_QueueSavePreview(){}
 // Surface recovery rebuilds the surface and swapchain (VulkanDevice.cpp); the
 // double records the request and clears the loss when the window cooperates.
 static bool VK_Device_RecoverSurface(){calls.emplace_back("recover-surface");++recoverCalls;if(recoverOkay)vkCtx.surfaceLost=false;return recoverOkay;}

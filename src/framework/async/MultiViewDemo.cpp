@@ -15,6 +15,7 @@ their layout, and corrupt/truncated streams fail at a bounded record.
 
 #include "../Session_local.h"
 #include "../../idlib/NumericString.h"
+#include "MvdStorageBudget.h"
 
 #include <time.h>
 
@@ -132,6 +133,12 @@ idCVar mvd_maxDurationMinutes(
 	CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER,
 	"maximum MVD recording duration in minutes; 0 disables the limit",
 	0, 1440 );
+
+idCVar mvd_libraryQuotaMB(
+	"mvd_libraryQuotaMB", "0",
+	CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER,
+	"maximum writable MVD library size in MiB; refuses new recordings when full, never deletes existing recordings; 0 disables",
+	0, 1048576 );
 
 idCVar mvd_enforceContent(
 	"mvd_enforceContent", "1",
@@ -562,6 +569,7 @@ void idMultiViewDemo::ClearState() {
 	memset( &header, 0, sizeof( header ) );
 
 	recordingStartRealTime = 0;
+	recordingLibraryByteLimit = 0;
 	lastSnapshotGameFrame = 0;
 	lastSnapshotGameTime = 0;
 	lastSnapshotFileOffset = 0;
@@ -607,6 +615,7 @@ void idMultiViewDemo::Init() {
 	cmdSystem->AddCommand( "mvdInfo", Info_f, CMD_FL_SYSTEM, "validates and describes a multi-view demo" );
 	cmdSystem->AddCommand( "mvdRecover", Recover_f, CMD_FL_SYSTEM, "salvages the complete part of an interrupted .mvd.part recording into a new demo" );
 	cmdSystem->AddCommand( "mvdStatus", Status_f, CMD_FL_SYSTEM, "reports multi-view playback time and camera state" );
+	cmdSystem->AddCommand( "mvdLibrary", Library_f, CMD_FL_SYSTEM, "reports writable MVD library storage and its configured quota" );
 	cmdSystem->AddCommand( "mvdPause", Pause_f, CMD_FL_SYSTEM, "toggles MVD playback pause" );
 	cmdSystem->AddCommand( "mvdSeek", Seek_f, CMD_FL_SYSTEM, "seeks to an MVD time in seconds" );
 	cmdSystem->AddCommand( "mvdSkip", Skip_f, CMD_FL_SYSTEM, "moves relative to the current MVD time in seconds" );
@@ -1525,6 +1534,10 @@ bool idMultiViewDemo::WouldExceedLimits( int additionalBytes ) const {
 	if ( file == NULL ) {
 		return true;
 	}
+	if ( openq4_mvd::WouldExceedLibraryBudget( file->Length(), additionalBytes,
+			recordingIndex.Num(), recordingLibraryByteLimit ) ) {
+		return true;
+	}
 	const int maxSizeMB = mvd_maxSizeMB.GetInteger();
 	if ( maxSizeMB <= 0 ) {
 		return false;
@@ -1548,6 +1561,24 @@ bool idMultiViewDemo::StartRecording( const idCmdArgs &args ) {
 			SERVER_MVD_REASON_START_REJECTED, NULL, NULL );
 		common->Printf( "recordMVD requires an active multiplayer server map\n" );
 		return false;
+	}
+
+	const int quotaMB = mvd_libraryQuotaMB.GetInteger();
+	if ( quotaMB > 0 ) {
+		openq4_mvd::LibraryUsage usage;
+		if ( !openq4_mvd::ScanLibrary( std::filesystem::u8path(
+				fileSystem->RelativePathToOSPath( "demos", "fs_savepath" ) ), usage ) ) {
+			SetRecordingResult( SERVER_MVD_RESULT_FAILED, SERVER_MVD_REASON_START_REJECTED, NULL, NULL );
+			common->Warning( "MVD library quota could not measure the writable recording directory" );
+			return false;
+		}
+		recordingLibraryByteLimit = static_cast<int64_t>( quotaMB ) * 1024 * 1024 - usage.bytes;
+		if ( recordingLibraryByteLimit <= MVD_HEADER_BYTES + 100 ) {
+			SetRecordingResult( SERVER_MVD_RESULT_FAILED, SERVER_MVD_REASON_START_REJECTED, NULL, NULL );
+			common->Warning( "MVD library quota is full; archive recordings explicitly before recording again" );
+			Clear();
+			return false;
+		}
 	}
 
 	fileName = BuildRecordingName( args );
@@ -3461,6 +3492,8 @@ void idMultiViewDemo::Status_f( const idCmdArgs &args ) {
 			demo.fileName.c_str(), demo.tempFileName.c_str(), demo.file != NULL ? demo.file->Tell() : 0,
 			Sys_Milliseconds() - demo.recordingStartRealTime, demo.snapshotCount, demo.reliableCount,
 			demo.recordCount );
+		common->Printf( "MVD_RECORDING_BUDGET libraryBytes=%lld\n",
+			static_cast<long long>( demo.recordingLibraryByteLimit ) );
 	}
 	if ( demo.recordingResultValid ) {
 		static const char * const states[] = { "pending", "committed", "failed" };
@@ -3470,6 +3503,17 @@ void idMultiViewDemo::Status_f( const idCmdArgs &args ) {
 			static_cast<int>( demo.recordingResult.reason ), demo.recordingResult.finalQPath,
 			demo.recordingResult.partialQPath );
 	}
+}
+
+void idMultiViewDemo::Library_f( const idCmdArgs &args ) {
+	openq4_mvd::LibraryUsage usage;
+	if ( !openq4_mvd::ScanLibrary( std::filesystem::u8path(
+			fileSystem->RelativePathToOSPath( "demos", "fs_savepath" ) ), usage ) ) {
+		common->Printf( "MVD_LIBRARY unavailable: directory is linked, unreadable or exceeds the scan limit\n" );
+		return;
+	}
+	common->Printf( "MVD_LIBRARY recordings=%u bytes=%lld quotaMB=%d automaticDeletion=0\n",
+		usage.recordings, static_cast<long long>( usage.bytes ), mvd_libraryQuotaMB.GetInteger() );
 }
 
 void idMultiViewDemo::Pause_f( const idCmdArgs &args ) {

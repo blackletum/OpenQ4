@@ -63,6 +63,13 @@ RUNTIME_BINARY_PATTERNS = (
 )
 BUILD_GAME_GENERATED_IGNORE_PATTERNS = (
     "*.dll.p",
+    "*.a.p",
+    "*.lib.p",
+    "*.obj",
+    "*.o",
+    "*.a",
+    "*.lib",
+    "*.exp",
 )
 SOURCE_GAME_RUNTIME_IGNORE_PATTERNS = (
     "meson.build",

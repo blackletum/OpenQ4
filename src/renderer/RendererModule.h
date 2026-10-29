@@ -154,6 +154,14 @@ void	R_RendererModule_PublishRendererSelection( const renderRendererSelection_t 
 bool	R_RendererModule_GetLightGridLoadPolicy( bool *preload, uint64_t *token );
 void	R_RendererModule_PublishLightGridLoadReceipt( const renderLightGridLoadReceipt_t *receipt );
 bool	R_RendererModule_QueryRendererSelection( renderRendererSelection_t &selection, uint64_t &serial, uint64_t &epoch );
+struct renderDeviceCatalog_t;
+bool R_RendererModule_QueryRenderingDevices(renderDeviceCatalog_t& output);
+bool R_RendererModule_RenderSelectionPending(const char* api, const char* device);
+// After checked menu persistence, supersede the original launch preferences
+// for this process's explicit renderer reload. Other launch options survive.
+void R_RendererModule_UseSavedSelectionOnReload();
+// Engine command boundary only, after ShutdownGame has retired every owner.
+bool R_RendererModule_FinishSelectionReload();
 bool	R_RendererModule_QueryLightGridLoad( renderLightGridLoadReceipt_t &receipt, uint64_t &serial, uint64_t &epoch );
 
 // OpenXR (render API 21): the renderer reports RENDER_DEVICE_READY after every

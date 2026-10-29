@@ -605,6 +605,7 @@ public:
 // RAVEN BEGIN
 // mekberg: added saveTypes
 	virtual void			SaveGame( idFile *saveGameFile, saveType_t saveType = ST_REGULAR );
+	virtual void NotifySaveGameComplete();
 // RAVEN END
 	virtual void			MapShutdown( void );
 	virtual void			CacheDictionaryMedia( const idDict *dict );

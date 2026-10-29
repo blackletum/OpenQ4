@@ -740,6 +740,7 @@ idGameLocal::Shutdown
 ============
 */
 void idGameLocal::Shutdown( void ) {
+	idSaveGame::ClearDictionaryCache();
 
 	int		i;
 	if ( moduleShutdownStarted ) {
@@ -1159,11 +1160,6 @@ void idGameLocal::SaveGame( idFile *f, saveType_t saveType ) {
 	savegame.Close();
 
 // RAVEN BEGIN
-// mekberg: added saveTypes and wrapped saveMessage
-	if ( saveType != ST_AUTO && GetLocalPlayer() && GetLocalPlayer()->GetHud() ) {
-		GetLocalPlayer()->SaveMessage();
-	}
-
 // jshepard: resume weapon operation
 	if(	GetLocalPlayer() && 
 		!GetLocalPlayer()->IsInVehicle() &&	
@@ -1171,6 +1167,12 @@ void idGameLocal::SaveGame( idFile *f, saveType_t saveType ) {
 		GetLocalPlayer()->weapon->PostSave();
 	}
 // RAVEN END
+}
+
+void idGameLocal::NotifySaveGameComplete() {
+	if ( GetLocalPlayer() && GetLocalPlayer()->GetHud() ) {
+		GetLocalPlayer()->SaveMessage();
+	}
 }
 
 /*
@@ -3022,6 +3024,7 @@ idGameLocal::MapShutdown
 ============
 */
 void idGameLocal::MapShutdown( void ) {
+	idSaveGame::ClearDictionaryCache();
 	Printf( "------------ Game Map Shutdown --------------\n" );
 
 	mpGame.PrepareForMapShutdown();
@@ -4668,6 +4671,7 @@ TIME_THIS_SCOPE("idGameLocal::RunFrame - gameDebug.BeginFrame()");
 	D_DrawDebugLines();
 
 	g_simpleItems.ClearModified();
+	if ( lastCatchupFrame ) idSaveGame::PopulateDictionaryCache();
 	return ret;
 }
 // RAVEN END

@@ -320,7 +320,7 @@ def check_sources(game: str, render_h: str, render_system: str, tr_backend: str,
     require(tail, "virtual bool\t\t\tPresentScaledScene( idRenderTexture *sceneColorTarget ) = 0;",
             "PresentScaledScene keeps its existing idRenderSystem slot")
     slots = re.findall(r"\bvirtual\b[^(]*?\b(\w+)\s*\(", tail)
-    if slots != ["GetVRFrameResult", "PresentScaledScene", "BeginGuiRoot"]:
+    if slots[:3] != ["GetVRFrameResult", "PresentScaledScene", "BeginGuiRoot"]:
         raise AssertionError(f"renderer extensions must follow the existing scaled-presentation slot: {slots}")
     front = function_body(render_system, "bool idRenderSystemLocal::PresentScaledScene( idRenderTexture *sceneColorTarget )")
     if "#if" in front or "OPENQ4_RENDERER_VK_MODULE" in front:

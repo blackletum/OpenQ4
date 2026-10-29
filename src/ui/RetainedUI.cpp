@@ -5,7 +5,9 @@
 #ifndef ID_DEDICATED
 #include "LegacyGuiImport.h"
 #include "DeviceContext.h"
+#include "Window.h"
 #include "UserInterfaceLocal.h"
+#include "RenderWindow.h"
 extern idUserInterfaceManagerLocal uiManagerLocal;
 #include "UserInterfaceManaged.h"
 #include "retained/Runtime.h"
@@ -98,6 +100,7 @@ public:
 	// pass boundary; icons and cached panels can remain in the same batch.
 	void BeginRoot() {
 		CollectGeneratedImages();
+		CollectModels();
 		renderSystem->BeginGuiRoot(); boundTarget=nullptr;
 		rasterDraws=rasterSavedVertices=0;
 	}
@@ -173,6 +176,17 @@ public:
 	}
 	std::uintptr_t LoadMaterial(const std::string& name, int& width, int& height) override {
 		std::string source = name.compare(0,9,"material:") == 0 ? name.substr(9) : name;
+		const std::string modelSource=source.compare(0,8,"_repeat/")==0 ? source.substr(8) : source;
+		if (modelSource.compare(0,9,"q4-model/")==0) {
+			unsigned slot=0;
+			for (const char ch:modelSource.substr(9)) {
+				if (ch<'0' || ch>'9' || slot>ModelCapacity) return 0;
+				slot=slot*10+unsigned(ch-'0');
+			}
+			if (!slot || slot>ModelCapacity || !modelScenes[slot-1].owner || !modelScenes[slot-1].ready) return 0;
+			const auto& model=modelScenes[slot-1]; width=model.width; height=model.height;
+			return reinterpret_cast<std::uintptr_t>(model.material);
+		}
 		// The spike's images are direct image paths/generated font pages. Full
 		// legacy multi-stage materials and movies need their own draw operation.
 		// Additive pictures (image-blend additive) add their light to the target.
@@ -221,6 +235,104 @@ public:
 			if (reinterpret_cast<std::uintptr_t>(generatedMaterials[i])==texture && generatedImages.IsLive(i+1)) {
 				generatedImages.Retire(i+1,RenderFrame()); return;
 			}
+		}
+	}
+	bool RenderModelScene(std::uint64_t owner,const openq4::ui::ModelScene& scene,int width,int height,double seconds,
+		std::string& image,std::string& error) override {
+		if (!renderSystem || !gameEdit || !owner || !openq4::ui::ValidModelScene(scene,error)) {
+			if (error.empty()) error="The model preview renderer is unavailable";
+			return false;
+		}
+		if (session->writeDemo) { error="Model preview output is unavailable while recording a renderer demo"; return false; }
+		const auto frame=RenderFrame();
+		CollectModels();
+		unsigned slot=ModelCapacity;
+		for (unsigned i=0;i<ModelCapacity;++i) if (modelScenes[i].owner==owner) { slot=i; break; }
+		std::unique_ptr<idUserInterfaceLocal> gui;
+		std::unique_ptr<idRenderWindow> window;
+		if (slot<ModelCapacity) {
+			auto& previous=modelScenes[slot];
+			if (previous.ready && previous.width==width && previous.height==height && previous.scene==scene && previous.seconds==seconds && previous.frame==frame) {
+				image="q4-model/"+std::to_string(slot+1); return true;
+			}
+			// A changed size or second submission in one front-end frame needs a
+			// fresh target; queued geometry must keep sampling its original pixels.
+			if (previous.width!=width || previous.height!=height || previous.frame==frame) {
+				gui=std::move(previous.gui); window=std::move(previous.window);
+				ReleaseModelScene(owner); slot=ModelCapacity;
+			}
+		}
+		if (slot==ModelCapacity) {
+			const int maximum=(std::min)(4096,renderSystem->GetGLConfig().maxTextureSize);
+			const std::uint64_t pixels=width>0 && height>0 ? std::uint64_t(width)*height : 0;
+			if (!pixels || width>maximum || height>maximum || pixels>ModelPixelBudget-modelPixels) { error="Model preview target exceeds the shared device/memory budget"; return false; }
+			for (unsigned i=0;i<ModelCapacity;++i) if (!modelScenes[i].width) { slot=i; break; }
+			if (slot==ModelCapacity) { error="Model preview target pool is exhausted"; return false; }
+			auto& model=modelScenes[slot];
+			model.owner=owner; model.width=width; model.height=height; modelPixels+=pixels;
+			model.gui=std::move(gui); model.window=std::move(window);
+			idImageOpts options; options.width=width; options.height=height; options.numLevels=1; options.isPersistant=true;
+			options.format=FMT_RGBA8;
+			idImage* colour=renderSystem->CreateImage(va("_retainedModelColour%u",slot+1),&options,TF_NEAREST);
+			idImage* resolved=renderSystem->CreateImage(va("_retainedModelImage%u",slot+1),&options,TF_LINEAR);
+			options.format=FMT_DEPTH_STENCIL;
+			idImage* depth=renderSystem->CreateImage(va("_retainedModelDepth%u",slot+1),&options,TF_NEAREST);
+			if (colour && depth) model.target=renderSystem->CreateRenderTexture(colour,depth);
+			if (resolved) model.resolved=renderSystem->CreateRenderTexture(resolved,nullptr);
+			model.material=declManager->FindMaterial(va("_retainedModel/%u",slot+1));
+			model.resolveMaterial=declManager->FindMaterial(va("_retainedModelResolve/%u",slot+1));
+			if (!model.target || !model.resolved || !model.material || model.material->GetState()==DS_DEFAULTED || !model.resolveMaterial ||
+				model.resolveMaterial->GetState()==DS_DEFAULTED || !renderSystem->ValidateMaterialArbPrograms(model.resolveMaterial)) {
+				ReleaseModelScene(owner); error="Model preview target or coverage shader could not be prepared"; return false;
+			}
+		}
+		auto& model=modelScenes[slot];
+		const int time=int(std::fmod((std::max)(0.0,seconds),86400.0)*1000.0);
+		if (model.window && time<model.time) model.window.reset();
+		if (!model.gui) model.gui=std::make_unique<idUserInterfaceLocal>(false);
+		if (!model.window) model.window=std::make_unique<idRenderWindow>(model.gui.get());
+		model.window->ConfigureModelScene(scene);
+		if (!model.window->PrepareModelScene(time,error)) return false;
+		const bool oldViewport=renderSystem->GetUseUIViewportFor2D();
+		idRenderTexture* oldTarget=boundTarget;
+		renderSystem->SetUseUIViewportFor2D(false);
+		BindTarget(model.target,true);
+		renderSystem->CropRenderSize(width,height,false,true);
+		renderSystem->ClearRenderTarget(true,true,1,0,0,0,0);
+		model.window->DrawModelScene(time,float(scene.fov),width,height);
+		BindTarget(model.resolved);
+		renderSystem->SetColor4(1,1,1,1);
+		renderSystem->DrawStretchPic(0,0,640,480,0,1,1,0,model.resolveMaterial);
+		// Flush the resolve while its crop is still active, then restore every
+		// surrounding output state before retained composition can begin.
+		BindTarget(oldTarget);
+		renderSystem->UnCrop();
+		renderSystem->SetUseUIViewportFor2D(oldViewport);
+		model.scene=scene; model.seconds=seconds; model.time=time; model.frame=frame; model.ready=true;
+		image="q4-model/"+std::to_string(slot+1);
+		if (ui_retainedTrace.GetBool()) common->Printf("RETAINED_MODEL slot=%u size=%dx%d parts=%u time=%d\n",slot+1,width,height,unsigned(scene.parts.size()),time);
+		return true;
+	}
+	void ReleaseModelScene(std::uint64_t owner) override {
+		if (!owner) return;
+		for (auto& model:modelScenes) if (model.owner==owner) { model.owner=0; model.frame=RenderFrame(); model.ready=false; }
+	}
+	void ClearModelWorlds() {
+		for (auto& model:modelScenes) { model.window.reset(); model.gui.reset(); model.ready=false; }
+	}
+	void PrecacheModelWorlds() {
+		if (!gameEdit || !renderSystem) return;
+		for (unsigned i=0;i<ModelCapacity;++i) {
+			auto& model=modelScenes[i];
+			if (!model.owner || model.scene.parts.empty()) continue;
+			model.material=declManager->FindMaterial(va("_retainedModel/%u",i+1));
+			model.resolveMaterial=declManager->FindMaterial(va("_retainedModelResolve/%u",i+1));
+			model.window.reset(); // Its idWindow destructor still consults the GUI.
+			model.gui=std::make_unique<idUserInterfaceLocal>(false);
+			model.window=std::make_unique<idRenderWindow>(model.gui.get());
+			model.window->ConfigureModelScene(model.scene);
+			std::string error;
+			if (!model.window->PrepareModelScene(model.time,error)) { model.window.reset(); model.gui.reset(); }
 		}
 	}
 	void SetGeneratedImageProbe(bool enabled) {
@@ -275,15 +387,16 @@ public:
 		const std::vector<int>& indices, std::uintptr_t handle) override {
 		const idMaterial* material = Material(handle);
 		auto& cached = meshes[mesh];
+		const auto frame = RenderFrame();
 		if (cached.revision != revision || cached.handle != handle || cached.width != viewportWidth || cached.height != viewportHeight) {
 			DropRaster(cached);
 			Convert(vertices,indices,material,handle,cached);
 			cached.revision = revision; cached.handle = handle; cached.width = viewportWidth; cached.height = viewportHeight;
 			cached.stableFrames=0; cached.rasterTried=false;
-		} else if (cached.lastFrame!=RenderFrame()) {
+		} else if (cached.lastFrame!=frame) {
 			++cached.stableFrames;
 		}
-		cached.lastFrame=RenderFrame();
+		cached.lastFrame=frame;
 		if (ui_retainedAtlas.GetBool() && (!handle || idStr::Icmp(material->GetName(),"_retainedMultiply")==0) &&
 			!cached.rasterTried && cached.stableFrames>=2 && vertices.size()>=64) {
 			cached.rasterTried=true;
@@ -312,6 +425,7 @@ public:
 		if (found!=meshes.end()) { DropRaster(found->second); meshes.erase(found); }
 	}
 	std::uint64_t RenderFrame() const override {
+		if (!renderSystem) return 0;
 		renderPresentationState_t state;
 		renderSystem->GetPresentationState(state);
 		return (static_cast<std::uint64_t>(static_cast<unsigned>(renderSystem->GetVideoRestartCount())) << 32) |
@@ -638,6 +752,7 @@ public:
 	// gone with it, and only the handles are dropped.
 	void Reset() {
 		meshes.clear();
+		for (unsigned i=0;i<ModelCapacity;++i) FreeModel(i);
 		generatedImages.Reset([this](unsigned slot){ return ShrinkGeneratedImage(slot); });
 		generatedMaterials.fill(nullptr);
 		generatedProbe=0;
@@ -674,6 +789,42 @@ public:
 	int captureWidth = 0, captureHeight = 0;
 	bool softFocus = false;
 private:
+	static constexpr unsigned ModelCapacity=64;
+	static constexpr std::uint64_t ModelPixelBudget=16u*1024u*1024u; // Colour/resolved RGBA plus depth/stencil: at most 256 MiB.
+	struct ModelTarget {
+		std::uint64_t owner=0, frame=0;
+		int width=0,height=0,time=0;
+		double seconds=0;
+		bool ready=false;
+		openq4::ui::ModelScene scene;
+		std::unique_ptr<idUserInterfaceLocal> gui;
+		std::unique_ptr<idRenderWindow> window;
+		idRenderTexture* target=nullptr;
+		idRenderTexture* resolved=nullptr;
+		const idMaterial* material=nullptr;
+		const idMaterial* resolveMaterial=nullptr;
+	};
+	std::array<ModelTarget,ModelCapacity> modelScenes;
+	std::uint64_t modelPixels=0;
+	void FreeModel(unsigned slot) {
+		auto& model=modelScenes[slot];
+		if (!model.width) return;
+		model.window.reset(); model.gui.reset();
+		if (renderSystem) {
+			renderSystem->DestroyRenderTexture(model.target); renderSystem->DestroyRenderTexture(model.resolved);
+			idImageOpts options; options.width=options.height=1; options.numLevels=1; options.isPersistant=true; options.format=FMT_RGBA8;
+			renderSystem->CreateImage(va("_retainedModelColour%u",slot+1),&options,TF_NEAREST);
+			renderSystem->CreateImage(va("_retainedModelImage%u",slot+1),&options,TF_LINEAR);
+			options.format=FMT_DEPTH_STENCIL;
+			renderSystem->CreateImage(va("_retainedModelDepth%u",slot+1),&options,TF_NEAREST);
+		}
+		modelPixels-=std::uint64_t(model.width)*model.height;
+		model={};
+	}
+	void CollectModels() {
+		const auto frame=RenderFrame();
+		for (unsigned i=0;i<ModelCapacity;++i) if (modelScenes[i].width && !modelScenes[i].owner && modelScenes[i].frame!=frame) FreeModel(i);
+	}
 	openq4::ui::GeneratedImagePool generatedImages;
 	std::array<const idMaterial*,openq4::ui::GeneratedImagePool::Capacity> generatedMaterials{};
 	std::uintptr_t generatedProbe=0;
@@ -719,19 +870,27 @@ private:
 	void DrawRaster(HostMesh& mesh,float opacity) {
 		renderSystem->SetColor4(1,1,1,1);
 		++rasterDraws; rasterSavedVertices+=mesh.vertices.size()-mesh.rasterTiles.size()*4;
-		mesh.lastFrame=RenderFrame();
+		const auto frame=RenderFrame();
+		mesh.lastFrame=frame;
 		const byte alpha=static_cast<byte>(std::clamp(opacity,0.f,1.f)*255.f+.5f);
 		for (const auto& tile:mesh.rasterTiles) {
-			auto& page=atlasPages[tile.page]; page.lastFrame=RenderFrame();
-			auto vertices=tile.quad;
-			for (auto& vertex:vertices) for (int c=0;c<4;++c) vertex.color[c]=vertex.color2[c]=alpha;
+			auto& page=atlasPages[tile.page]; page.lastFrame=frame;
 			const glIndex_t quad[6]={0,1,2,0,2,3};
-			renderSystem->DrawStretchPic(vertices.data(),quad,4,6,mesh.handle ? page.multiplyMaterial : page.material,false);
+			const auto* material=mesh.handle ? page.multiplyMaterial : page.material;
+			// Settled HUD panels already have opaque white modulation. Submit
+			// their cached quads directly; only a fade needs a coloured copy.
+			if (alpha==255) renderSystem->DrawStretchPic(tile.quad.data(),quad,4,6,material,false);
+			else {
+				auto vertices=tile.quad;
+				for (auto& vertex:vertices) for (int c=0;c<4;++c) vertex.color[c]=vertex.color2[c]=alpha;
+				renderSystem->DrawStretchPic(vertices.data(),quad,4,6,material,false);
+			}
 		}
 	}
 	void DropRaster(HostMesh& mesh) {
+		const auto frame=RenderFrame();
 		for (const auto& tile:mesh.rasterTiles) {
-			auto& page=atlasPages[tile.page]; --page.references; page.lastFrame=RenderFrame();
+			auto& page=atlasPages[tile.page]; --page.references; page.lastFrame=frame;
 		}
 		mesh.rasterTiles.clear();
 	}
@@ -1659,6 +1818,8 @@ bool RetainedUI_DefaultViewport(openq4::ui::Viewport& viewport) {
 }
 double RetainedUI_PresentationTime() { return PresentationTime(); }
 void RetainedUI_FrameSubmitted() { rootSubmissionPending = false; ++submittedFrames; }
+void RetainedUI_ClearModelWorlds() { host.ClearModelWorlds(); }
+void RetainedUI_PrecacheModelWorlds() { host.PrecacheModelWorlds(); }
 void RetainedUI_EndInitialization() {
 	RetainedUI_DestroyView(initializationView); initializationView = nullptr;
 }
@@ -1959,6 +2120,8 @@ void RetainedUI_DestroyPreparedEdit(retainedUIPreparedEdit_t*){}
 bool RetainedUI_DefaultViewport(openq4::ui::Viewport&) { return false; }
 double RetainedUI_PresentationTime() { return 0; }
 void RetainedUI_FrameSubmitted() {}
+void RetainedUI_ClearModelWorlds() {}
+void RetainedUI_PrecacheModelWorlds() {}
 bool RetainedUI_DrawInitialization(const char*) { return false; }
 bool RetainedUI_CanUpdateInitialization() { return false; }
 void RetainedUI_EndInitialization() {}

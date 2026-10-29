@@ -3486,11 +3486,13 @@ void Cmd_BotProbeTraversal_f( const idCmdArgs &args ) {
 	const bool dodgeProbe = !idStr::Icmp( args.Argv( 0 ), "bot_probeDodge" );
 	const bool airProbe = !idStr::Icmp( args.Argv( 0 ), "bot_probeAir" );
 	const bool dropProbe = !idStr::Icmp( args.Argv( 0 ), "bot_probeDrop" );
+	const bool walkProbe = !idStr::Icmp( args.Argv( 0 ), "bot_probeWalk" );
 	const navTravelType_t travel = padProbe ? NAVTRAVEL_JUMPPAD :
-		( dropProbe ? NAVTRAVEL_DROP : ( dodgeProbe || airProbe || !idStr::Icmp( args.Argv( 0 ), "bot_probeMove" ) ? NAVTRAVEL_WALK : NAVTRAVEL_JUMP ) );
-	if ( args.Argc() != ( padProbe ? 12 : 11 ) && !( dropProbe && args.Argc() == 14 ) ) {
+		( dropProbe ? NAVTRAVEL_DROP : ( dodgeProbe || airProbe || walkProbe || !idStr::Icmp( args.Argv( 0 ), "bot_probeMove" ) ? NAVTRAVEL_WALK : NAVTRAVEL_JUMP ) );
+	if ( args.Argc() != ( padProbe ? 12 : 11 ) && !( ( dropProbe || walkProbe ) && args.Argc() == 14 ) ) {
 		gameLocal.Printf( "usage: %s client x y z vx vy vz %s%s\n", args.Argv( 0 ),
-			airProbe ? "inputX inputY inputZ" : "targetX targetY targetZ", padProbe ? " padName" : ( dropProbe ? " [entryX entryY entryZ]" : "" ) );
+			airProbe ? "inputX inputY inputZ" : "targetX targetY targetZ", padProbe ? " padName" :
+			( dropProbe ? " [entryX entryY entryZ]" : ( walkProbe ? " [nextJumpX nextJumpY nextJumpZ]" : "" ) ) );
 		return;
 	}
 	int clientNum = 0;
@@ -3506,7 +3508,7 @@ void Cmd_BotProbeTraversal_f( const idCmdArgs &args ) {
 		}
 	}
 	float values[12] = { 0.0f };
-	for ( int i = 0; i < ( dropProbe && args.Argc() == 14 ? 12 : 9 ); i++ ) {
+	for ( int i = 0; i < ( ( dropProbe || walkProbe ) && args.Argc() == 14 ? 12 : 9 ); i++ ) {
 		if ( !idStr::IsNumeric( args.Argv( i + 2 ) ) ) {
 			gameLocal.Printf( "%s: coordinates must be numeric\n", args.Argv( 0 ) );
 			return;
@@ -3529,7 +3531,8 @@ void Cmd_BotProbeTraversal_f( const idCmdArgs &args ) {
 	const idVec3 target = airProbe ? origin + airInput * 64.0f : idVec3( values[6], values[7], values[8] );
 	const idVec3 entry( values[9], values[10], values[11] );
 	if ( !botManager.ProbeTraversal( clientNum, origin, idVec3( values[3], values[4], values[5] ), target,
-			travel, pad, dodgeProbe, airProbe ? &airInput : NULL, dropProbe && args.Argc() == 14 ? &entry : NULL ) ) {
+			travel, pad, dodgeProbe, airProbe ? &airInput : NULL, dropProbe && args.Argc() == 14 ? &entry : NULL,
+			walkProbe && args.Argc() == 14 ? &entry : NULL, walkProbe ) ) {
 		gameLocal.Printf( "%s: requires an isolated local cheat server with one live bot and a separate observer%s\n",
 			args.Argv( 0 ), padProbe ? ", and a pad with a proven natural landing" : "" );
 	}
@@ -3848,6 +3851,8 @@ static void Cmd_OpenQ4ReportMPState_f( const idCmdArgs &args ) {
 		gameLocal.Printf( "MP_POSE slot=%d entity=%s origin=%s hidden=%d\n",
 			slot, player->GetName(), player->GetPhysics()->GetOrigin().ToString( 2 ),
 			player->IsHidden() );
+		gameLocal.Printf( "MP_AIR slot=%d reservoir=%d percent=%d serverTime=%d\n", slot,
+			player->GetAirTics(), player->GetAirReadoutPercent(), player->GetAirReadoutServerTime() );
 		if ( gameLocal.isServer && player->spectating ) {
 			for ( int target = 0; target < gameLocal.numClients && target < MAX_CLIENTS; ++target ) {
 				// Live follow authority belongs to the server. A remote client's
@@ -3956,7 +3961,8 @@ static void Cmd_LagCompStatus_f( const idCmdArgs &args ) {
 		}
 		idGameLocal::mpLagCompEstimate_t estimate;
 		gameLocal.EstimateMPLagCompensation( clientNum, estimate );
-		const int rewindMS = idMath::ClampInt( 0, maxRewindMS, estimate.poseAgeMS + net_mpLagCompBiasMS.GetInteger() );
+		const int rewindMS = estimate.leadMS > 0 && estimate.measuredMS > 0 ?
+			idMath::ClampInt( 0, maxRewindMS, estimate.poseAgeMS + net_mpLagCompBiasMS.GetInteger() ) : 0;
 		gameLocal.Printf( "LAGCOMP_CLIENT client=%d name=\"%s\" lead=%dms rtt=%dms advertised=%dtics extrap=%dms age=%dms rewind=%dms\n",
 			clientNum, gameLocal.userInfo[ clientNum ].GetString( "ui_name" ), estimate.leadMS, estimate.measuredMS,
 			estimate.advertisedTics, estimate.extrapolationMS, estimate.poseAgeMS, rewindMS );
@@ -4008,6 +4014,15 @@ static void Cmd_OpenQ4ReportMPWorld_f( const idCmdArgs &args ) {
 				player->weapon->IsReady(), player->weapon->IsReloading() );
 		}
 		OpenQ4ReportMPAnimation( player->GetWeaponViewModel(), "weapon" );
+		rvViewWeapon *viewModel = player->GetWeaponViewModel();
+		const renderEntity_t *model = viewModel != NULL ? viewModel->GetRenderEntity() : NULL;
+		gameLocal.Printf( "MP_WORLD_VIEWMODEL entity=%d exists=%d present=%d hidden=%d stale=%d model=%s view=%d\n",
+			entity->entityNumber, viewModel != NULL,
+			viewModel != NULL && viewModel->GetModelDefHandle() >= 0,
+			viewModel != NULL && viewModel->IsHidden(),
+			viewModel != NULL && viewModel->fl.networkStale,
+			model != NULL && model->hModel != NULL ? model->hModel->Name() : "none",
+			model != NULL ? model->allowSurfaceInViewID : 0 );
 	}
 }
 
@@ -4370,6 +4385,7 @@ void idGameLocal::InitConsoleCommands( void ) {
 	cmdSystem->AddCommand( "bot_probeJump", Cmd_BotProbeTraversal_f, CMD_FL_GAME, "replay a bot jump on an isolated local cheat server" );
 	cmdSystem->AddCommand( "bot_probePad", Cmd_BotProbeTraversal_f, CMD_FL_GAME, "replay a bot pad flight on an isolated local cheat server" );
 	cmdSystem->AddCommand( "bot_probeMove", Cmd_BotProbeTraversal_f, CMD_FL_GAME, "replay bot movement on an isolated local cheat server" );
+	cmdSystem->AddCommand( "bot_probeWalk", Cmd_BotProbeTraversal_f, CMD_FL_GAME, "replay an unforced walk and optional following jump on an isolated local cheat server" );
 	cmdSystem->AddCommand( "bot_probeDrop", Cmd_BotProbeTraversal_f, CMD_FL_GAME, "replay a displaced bot drop on an isolated local cheat server" );
 	cmdSystem->AddCommand( "bot_probeDodge", Cmd_BotProbeTraversal_f, CMD_FL_GAME, "replay bot dodge admission on an isolated local cheat server" );
 	cmdSystem->AddCommand( "bot_probeAir", Cmd_BotProbeTraversal_f, CMD_FL_GAME, "replay a fall under one fixed full air input on an isolated local cheat server" );

@@ -128,9 +128,8 @@ def validate_companion_macos_contract() -> None:
                   "'-Wl,-install_name,@loader_path/' + game_sp_binary_name + '.dylib'",
                   "'-Wl,-install_name,@loader_path/' + game_mp_binary_name + '.dylib'"):
         require(modules,token,'in-tree macOS module install name')
-    workflow=read('.github/workflows/commit-validation.yml')
-    for token in ('macos-15','macos-15-intel'):
-        require(workflow,token,'in-tree macOS CI coverage')
+    require(read('.github/workflows/commit-validation.yml'),'macos-15','in-tree macOS CI coverage')
+    require(read('.github/workflows/push-verification.yml'),'macos-15-intel','in-tree macOS Intel CI coverage')
     validator=read('tools/validation/openq4_validate.py')
     require(validator,'lipo','staged Mach-O architecture validation')
     require(read('tools/build/package_nightly.py'),'macos_otool_install_name','packaged Mach-O install name validation')

@@ -1894,6 +1894,13 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
     if "gl33" not in tiers:
         cases = [case for case in cases if case["id"] != "tier-gl33-debug-context"]
 
+    # These legacy/modern-GL probes must not follow the player's automatic
+    # backend choice or an archived selection left by a previous case.
+    # Vulkan and fallback drills already select their backend explicitly.
+    for case in cases:
+        if "r_renderApi" not in case["args"]:
+            case["args"] = ["+set", "r_renderApi", "gl"] + case["args"]
+
     return cases
 
 

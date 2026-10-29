@@ -97,6 +97,15 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, cwd=path, check=True)
         subprocess.run([str(exe)], cwd=path, check=True)
+        # Slipping off a WALK rim is recoverable without an enemy impulse.
+        # Reverting admission to knock-only must fail the live-state cases.
+        mutated = harness.replace("( !knocked && !walkingFall )", "!knocked")
+        assert mutated != harness
+        cpp.write_text(mutated, encoding="utf-8")
+        subprocess.run(command, cwd=path, check=True)
+        result = subprocess.run([str(exe), "landings"], cwd=path, capture_output=True, text=True)
+        assert result.returncode != 0, "knock-only walking-fall mutation escaped"
+        print("Unpressed WALK recovery: knock-only mutation rejected")
         # A stale takeoff proof must not own movement after its flight loses
         # the landing. Exercise the failure control against production code.
         mutated = harness.replace("if ( dodgeHopAirborne && gameLocal.time >= dodgeHopCheckTime )",

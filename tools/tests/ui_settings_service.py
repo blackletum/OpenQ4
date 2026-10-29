@@ -283,6 +283,23 @@ public:
         if(!deviceData.receiptValid)return false;receipt=deviceData.receipt;serial=deviceData.receiptSerial;return true;
     }
 };
+// The hardware adapter has its own production-body fault tests. Keep existing
+// service/transaction scenarios independent of GPU drivers and engine restarts.
+namespace openq4::ui {
+static bool renderingPending=false,renderingRestartOkay=true;
+static int renderingPicks=0,renderingRestarts=0;
+static std::function<void()> renderingHook;
+class RenderingSettings {
+public:
+ void Reset() {}
+ void Read(const StateValues&,bool,StateValues&) {}
+ bool Select(double,const std::string&,StateValues& patch,std::string&) { ++renderingPicks;if(renderingHook)renderingHook();patch={{"r_brightness",1.5}};return true; }
+ bool Backend(const std::string&,StateValues& patch,std::string& error) { return Select(0,"",patch,error); }
+ static bool Pending(const StateValues&) { return renderingPending; }
+ static bool Restart(std::string& error) { ++renderingRestarts;if(!renderingRestartOkay)error="persistence failed";return renderingRestartOkay; }
+ static const std::map<std::string,size_t>& Schema() { static const std::map<std::string,size_t> s; return s; }
+};
+}
 // Execute the production Session::UpdateScreen frame boundary with a counted
 // synchronous renderer. No window, GPU or input APIs are used by these doubles.
 static std::function<void()> beginHook, drawHook, endHook;
@@ -1425,6 +1442,42 @@ static void Presets(const std::string& scenario) {
     }
     Check(host.live==original&&host.writes.empty(),"all generated service paths have zero live writes");
 }
+static void HardwareSelection(const std::string& scenario) {
+    const auto owner=Begin();const auto original=host.live;
+    const StateValues pick{{"index",0.0},{"catalog",std::string("1")}};
+    if(scenario=="shapes") {
+        Check(!Dispatch(owner,"backend",{{"api",0.0}}),"backend requires a name");
+        Check(!Dispatch(owner,"renderDevice",{{"index",0.0}}),"GPU requires catalog identity");
+        Check(!Dispatch(owner,"renderDevice",{{"index",0.0},{"catalog",1.0}}),"GPU identity is a string");
+        Check(!Dispatch(owner,"restartRenderer",{{"extra",true}}),"restart has no arguments");
+        Check(!renderingPicks&&!renderingRestarts,"malformed hardware actions have no effects");
+    } else if(scenario=="owner"||scenario=="release"||scenario=="close"||scenario=="reentry") {
+        if(scenario=="owner") {
+            const auto other=UI_SettingsCreateOwner();
+            Check(!Dispatch(other,"renderDevice",pick)&&!renderingPicks,"foreign owner cannot enumerate GPU");
+            renderingPending=true;Check(!Dispatch(other,"restartRenderer")&&!renderingRestarts,"foreign owner cannot restart");
+        } else {
+            renderingHook=[&]{if(scenario=="release")UI_SettingsReleaseOwner(owner);
+                else if(scenario=="close")UI_SettingsCloseOwner(owner);
+                else Check(!Dispatch(owner,"edit",{{"r_brightness",1.9}}),"nested GPU edit refused");};
+            Check(!Dispatch(owner,"renderDevice",pick),"interrupted GPU edit refused");renderingHook={};
+        }
+    } else if(scenario=="restart") {
+        Check(!Dispatch(owner,"restartRenderer")&&!renderingRestarts,"unchanged hardware cannot restart");
+        renderingPending=true;Check(!Dispatch(owner,"autodetect")&&!host.presetReads,"pending hardware blocks detection");
+        Check(Dispatch(owner,"renderDevice",pick),"GPU stages draft");
+        Check(!Dispatch(owner,"restartRenderer")&&!renderingRestarts,"dirty draft cannot restart");
+        Check(Dispatch(owner,"revert"),"discard draft before restart");
+        renderingRestartOkay=false;Check(!Dispatch(owner,"restartRenderer")&&renderingRestarts==1,"persistence failure cannot queue restart");
+        renderingRestartOkay=true;Check(Dispatch(owner,"restartRenderer")&&renderingRestarts==2,"clean applied preference may restart");
+        Check(!Dispatch(owner,"restartRenderer")&&renderingRestarts==2,"duplicate restart rejected");
+        Check(!Dispatch(owner,"backend",{{"api",std::string("gl")}}),"queued restart freezes settings");
+    } else {
+        Check(Dispatch(owner,"backend",{{"api",std::string("vulkan")}}),"backend stages draft");
+        Expect(owner,"draft.r_brightness",1.5);Expect(owner,"baseline.r_brightness",1.0);
+    }
+    Check(host.live==original&&host.writes.empty(),"hardware actions never alter live settings before Apply");
+}
 static void DisplayDraftPreflight() {
     const auto owner=Begin();UI_SettingsConfirmationDocument(owner,ConfirmationDocument());
     host.unsupportedTuple=true;
@@ -1441,7 +1494,7 @@ static void DisplayDraftPreflight() {
 }
 int main(int argc,char** argv) {
     Check(argc==2,"scenario required");const std::string name=argv[1];
-    if(name.starts_with("preset_"))Presets(name.substr(7));else if(name.starts_with("exact_"))ExactValues(name.substr(6));else if(name=="validation")Validation();else if(name=="ownership")Ownership();
+    if(name.starts_with("hardware_"))HardwareSelection(name.substr(9));else if(name.starts_with("preset_"))Presets(name.substr(7));else if(name.starts_with("exact_"))ExactValues(name.substr(6));else if(name=="validation")Validation();else if(name=="ownership")Ownership();
     else if(name=="drafts")Drafts();else if(name=="devices")Devices();
     else if(name=="conflict")Conflict();else if(name=="apply_failure")ApplyFailure();
     else if(name=="confirmation")Confirmation();else if(name=="abandon_editing")AbandonEditing();
@@ -1481,6 +1534,7 @@ int main(int argc,char** argv) {
 '''
 
 SCENARIOS = (
+    'hardware_shapes','hardware_owner','hardware_release','hardware_close','hardware_reentry','hardware_restart','hardware_backend',
     'preset_named','preset_auto','preset_shapes','preset_owner','preset_release','preset_close','preset_reentry','preset_failure',
     'exact_dirty_apply','exact_exit_guard','exact_conflict',
     'validation', 'ownership', 'drafts', 'devices', 'conflict', 'apply_failure',

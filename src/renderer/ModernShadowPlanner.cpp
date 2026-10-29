@@ -2475,6 +2475,7 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 	rendererShadowPlannerIntCVarRestore_t restoreShadowMapSize( r_shadowMapSize );
 	rendererShadowPlannerIntCVarRestore_t restoreProjectedCacheSize( r_shadowMapProjectedCacheSize );
 	rendererShadowPlannerIntCVarRestore_t restorePointCacheSize( r_shadowMapPointCacheSize );
+	rendererShadowPlannerIntCVarRestore_t restoreUpdateBudget( r_shadowMapMaxUpdatesPerView );
 	rendererShadowPlannerFloatCVarRestore_t restoreProjectionPad( r_shadowMapProjectionPad );
 	rendererShadowPlannerStringCVarRestore_t restoreBenchmarkPreset( r_rendererBenchmarkPreset );
 	r_shadows.SetBool( true );
@@ -2489,6 +2490,9 @@ bool RendererShadowPlanner_RunSelfTest( void ) {
 	r_shadowMapProjectionPad.SetFloat( 0.20f );
 	r_shadowMapProjectedCacheSize.SetInteger( 4 );
 	r_shadowMapPointCacheSize.SetInteger( 4 );
+	// The cache-estimate fixture isolates planner budgets from backend pass
+	// throttling, including limits selected by automatic performance presets.
+	r_shadowMapMaxUpdatesPerView.SetInteger( 0 );
 	r_rendererBenchmarkPreset.SetString( "baseline" );
 	if ( !R_ShadowMapCasterAdmissionSelfTest() ) {
 		return false;

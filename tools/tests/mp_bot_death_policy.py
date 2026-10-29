@@ -11,6 +11,7 @@ unknown teams - must remain a navigation death; later pushes are reported.
 from __future__ import annotations
 
 import sys
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -175,7 +176,39 @@ def main() -> None:
                                 policy.decide(candidate, outcomes(survivor="air00"), True)])
     check(summary["navigation_world_deaths"] == 1 and summary["excluded_impulse_deaths"] == 1,
           "the summary counts excluded deaths separately and keeps the rest")
-    print("mp_bot_death_policy: OK (positive control excluded; 12 replay and 9 log negative controls fail closed)")
+    # A stale-runtime refusal or process-launch failure still returns a
+    # complete fail-closed classification instead of losing the match report.
+    log = ROSTER + state(1000, teams) + impulse(1, 2000, 2) + death("Cortez", 4500)
+    for failure in (SystemExit("stale runtime"), OSError("process launch failed")):
+        with patch.object(policy, "replay_session", side_effect=failure):
+            failed = policy.classify_log(log, {"Cortez", "Rhodes", "Sledge"}, "CTF", "mp/q4ctf5",
+                Path("runtime"), "engine", Path("assets"), Path("output"), 28973)
+        check(failed["navigation_world_deaths"] == 1 and failed["excluded_impulse_deaths"] == 0,
+              "a refused replay must count the world death")
+        check(failed["deaths"][0].get("replay_failure") == str(failure), "retain replay refusal diagnostics")
+    for failed_batch in (None, 1):
+        calls = []
+        def session(*args):
+            batch = args[6]
+            calls.append(batch)
+            sample = "\nMP_BOT_REPLAY_BEGIN\n"
+            for trial in batch:
+                sample += f"MP_BOT_TRIAL_BEGIN {trial['name']}\nBOT_AIR_PROBE client=1 time=1\n"
+                sample += ("BOT_PROBE_GROUNDED client=1 time=2 health=90\n" if trial.get("counterfactual") else
+                           "Rhodes was killed by world\n")
+                sample += f"MP_BOT_TRIAL_END {trial['name']}\n"
+            return len(calls) - 1 != failed_batch, sample, 0
+        with patch.object(policy, "replay_session", side_effect=session):
+            result = policy.classify_log(log, {"Cortez", "Rhodes", "Sledge"}, "CTF", "mp/q4ctf5",
+                Path("runtime"), "engine", Path("assets"), Path("output"), 28973)
+        check(all(len(batch) <= 8 for batch in calls), "replay process lifetimes are bounded")
+        if failed_batch is None:
+            check(result["excluded_impulse_deaths"] == 1 and len(calls) == 3,
+                  "every independent batch and counterfactual must complete")
+        else:
+            check(result["excluded_impulse_deaths"] == 0 and result["navigation_world_deaths"] == 1,
+                  "a failed middle batch cannot borrow completion from earlier trials")
+    print("mp_bot_death_policy: OK (positive control excluded; replay/log/launch-failure controls fail closed)")
 
 
 if __name__ == "__main__":

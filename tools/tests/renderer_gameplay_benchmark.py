@@ -2001,7 +2001,10 @@ def parse_frame_window(line: str) -> dict[str, str]:
     if not match:
         return {}
     samples, span_ms, mean_ms = match.groups()
-    return {"pacingWindowSamples": samples, "pacingWindowSpanMs": span_ms, "pacingWindowMeanMs": mean_ms}
+    result = {"pacingWindowSamples": samples, "pacingWindowSpanMs": span_ms, "pacingWindowMeanMs": mean_ms}
+    if float(mean_ms) > 0 and int(samples) > 0:
+        result["pacingWindowHz"] = f"{1000.0 / float(mean_ms):.6f}"
+    return result
 
 
 def extract_summary(text: str) -> dict[str, str]:
@@ -2087,6 +2090,12 @@ def extract_summary(text: str) -> dict[str, str]:
                 break
     summary.update(parse_frame_pacing(summary["framePacing"]))
     summary.update(parse_frame_window(summary["framePacingWindow"]))
+    if "pacingWindowHz" in summary:
+        # Match the average to the same complete sample window as p95/max.
+        # The live HUD's last 120-frame moving average can hide a slow turn.
+        summary["pacingRecentHz"] = summary.get("pacingHz", "")
+        summary["pacingHz"] = summary["pacingWindowHz"]
+        summary["pacingPresentMs"] = summary["pacingWindowMeanMs"]
     return summary
 
 
@@ -3707,13 +3716,14 @@ def evaluate_display_evidence(
     screenshot: Path | None,
     expected_width: int = BUDGET_WIDTH,
     expected_height: int = BUDGET_HEIGHT,
+    expected_presentation: str = "windowed",
 ) -> tuple[dict[str, Any], list[str]]:
-    """Bind budget evidence to the renderer's actual mode and TGA dimensions."""
+    """Bind the requested display to the renderer's actual mode and TGA dimensions."""
     expected = {
         "modeSelector": "-1",
         "width": expected_width,
         "height": expected_height,
-        "presentation": "windowed",
+        "presentation": expected_presentation,
     }
     evidence: dict[str, Any] = {
         "expected": expected,
@@ -3743,7 +3753,7 @@ def evaluate_display_evidence(
             failures.append(
                 "runtime MODE is "
                 f"{selector}, {width}x{height} {presentation}; expected -1, "
-                f"{expected_width}x{expected_height} windowed"
+                f"{expected_width}x{expected_height} {expected_presentation}"
             )
 
     if screenshot is None:
@@ -3967,6 +3977,9 @@ def evaluate_role_result(
     difference_min_channels: int = 1000,
     pbr_fixture_acceptance_required: bool = False,
     autoexec_path: Path | None = None,
+    display_width: int = BUDGET_WIDTH,
+    display_height: int = BUDGET_HEIGHT,
+    max_frame_ms: float = 0.0,
 ) -> dict[str, Any]:
     log_path = find_log(savepath, log_name)
     diagnostic_sources = (
@@ -4069,6 +4082,12 @@ def evaluate_role_result(
             missing.append("frame pacing p99")
         elif p99_ms > max_p99_ms:
             missing.append(f"pacingP99={p99_ms:.1f}>{max_p99_ms:.1f}")
+    if max_frame_ms > 0.0:
+        maximum = summary_float(summary, "pacingMaxMs")
+        if maximum is None:
+            missing.append("frame pacing maximum")
+        elif maximum > max_frame_ms:
+            missing.append(f"pacingMax={maximum:.2f}>{max_frame_ms:.2f}")
     missing.extend(evaluate_shared_interaction_evidence(spec, summary))
     missing.extend(evaluate_shared_fog_blend_evidence(spec, summary))
     missing.extend(pbr_fixture_failures)
@@ -4118,7 +4137,10 @@ def evaluate_role_result(
             f"{image_difference.get('differingChannels', 'missing')}"
         )
     display_evidence, display_failures = evaluate_display_evidence(
-        (item[1] for item in diagnostic_sources), screenshot
+        (item[1] for item in diagnostic_sources), screenshot,
+        BUDGET_WIDTH if require_benchmark else display_width,
+        BUDGET_HEIGHT if require_benchmark else display_height,
+        "windowed" if require_benchmark else spec.display_mode,
     )
     missing.extend(f"display evidence: {failure}" for failure in display_failures)
     if require_benchmark and budget_contract is not None:
@@ -4297,6 +4319,8 @@ def run_sp_spec(
         difference_min_channels=args.image_difference_min_channels,
         pbr_fixture_acceptance_required=pbr_fixture_acceptance_required,
         autoexec_path=savepath / "baseoq4" / Path(autoexec_cfg),
+        display_width=args.width, display_height=args.height,
+        max_frame_ms=args.max_frame_ms,
     )
     return {
         "id": spec.id,
@@ -4539,6 +4563,8 @@ def run_mp_spec(
         difference_min_channels=args.image_difference_min_channels,
         pbr_fixture_acceptance_required=pbr_fixture_acceptance_required,
         autoexec_path=server_savepath / "baseoq4" / Path(server_autoexec_cfg),
+        display_width=args.width, display_height=args.height,
+        max_frame_ms=args.max_frame_ms,
     )
     client_result = evaluate_role_result(
         spec,
@@ -4566,6 +4592,8 @@ def run_mp_spec(
         difference_min_channels=args.image_difference_min_channels,
         pbr_fixture_acceptance_required=pbr_fixture_acceptance_required,
         autoexec_path=client_savepath / "baseoq4" / Path(client_autoexec_cfg),
+        display_width=args.width, display_height=args.height,
+        max_frame_ms=args.max_frame_ms,
     )
     postinit_connect_responses: dict[str, int] = {}
     postinit_ttf_rebuilds: dict[str, int] = {}
@@ -5683,6 +5711,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--min-pacing-hz", type=float, default=0.0, help="Fail when the parsed frame-pacing snapshot falls below this average presentation rate.")
     parser.add_argument("--max-p95-ms", type=float, default=0.0, help="Fail when the parsed frame-pacing P95 exceeds this millisecond budget. Use 0 to disable.")
     parser.add_argument("--max-p99-ms", type=float, default=0.0, help="Fail when the parsed frame-pacing P99 exceeds this millisecond budget. Use 0 to disable.")
+    parser.add_argument("--max-frame-ms", type=float, default=0.0, help="Fail when any sampled frame exceeds this millisecond budget. Use 0 to disable; the engine reports maxima to 0.01 ms.")
     parser.add_argument("--set-cvar", action="append", default=[], metavar="NAME=VALUE", help="Extra post-map cvar written into the generated benchmark cfg. Repeat for A/B diagnostics without extending the launch command line.")
     parser.add_argument("--set-launch-cvar", action="append", default=[], metavar="NAME=VALUE", help="Extra cvar applied on the openQ4 launch command line before the map loads. Use for load-time renderer knobs such as vertex/index buffer caching.")
     parser.add_argument("--exec-command", action="append", default=[], metavar="COMMAND", help="Extra post-map console command written into the generated benchmark cfg. Repeat for targeted diagnostics such as flashlight impulses.")
@@ -5710,6 +5739,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Write the planned command lines without launching openQ4.")
     parser.add_argument("--list", action="store_true", help="List profiles, cases, and shadow presets without running.")
     parsed = parser.parse_args(argv)
+    if not math.isfinite(parsed.max_frame_ms) or parsed.max_frame_ms < 0:
+        parser.error("--max-frame-ms must be finite and non-negative")
     if not parsed.pacing_only and not parsed.gpu_timers:
         parser.error("--no-gpu-timers is only valid with --pacing-only; budget evidence requires GPU timing")
     if not (320 <= parsed.width <= 16384) or not (240 <= parsed.height <= 16384):
@@ -5948,6 +5979,7 @@ def main(argv: list[str]) -> int:
         "minPacingHz": args.min_pacing_hz,
         "maxP95Ms": args.max_p95_ms,
         "maxP99Ms": args.max_p99_ms,
+        "maxFrameMs": args.max_frame_ms,
         "profileCvars": dict(PROFILE_DEFAULTS[args.profile].get("cvars", ())),
         "effectivePostMapCvars": effective_post_map_cvars(args.extra_cvars),
         "pbrFixtureAcceptanceRequired": args.pbr_fixture_acceptance_required,

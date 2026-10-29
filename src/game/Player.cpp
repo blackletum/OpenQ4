@@ -2681,6 +2681,8 @@ void idPlayer::Save( idSaveGame *savefile ) const {
 
 #ifndef _XENON
  	if ( hud ) {
+		// Save notifications mutate the HUD after its payload was written.
+		savefile->InvalidateUserInterface( hud );
 		hud->SetStateString( "message", common->GetLocalizedString( "#str_102916" ) );
 		hud->HandleNamedEvent( "Message" );
  	}

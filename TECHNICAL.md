@@ -106,7 +106,7 @@ See [Display Settings](docs/user/display-settings.md).
 
 ### Renderer
 
-- `r_renderApi best|gl|vulkan|gl-module|gles` — `gl` (OpenGL) is the default on desktop. `vulkan` selects the Vulkan renderer (stable on Windows, experimental on Linux and macOS) and falls back to OpenGL if it cannot start. `gles` is the OpenGL ES 3.0 renderer used on Android. Changes apply after restarting the game. See [Renderer Backend](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-stable-on-windows).
+- `r_renderApi best|gl|vulkan|gl-module|gles` selects the renderer. Fresh desktop `best` prefers compatible high-performance Vulkan hardware with OpenGL fallback; existing explicit backend choices persist. Vulkan is stable on Windows and experimental on Linux/macOS. Android defaults to GLES3. `r_renderDevice auto|<UUID>` selects the GPU; `rendererDevices` lists stable IDs. Use the retained System menu to Apply and Restart Renderer, or restart the process after console changes. See [Rendering Backend and Device](docs/user/display-settings.md#rendering-backend-and-device).
 - `g_presentationInterpolation 0|1` — draw the camera, weapons and moving objects smoothly between the game's 60 Hz ticks on high-refresh displays (default `1`). `0` returns everything to the simulation clock.
 
 ### Post-Processing and Materials

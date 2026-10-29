@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "RemoteCVarPolicy.h"
 #include "CVarCompletionSnapshot.h"
 #include "CVarDefaults.h"
+#include "CVarAssignmentCapture.h"
 
 idCVar * idCVar::staticVars = NULL;
 
@@ -419,6 +420,7 @@ void idInternalCVar::Set( const char *newValue, bool force, bool fromServer ) {
 		}
 	}
 
+	openq4::CVarAssignmentCapture::Record( nameString.c_str() );
 	const bool unchanged = ( flags & CVAR_CASE_SENSITIVE ) ?
 		valueString.Cmp( newValue ) == 0 : valueString.Icmp( newValue ) == 0;
 	if ( unchanged ) {

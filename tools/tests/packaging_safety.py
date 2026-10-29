@@ -1418,6 +1418,22 @@ def validate_windows_runtime_staging_guards() -> None:
             "Windows runtime target symlink guard",
         )
 
+    # Static game-core targets live beside the generated modules. Their
+    # intermediates may be locked by a compiler and never belong in a runtime.
+    generated_build = WORK / "windows-runtime" / "generated-build"
+    generated = generated_build / "content/baseoq4"
+    write_file(generated / "game-mp_x64.dll", b"runtime\n")
+    write_file(generated / "mod.json", b"{}\n")
+    for artifact in ("game-mp_x64.dll.p/module.obj", "libopenq4_game_mp_core.a.p/Game.obj",
+                     "game_core.lib.p/Game.obj", "libopenq4_game_mp_core.a", "game-mp_x64.lib",
+                     "game-mp_x64.exp", "stray.obj", "stray.o"):
+        write_file(generated / artifact, b"build-only\n")
+    WINDOWS_RUNTIME.stage_build_game_directory(runtime_source, generated_build)
+    staged = {p.relative_to(generated_build / "baseoq4").as_posix()
+              for p in (generated_build / "baseoq4").rglob("*") if p.is_file()}
+    if staged != {"game-mp_x64.dll", "mod.json"}:
+        raise AssertionError(f"build-only game-core artifacts entered the direct-run runtime: {staged}")
+
     symlink_tree_source = WORK / "windows-runtime" / "symlink-tree-source"
     symlink_tree_build = WORK / "windows-runtime" / "symlink-tree-build"
     generated_game = symlink_tree_build / "content" / "baseoq4"

@@ -399,6 +399,8 @@ public:
 	// voice recipients. The engine only delivers these through unreliable media.
 	virtual void				ServerReceiveVoice( int clientNum, const idBitMsg &msg ) {}
 	virtual void				ClientReceiveVoice( const idBitMsg &msg ) {}
+	// Engine calls this only after the save payload and sidecars are committed.
+	virtual void NotifySaveGameComplete() {}
 };
 
 extern idGame *					game;
@@ -724,7 +726,9 @@ extern rvGameLog *				gameLog;
 // 54: gameImport_t carries the engine's idUsercmdGen so the draw pass can
 //     sample late-look input (in_presentationView).
 // 55: idUserInterfaceManager appends localized HUD text shaping for objective markers.
-const int GAME_API_VERSION		= 55;
+// 56: checkpoint completion notification follows the durable commit.
+// 57: idDict carries a mutation observer; rebuild all modules sharing dictionaries.
+const int GAME_API_VERSION		= 57;
 
 struct gameImport_t {
 

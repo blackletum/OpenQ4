@@ -68,7 +68,7 @@ def check_build() -> None:
 
 def check_abi() -> None:
     api = read("src/renderer/RenderModuleAPI.h")
-    require(api, "#define RENDER_API_VERSION\t\t\t25", "renderer module ABI v25")
+    require(api, "#define RENDER_API_VERSION\t\t\t29", "renderer module ABI v29")
     require(api, "void\t\t\t( *RendererDeviceEvent )( int event );\t// renderDeviceEvent_t\n} renderModuleServices_t;",
             "the device lifetime service is the last services slot")
 
@@ -79,8 +79,8 @@ def check_abi() -> None:
     # the VR slots follow the retained font slots in their original order;
     # later ABI versions only append after them
     if slots[:4] != ["GetVRGraphicsBinding", "SetVRFrame", "SetVRRenderTarget", "GetVRFrameResult"] \
-            or slots[4:] != ["PresentScaledScene", "BeginGuiRoot"]:
-        raise AssertionError(f"the VR slots must follow the retained font slots, then PresentScaledScene and BeginGuiRoot, found {slots}")
+            or slots[4:] != ["PresentScaledScene", "BeginGuiRoot", "BeginSavePreview", "PollSavePreview", "CancelSavePreview"]:
+        raise AssertionError(f"the VR slots must retain their order before scaled presentation, GUI roots and checkpoint previews, found {slots}")
 
     # game modules call through idVRSystem too: its slots only ever grow at the end
     vr_system = read("src/framework/VRSystem.h")
@@ -101,7 +101,7 @@ def check_abi() -> None:
         require(render_world, field, "renderView_t keeps existing views symmetric")
 
     game = read("src/game/Game.h")
-    require(game, "const int GAME_API_VERSION\t\t= 55;", "game module ABI v55")
+    require(game, "const int GAME_API_VERSION\t\t= 57;", "game module ABI v57")
     import_block = game[game.index("struct gameImport_t {"):game.index("struct gameExport_t {")]
     # Append-only ABI: vrSystem (v50) keeps its slot; later members follow it.
     if not import_block.rstrip().rstrip("};").rstrip().endswith(

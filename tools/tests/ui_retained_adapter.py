@@ -41,10 +41,18 @@ ENGINE = r'''
 #include "src/ui/UserInterfaceClipboard.h"
 #include "src/ui/UserInterfaceNativeText.h"
 #include "src/ui/retained/TextEditCommand.h"
+#include "src/ui/retained/PlayerSetupRequest.h"
 #include "src/sys/KeyEventMetadata.h"
 #include "src/ui/RetainedUI.h"
 #include "src/ui/SettingsService.h"
 #include "src/ui/application/SettingsTransaction.h"
+// Player Setup's codec is qualified by UiPlayerSetupRequestTest. These
+// unrelated adapter/clipboard cases must never enter that operation.
+namespace openq4::ui {
+bool ValidPlayerSetupAction(const Action&) { std::abort(); }
+bool ResolvePlayerSetupRequest(const StateValues&,PlayerSetupRequest&,std::string&) { std::abort(); }
+bool EncodePlayerSetupRequest(const StateValues&,std::string&,std::string&) { std::abort(); }
+}
 struct idCmdArgs {
     std::vector<std::string> values;
     int Argc() const {return static_cast<int>(values.size());}

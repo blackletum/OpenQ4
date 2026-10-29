@@ -132,6 +132,13 @@ public:
 	// already queued draws; a replacement obtains a separate live handle.
 	virtual std::uintptr_t GenerateTexture(std::span<const std::uint8_t> pixels, int width, int height) { return 0; }
 	virtual void ReleaseGeneratedTexture(std::uintptr_t texture) {}
+	// Called after layout and before any UI paint. The returned live image is
+	// sampled by the ordinary retained geometry/composition path. The owner
+	// lease is unique across all contexts; retirement preserves queued draws.
+	// Providers must either prepare the whole scene or fail with no UI output.
+	virtual bool RenderModelScene(std::uint64_t lease, const ModelScene& scene, int width, int height,
+		double seconds, std::string& image, std::string& error) { error="Model previews are unavailable on this host"; return false; }
+	virtual void ReleaseModelScene(std::uint64_t lease) {}
 	virtual void Draw(const std::vector<Vertex>& vertices, const std::vector<int>& indices, std::uintptr_t material) = 0;
 	// Optional retained submission: while `revision` is unchanged, `mesh` names
 	// the same vertices, indices and material as its previous draw, so a host

@@ -440,6 +440,13 @@ const char* idRemasteredHud::DocumentFor(const char* source) {
 bool idRemasteredHud::Enabled() {
 	return cvarSystem->GetCVarBool("ui_retained") && ui_hudLayout.GetInteger()!=0;
 }
+const char* idRemasteredHud::AirDocumentFor(const char* source) {
+	if (!source) return nullptr;
+	const auto key=Key(source);
+	if (key=="guis/hud.gui" || key=="guis/q4xhud.gui") return "guis/hud/air_marine.q4ui";
+	if (key=="guis/hud_strogg.gui" || key=="guis/q4xhud_strogg.gui") return "guis/hud/air_strogg.q4ui";
+	return nullptr;
+}
 void idRemasteredHud::Preload(const char* source) {
 	if (impl->gui || impl->failed || (session && session->IsLoadingSaveGame())) return;
 	impl->Load(source);
@@ -627,6 +634,7 @@ struct idRemasteredHud::Impl {};
 idRemasteredHud::idRemasteredHud(const char*) {}
 idRemasteredHud::~idRemasteredHud() = default;
 const char* idRemasteredHud::DocumentFor(const char*) { return nullptr; }
+const char* idRemasteredHud::AirDocumentFor(const char*) { return nullptr; }
 bool idRemasteredHud::Enabled() { return false; }
 bool idRemasteredHud::Draw(const idUserInterfaceLocal&,int) { return false; }
 void idRemasteredHud::Preload(const char*) {}
@@ -641,6 +649,7 @@ const char* idRemasteredHud::Document() const { return ""; }
 bool idUserInterfaceLocal::DrawRemasteredHud(int drawTime) {
 	const char* document=idRemasteredHud::DocumentFor(source.c_str());
 	if (!document || !idRemasteredHud::Enabled()) { delete remastered; remastered=nullptr; return false; }
+	delete essentialHud; essentialHud=nullptr;
 	if (!remastered) remastered=new idRemasteredHud(document);
 	if (remastered->Failed() || !remastered->Draw(*this,drawTime)) return false;
 	// The stock windows keep evaluating unseen, so their scripts, timers and
@@ -653,6 +662,15 @@ bool idUserInterfaceLocal::DrawRemasteredHud(int drawTime) {
 	if (r_skipGuiShaders.GetInteger()!=1 && r_skipGuiShaders.GetInteger()!=3) RunTimeEvents(drawTime);
 	remastered->ProfileUnseen(profiling ? std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count() : 0);
 	return true;
+}
+
+void idUserInterfaceLocal::DrawEssentialHud(int drawTime) {
+	const char* document=idRemasteredHud::AirDocumentFor(source.c_str());
+	if (!document || idRemasteredHud::Enabled()) { delete essentialHud; essentialHud=nullptr; return; }
+	if (state.GetInt("player_air","100")>=100 || state.GetInt("player_health")<=0) return;
+	if (!essentialHud) essentialHud=new idRemasteredHud(document);
+	// Overlay only: its failure never suppresses the stock desktop.
+	if (!essentialHud->Failed()) essentialHud->Draw(*this,drawTime);
 }
 
 bool idUserInterfaceLocal::RemasteredActive() const {

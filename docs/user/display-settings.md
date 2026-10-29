@@ -10,8 +10,40 @@ This guide covers openQ4 display/window settings for end users, including multi-
 - Run `listDisplays` in the console to list monitor indices for `r_screen`.
 - On SDL3 builds, run `listDisplayModes [displayIndex]` to list available exclusive fullscreen modes, including SDL-reported content scale, pixel density, and exact refresh details when available.
 - The in-game `Settings -> System` menu exposes display resolution, fullscreen policy, borderless/window sizing, custom exclusive fullscreen sizing, refresh rate, UI aspect behavior, display target, multi-screen, and resolution scale controls.
-- `Settings -> System` also exposes a **Performance Preset** dropdown plus an **Auto-Detect** button above the display-resolution controls.
+- `Settings -> System` groups **Rendering Backend**, **Rendering Device**, **Performance Preset** and **Auto-Detect** above the display controls in the retained interface.
 - After changing video cvars, run `vid_restart` (or `vid_restart partial` for quick window/fullscreen transitions).
+
+## Rendering Backend and Device
+
+The retained **Settings -> System** page puts backend and GPU selection beside
+the preset and Auto-Detect controls. **Automatic** prefers a compatible discrete
+GPU over integrated and software devices. Fresh desktop configurations try
+Vulkan, then fall back to OpenGL if it cannot initialize. Android keeps OpenGL
+ES as its default. Automatic keeps OpenGL when PC OpenXR is enabled, because
+the implemented VR graphics binding requires it. Existing saved backend
+choices are preserved. Selecting Vulkan explicitly does not enable VR.
+
+Choose a named GPU to select that device and Vulkan together. Choose
+**Automatic (high performance)** to restore automatic backend/device selection.
+Apply the changes, then use **Restart Renderer** at the main menu. During a
+game, first return to the main menu through the normal game flow. The active
+backend and device remain visible while changes await restart; Auto-Detect is
+available after the chosen hardware starts. This restart supersedes backend
+and GPU overrides supplied for the current launch. Launchers that supply those
+overrides again on the next launch still take precedence over saved settings.
+
+Device choices use persistent Vulkan IDs, so changing driver enumeration order
+does not select a different GPU. Missing saved devices are shown explicitly;
+choose Automatic or another available device. Unsupported devices are disabled.
+OpenGL and OpenGL ES use operating-system/driver GPU routing, so a named GPU
+selection switches to Vulkan. Among compatible discrete GPUs, automatic choice
+uses dedicated memory capacity as a tie-breaker; this is not a speed benchmark.
+
+For console or stock-menu use, `rendererDevices` lists the detected devices and
+their IDs. Set `r_renderDevice "<id>"` and `r_renderApi vulkan`, then restart the
+engine process. `r_renderDevice auto` restores automatic GPU selection.
+`r_vkDevice` remains a temporary diagnostic index override; remove that override
+before using the menu's GPU selector.
 
 ## Performance Presets
 
@@ -20,18 +52,52 @@ Running `applyPerformancePreset` without a name applies the stored `com_performa
 
 | Preset | Display and AA | Texture and audio profile | Intended use |
 |---|---|---|---|
-| `minimum` | 50% scale, no AA, 30 FPS cap | Aggressive texture downsizing, 1x anisotropy, one sound sample per shader, stereo, no EAX, lower emitter budget | Most constrained systems. |
-| `lowpower` | 75% scale, no AA, 30 FPS cap | Texture downsizing, 1x anisotropy, one sound sample per shader, stereo, no EAX, lower emitter budget | Raspberry Pi-class and other low-power systems. |
-| `performance` | 85% scale, SMAA medium, 60 FPS cap | Full-size textures, 2x anisotropy, stereo, no EAX, moderate emitter budget | Modest desktops and handhelds aiming for smoother frame pacing. |
-| `balanced` | 100% scale, 2x MSAA, SMAA medium, 120 FPS cap | Full-size textures, 4x anisotropy, surround/EAX restored, full emitter budget | General desktop default. |
-| `quality` | 100% scale, 4x MSAA, SMAA medium, 144 FPS cap, shadow maps on (1024) | 8x anisotropy, DDS replacements enabled, larger upload budget, surround/EAX restored | Strong desktop GPUs. |
-| `ultra` | 100% scale, 8x MSAA, SMAA medium, 240 FPS cap, shadow maps on (2048) | 16x anisotropy, source textures preferred over DDS replacements, high-end benchmark tag, surround/EAX restored | Explicit high-end choice; Auto-Detect does not select this automatically. |
+| `minimum` | 50% scale, no AA, 30 FPS cap | Aggressive texture downsizing, 1x anisotropy, one sound sample per shader, automatic speaker layout, room reverb, lower emitter budget | Most constrained systems. |
+| `lowpower` | 75% scale, no AA, 30 FPS cap | Texture downsizing, 1x anisotropy, one sound sample per shader, automatic speaker layout, room reverb, lower emitter budget | Raspberry Pi-class and other low-power systems. |
+| `performance` | 85% scale, SMAA medium, 60 FPS cap | Full-size textures, 2x anisotropy, automatic speaker layout, room reverb, moderate emitter budget | Modest desktops and handhelds aiming for smoother frame pacing. |
+| `balanced` | 100% scale, 2x MSAA, SMAA medium, 120 FPS cap | Full-size textures, 4x anisotropy, automatic speaker layout, room reverb, full emitter budget | General desktop default. |
+| `enhanced` | 100% scale, 2x MSAA, SMAA high, 120 FPS cap, 1024 projected / 512 point shadows | 4x anisotropy, full-size textures, automatic speaker layout, room reverb | Affordable modern effects between Balanced and Quality. |
+| `quality` | 100% scale, 4x MSAA, SMAA high, 144 FPS cap, 2048 projected / 1024 point shadows | 8x anisotropy, DDS replacements enabled, larger upload budget, automatic speaker layout, room reverb | Strong desktop GPUs. |
+| `ultra` | 100% scale, 16x MSAA request, SMAA Ultra, 240 FPS cap, 4096 projected / 2048 point shadows | 16x anisotropy, full-size textures and DDS replacements enabled, high-end benchmark tag, automatic speaker layout, room reverb | Explicit high-end choice; Auto-Detect does not select this automatically. |
 
-`quality` and `ultra` turn on [shadow maps](shadow-mapping.md); the presets below them keep Quake 4's original stencil shadows. Every preset leaves subjective/modern post effects disabled, so the authored Quake 4 look remains the baseline. Enable bloom, SSAO, tone mapping, motion blur, or CRT filtering separately after choosing a preset if you want those effects, and turn shadow maps on or off yourself the same way.
+`enhanced`, `quality` and `ultra` enable [shadow maps](shadow-mapping.md), bloom, SSAO and tone mapping. Enhanced uses 5-tap fixed filtering, a 4096 atlas and 12 SSAO samples. Quality uses larger maps, 9-tap filtering (PCSS for projected lights), a 4096 atlas and 20 SSAO samples. Neither uses cascades or motion blur. Ultra requests the highest supported quality: 13-tap projected and point filtering, four stabilized cascades, a 16384 shadow atlas, unlimited shadow updates, 32 SSAO samples, five bloom levels and 16-sample motion blur with object vectors. All three modern-effects tiers keep five bloom levels to preserve its broad glow; reducing the level count changes its appearance, not just sampling quality. The lower presets retain the original stencil shadows and leave these post effects and the HDR scene target off. Changing down from Ultra restores the lower tier's sample counts and shadow sizes, including settings for effects currently disabled.
+
+MSAA is clamped to the highest sample count supported by the active device and render-target formats; inspect `gfxInfo` for requested and effective counts. Ultra renders at native resolution (100% scale). Brightness, exposure, effect strength and experimental renderer modes are separate controls; CRT filtering stays off. Presets restore full material detail and clear any diffuse `image_picmip` reduction. DDS replacement packs remain available at every tier.
+
+To adopt the revised settings on an existing configuration, select the preset again or run `applyPerformancePreset ultra`. Merely storing `com_performancePreset=ultra` does not reapply the profile.
 
 Performance presets write video, texture-allocation, texture-sampling, and audio backend cvars. Anisotropy is capped to the maximum supported by the active GPU. Run `vid_restart` after applying one so renderer, texture allocation, and sampler changes take effect; run `s_restart` as well if you want speaker/EAX/emitter-budget changes to rebuild the active sound backend immediately.
 
-`autoDetectPerformancePreset` takes no arguments. It selects a conservative preset from platform signals, CPU architecture, system RAM, video RAM, and renderer capability flags, then applies it. Missing or implausible memory telemetry is treated as a conservative fallback instead of promoting the system to a higher preset. On Raspberry Pi hosts or explicit `OPENQ4_LOWPOWER=1` / `OPENQ4_RASPBERRYPI=1` signals, it chooses `lowpower`.
+`autoDetectPerformancePreset` takes no arguments. It recommends and applies a conservative starting point using the **active renderer and GPU**, system RAM, CPU concurrency, platform power hints and current drawable resolution. It does not run a benchmark or promise a particular frame rate. Quality and Ultra remain manual choices; Enhanced is the highest automatic recommendation.
+
+- Software rendering, insufficient classic material/texture capabilities and systems with at most 2 GiB RAM select Minimum. Raspberry Pi and explicit `OPENQ4_LOWPOWER=1` / `OPENQ4_RASPBERRYPI=1` select Low Power unless that stricter constraint applies.
+- Steam Deck selects Performance. Shared-memory GPUs, including Apple Silicon, can select Balanced at up to 1080p with sufficient RAM and classic-rendering capabilities. Apple's OpenGL 2.1 path is not forced to Minimum just because it cannot run modern post effects; Auto-Detect leaves unsupported SMAA off. ARM and x86 use the same graphics policy.
+- Android is limited to Performance automatically to respect mobile power budgets. Known memory and renderer limits can still choose a lower preset. Discrete GPUs with at most 512 MiB of verified dedicated memory select Minimum, regardless of platform hints.
+- Discrete GPUs with roughly 8 GiB of **verified active-device dedicated memory**, 16 GiB RAM and modern effects can select Enhanced through 1440p. Modest dedicated-memory budgets select Performance or Balanced. Larger drawables and fewer than four logical CPUs lower the recommendation.
+- Unknown, implausible or unavailable observations never manufacture extra VRAM. Drivers without active-device memory reporting conservatively select Performance; choose a higher preset manually after checking gameplay. Shared RAM is not counted as dedicated VRAM, and another adapter's memory is not used on hybrid systems. Supported SDL3 builds also keep failed system-memory queries unknown instead of guessing a small RAM size.
+- Detection before renderer initialization leaves settings unchanged. Resolution, fullscreen policy, refresh, VSync, backend selection, input and interface preferences remain yours. Preset FPS caps are power/pacing ceilings, not performance guarantees.
+
+Auto-Detect can lower the **scene render scale** below the preset's table value
+on large displays. For example, shared-memory graphics at 1440p use Performance
+at 75%, and at 4K use Performance at 50% (a 1080p scene). The window and UI keep
+their native resolution. Minimum, Low Power and mobile devices use smaller
+scene budgets; verified discrete memory permits larger ones. Automatic scale
+uses the existing menu steps and never exceeds the chosen preset's scale.
+Selecting a named preset manually restores its table values. VR headset scale
+remains a separate [VR setting](vr.md); desktop detection is not a headset
+performance qualification.
+
+The stock four-choice quality controls and `execMachineSpec` now use these same
+recipes: Low maps to Low Power, Medium to Performance, High to Balanced, and
+Ultra to Ultra. Stock **Recommended** runs Auto-Detect even if the old quality
+classification has not changed. These paths preserve your display mode and
+VSync preference.
+
+On a fresh installation, openQ4 starts with a small bootstrap profile, observes
+the initialized GPU and applies the same automatic recommendation before entering
+gameplay. A named preset supplied at launch takes precedence. Existing saved
+settings are preserved, including when their old detection marker is missing
+or their legacy `com_machineSpec` classification is unset.
 
 For package or platform validation, `performancePresetSelfTest` checks that the preset commands are registered, every preset is known to the menu-facing cvar and command completion lists, auto-detect returns and applies a supported non-`ultra` preset, command arguments behave correctly, all preset targets are registered and covered by backup/restore, rejected target normalization rolls back atomically, the preset progression stays coherent, the preset cvar mappings apply correctly, and the test restores touched cvar values, flags, and modified-state bookkeeping before finishing.
 
@@ -62,7 +128,7 @@ allowed to exceed a given size. Performance presets drive these.
 **`image_picmip`** is the Quake 3 style relative reduction familiar from
 `r_picmip`: it drops whole mip levels, so every step halves a texture no matter
 how large it started. Unlike the Quake 3 version, openQ4 applies it **only to the
-diffuse layer of materials** — the color texture of a `diffusemap` stage. Normal
+diffuse layer of materials** â€” the color texture of a `diffusemap` stage. Normal
 maps, specular maps, lighting, skies, decals, fonts, and every 2D/HUD surface
 keep their authored resolution, so surfaces stay correctly lit and the interface
 stays sharp while the bulk of texture memory still comes down.
@@ -82,7 +148,7 @@ The ceiling is applied first and `image_picmip` reduces from there, so raising
 texture. A material that declares `nopicmip` opts out of both.
 
 These settings change the pixels a texture is built from, so openQ4 reloads
-images automatically when you change one — no `vid_restart` needed. The generated
+images automatically when you change one â€” no `vid_restart` needed. The generated
 texture cache is keyed by the active reduction, so switching back and forth does
 not leave stale sizes behind.
 
@@ -128,10 +194,11 @@ Nearest-texel modes automatically avoid anisotropic filtering so
 `image_anisotropy` cannot blur the requested pixel edges. The same values work
 with the supported OpenGL renderer and the experimental Vulkan renderer.
 
-## Renderer Backend (OpenGL default; Vulkan stable on Windows)
+## Renderer Backend (automatic selection; Vulkan stable on Windows)
 
-openQ4 renders with **OpenGL by default on every platform**. On Windows x64
-the **Vulkan renderer is a stable, supported alternative** you can switch to;
+Fresh desktop configurations use **Automatic**, which prefers Vulkan with
+OpenGL fallback and a compatible high-performance GPU. On Windows x64
+the **Vulkan renderer is stable and supported**;
 on Linux and macOS it remains experimental. It draws the stock game with OpenGL's effects: world
 and model materials, including the stock heat-haze, glass, water, and other
 program effects, interaction lighting, baked light grids, stencil and mapped
@@ -152,23 +219,27 @@ them. On Linux and macOS it stays experimental until hardware runs there exist;
 Linux CI runs software-Vulkan startup, render-target, recovery and fallback
 checks on every push. The differences under
 [What Vulkan does not do yet](#what-vulkan-does-not-do-yet) remain, and OpenGL
-stays the default everywhere.
+remains available on desktop systems. Existing explicit OpenGL choices stay on
+OpenGL; changing the default does not extend physical platform qualification.
 
 | Setting | Default | What it does |
 |---|---:|---|
-| `r_renderApi` | `gl` | Renderer backend: `gl` (default, supported) or `vulkan` (**supported on Windows, experimental on Linux and macOS**). `best` resolves to `gl`; Vulkan does not become a default without a separate sign-off. Takes effect on **engine restart**, not `vid_restart`. |
+| `r_renderApi` | `best` (desktop), `gles` (Android) | Renderer backend. Desktop Automatic tries Vulkan with OpenGL fallback; Android uses OpenGL ES. Vulkan is **supported on Windows, experimental on Linux and macOS**. Takes effect on **engine restart**, not `vid_restart`. |
+| `r_renderDevice` | `auto` | Compatible high-performance GPU preference, or a 32-character lowercase Vulkan device ID. A named device requires Vulkan. Applied on engine restart. |
 | `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If loading or initializing Vulkan fails at startup, the engine **falls back to OpenGL** and this reports `gl`. |
 
 ### All `r_renderApi` values
 
 | Value | Aliases | What it selects |
 |---|---|---|
-| `best` | — | The platform default. Currently resolves to `gl` on **every** platform; making Vulkan a default needs its own sign-off. |
-| `gl` | `opengl` | The OpenGL renderer. This is the default on every platform. |
+| `best` | - | Vulkan with OpenGL fallback on desktop; OpenGL ES on Android. |
+| `gl` | `opengl` | OpenGL with operating-system/driver GPU routing. |
 | `vulkan` | `vk` | The Vulkan renderer module: supported on Windows, experimental on Linux and macOS. |
-| `gl-module` | — | Always loads the OpenGL renderer as a module instead of using a statically linked copy. This is a diagnostic option; it renders identically to `gl`. |
+| `gl-module` | â€” | Always loads the OpenGL renderer as a module instead of using a statically linked copy. This is a diagnostic option; it renders identically to `gl`. |
+| `gles` | - | OpenGL ES renderer module; the Android default. |
 
-Anything else is rejected with a warning, and openQ4 uses `gl`.
+Anything else is rejected with a warning, and openQ4 uses the platform's
+automatic selection.
 
 Notes:
 
@@ -227,13 +298,14 @@ top of **MoltenVK**, a Vulkan-on-Metal translation layer that is bundled inside
 both macOS packages. It is a translation layer, not a Metal renderer, and it
 does not replace or remove the OpenGL renderer.
 
-- **OpenGL is still the default on macOS**, in both the OpenGL and Metal bridge
-  packages. Nothing changes unless you opt in.
+- Fresh macOS configurations use Automatic: Vulkan through MoltenVK when it
+  meets the renderer requirements, with OpenGL fallback. Saved OpenGL selections
+  stay on OpenGL. Vulkan's experimental qualification is unchanged.
 - Vulkan is a **runtime option, not a separate download**. There is no third
   macOS package to install and nothing to enable at install time.
-- To try it: open the console, run `r_renderApi vulkan`, then quit and relaunch
-  openQ4. Check `r_actualRenderApi` or `gfxInfo` afterwards to confirm what
-  actually started.
+- Choose Vulkan in the System menu and Apply, then Restart Renderer from the
+  main menu; or set `r_renderApi vulkan` in the console and relaunch openQ4.
+  Check the active renderer readout or `gfxInfo` to confirm what started.
 - **Expect problems.** The Vulkan renderer is experimental on macOS,
   and on macOS only one player has reported it working (openQ4 0.12.0 on an
   M4 Max MacBook Pro); nothing has checked its output against OpenGL there.
@@ -244,10 +316,9 @@ does not replace or remove the OpenGL renderer.
 - **If it cannot start**, openQ4 renders with OpenGL instead and logs why, and
   `gfxInfo` shows the reason. Common reasons on a Mac are a GPU that does not
   meet the renderer's Vulkan 1.3 feature floor, or a package whose bundled
-  translation layer is missing or was stripped by a copy. If Vulkan only fails
-  later, while creating the window or its surface, openQ4 stops with "Vulkan
-  renderer device initialization failed", but first sets the saved setting back
-  to `gl`, so the next launch uses OpenGL. If it still stops, start it once with
+  translation layer is missing or was stripped by a copy. Window, surface,
+  swapchain and mandatory-resource failures during startup also fall back to
+  OpenGL. If a later failure prevents recovery, start it once with
   `+set r_renderApi gl`, for example from Terminal with
   `/Applications/openQ4.app/Contents/MacOS/openQ4 +set r_renderApi gl`.
 - When reporting a macOS Vulkan problem, include `openq4.log` (it records which
@@ -325,7 +396,7 @@ Notes:
 - The game scene target is validated separately from the window framebuffer. If a driver rejects the RGBA8 + depth/stencil offscreen target at the selected sample count, openQ4 retries lower samples down to `0`; if even the single-sample target is unavailable, it keeps running through the direct-render fallback and logs the exact framebuffer status and attachment details.
 - `gfxInfo` reports the active AA summary, including requested/effective MSAA, `GL_MAX_SAMPLES`, alpha-to-coverage, post AA mode, screen fraction, and supersampling state. Once a map is drawing, the effective MSAA count is the one the 3D scene actually rendered with, so after an `r_multiSamples` change it keeps showing the old count until `vid_restart` or the next map load applies the new one.
 - On Vulkan, MSAA applies to the 3D scene, not the window, and stops at 8x: `16` renders at 8x, or at the highest count your GPU supports. `gfxInfo` shows the count in use. GPUs that can move their sample positions per pipeline place them where OpenGL does; the others, such as Intel integrated graphics, keep their own standard pattern, which can shift edge antialiasing by a fraction of a pixel.
-- On a Mac using OpenGL's 2.1 compatibility mode, offscreen render targets cannot use MSAA, so MSAA reaches the 3D scene only while it is drawn straight to the window. Temporal AA, bloom, tone mapping, SSAO, motion blur, resolution scaling and the other post-processing effects each route the scene through an offscreen target, and MSAA then no longer applies. Post AA cannot run in that mode and leaves the scene on the window, so the `balanced`, `quality` and `ultra` presets, which turn it on, keep their MSAA there. `gfxInfo` shows which route the scene took: `reason=default-framebuffer` with the window's sample count, or `effective=0 reason=texture-msaa-unavailable`.
+- On a Mac using OpenGL's 2.1 compatibility mode, offscreen render targets cannot use MSAA, so MSAA reaches the 3D scene only while it is drawn straight to the window. Temporal AA, bloom, tone mapping, SSAO, motion blur, resolution scaling and the other post-processing effects each route the scene through an offscreen target, and MSAA then no longer applies. Post AA cannot run in that mode and leaves the scene on the window, so the `balanced`, `enhanced`, `quality` and `ultra` presets, which turn it on, keep their MSAA there. `gfxInfo` shows which route the scene took: `reason=default-framebuffer` with the window's sample count, or `effective=0 reason=texture-msaa-unavailable`.
 - The Post AA startup/runtime log records the active SMAA edge mode, threshold, search steps, and local contrast scale so quality captures can be compared without guessing which shader contract was active.
 - Changing `r_multiSamples` should be followed by `vid_restart`.
 - `r_postAA`, `r_msaaAlphaToCoverage`, and `r_msaaResolveDepth` can be changed at runtime, but a `vid_restart` is still safe if behavior looks stale.
@@ -370,14 +441,14 @@ seta cl_player_outline_width 2.0
 Notes:
 - The outline is a shell drawn just outside the player silhouette and masked against the silhouette itself, so it stays a constant-width ring at any distance instead of tinting the whole body. Overlapping body, head, and weapon surfaces are each painted once, so the outline does not darken where they meet.
 - The ring holds its requested pixel width in every direction, including on ultrawide displays.
-- Only the **outline** is ever drawn through geometry. Teammate outlines ignore depth and are drawn across the whole level, so an ally anywhere on the map reads as a ring at their position. The rimlight and the bright skin stay depth tested in every case — a ring marks a position, while a shaded body seen through a wall is a different thing entirely.
+- Only the **outline** is ever drawn through geometry. Teammate outlines ignore depth and are drawn across the whole level, so an ally anywhere on the map reads as a ring at their position. The rimlight and the bright skin stay depth tested in every case â€” a ring marks a position, while a shaded body seen through a wall is a different thing entirely.
 - See-through and depth-tested outlines are masked separately, so an ally behind geometry never erases the ring off an enemy standing in front of them.
 - The rimlight needs GLSL support (`glprogs/player_rimlight.*`). On a driver without it the rimlight is skipped and the console says so once; outline and bright skin still work.
 - Without GLSL the outline falls back to a scaled shell, which approximates the requested pixel width instead of matching it exactly.
 - The overlays are drawn after the ambient floor and light-grid passes, so `r_forceAmbient` and indirect lighting no longer wash them out.
 - `r_skipPlayerVisibilityEffects 1` disables all three overlays engine-side, for clean captures or A/B comparisons.
 - Bots are ordinary players for this feature: they occupy real client slots, so they receive the same overlays as human opponents and teammates. Nothing in the decision keys on being a bot.
-- `g_showPlayerVisibilityEffects 1` prints one line per player whenever the answer changes — whether the overlays were applied and which render entities were reached (body, head, world weapon), or the reason they were skipped, and whether the client is a bot. Use it when a strength cvar looks like it is doing nothing. Steady states print once, not every frame.
+- `g_showPlayerVisibilityEffects 1` prints one line per player whenever the answer changes â€” whether the overlays were applied and which render entities were reached (body, head, world weapon), or the reason they were skipped, and whether the client is a bot. Use it when a strength cvar looks like it is doing nothing. Steady states print once, not every frame.
 
 ## Multiplayer Pickup and Opponent-Weapon Style
 
@@ -502,8 +573,8 @@ the game with `+set com_platformProfile couch`, or set the environment variable
 ## Text Rendering (New)
 
 Menu and HUD text is drawn from scalable font files rather than the original
-fixed-size bitmap ones. The letterforms are the same — the fonts were rebuilt by
-tracing the game's own artwork — but they are now rasterised at whatever
+fixed-size bitmap ones. The letterforms are the same â€” the fonts were rebuilt by
+tracing the game's own artwork â€” but they are now rasterised at whatever
 resolution your display is actually running at, instead of a 640x480-era atlas
 being magnified. Text stays sharp at 1440p and 4K rather than softening.
 
@@ -517,7 +588,7 @@ or run `vid_restart` to see the change.
 
 One visible difference: the original `chain` font shipped with a zero-width
 space character, which ran words together in that face. The rebuilt font gives it
-a normal space, so some text is spaced differently — correctly — than it used to be.
+a normal space, so some text is spaced differently â€” correctly â€” than it used to be.
 
 This covers the developer console and the loading screen too. Those draw from a
 separate fixed-size character sheet, which is rebuilt at your display's
@@ -539,10 +610,10 @@ what is behind it.
 
 | Setting | Default | What it does |
 |---|---:|---|
-| `gui_textBackground` | `0` | How opaque the backing is. `0` is off, `1` is fully opaque black. `0.6`–`0.8` is usually enough to read comfortably while still showing the artwork. |
+| `gui_textBackground` | `0` | How opaque the backing is. `0` is off, `1` is fully opaque black. `0.6`â€“`0.8` is usually enough to read comfortably while still showing the artwork. |
 | `gui_textBackgroundPadding` | `2` | How far the backing extends past the text, in 640x480 virtual units. Raise it if the text feels cramped against the edge. |
 
-Both apply immediately — no restart needed — and work with either font path.
+Both apply immediately â€” no restart needed â€” and work with either font path.
 
 ```
 seta gui_textBackground 0.75

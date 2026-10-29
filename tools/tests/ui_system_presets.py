@@ -25,7 +25,7 @@ def contract(page):
     nodes=presets.nodes(page['root']); choice=nodes['settings_preset']['control']
     assert choice['role']=='choice' and choice['action']=='preset' and 'event' not in choice
     assert choice['value']=={'state':'settings.draft.com_performancePreset'}
-    assert tuple(o['value'] for o in choice['options'])==('minimum','lowpower','performance','balanced','quality','ultra')
+    assert tuple(o['value'] for o in choice['options'])==('minimum','lowpower','performance','balanced','enhanced','quality','ultra')
     for i,o in enumerate(choice['options']):
         assert o['id']==o['node']=='settings_preset-option-'+str(i)
         assert o['label']=='#str_229977' and o['labelIndex']==i
@@ -39,11 +39,12 @@ def contract(page):
         matches=[b for b in page['bindings'] if b['node']==id and b['property']=='enabled'];assert len(matches)==1
         conditions.append(matches[0]['value'])
     for phase in range(6):
-        for bits in itertools.product((False,True),repeat=5):
-            opened,busy,confirm,modal,local=bits
-            state=dict(zip(('settings.open','settings.busy','settings.confirmationVisible','page.discardVisible','ui.numberDraftsPending'),bits));state['settings.phase']=phase
+        for bits in itertools.product((False,True),repeat=6):
+            opened,busy,confirm,modal,local,detected=bits
+            state=dict(zip(('settings.open','settings.busy','settings.confirmationVisible','page.discardVisible','ui.numberDraftsPending','settings.render.autoDetect'),bits));state['settings.phase']=phase
             expected=opened and phase==1 and not(busy or confirm or modal or local)
-            assert all(evaluate(condition,state)==expected for condition in conditions)
+            assert evaluate(conditions[1],state)==expected
+            assert all(evaluate(condition,state)==(expected and detected) for condition in (conditions[0],conditions[2]))
     for prefix in ('draft','baseline'):
         alias=prefix+'Preset';assert page['aliases'][alias]=={'variable':alias}
         assert page['presentationVariables'][alias]['value']=={'state':'settings.'+prefix+'.com_performancePreset'}
@@ -58,7 +59,7 @@ class Presets(unittest.TestCase):
         self.assertEqual(numbers.compose(presets.compose(self.page)),presets.compose(numbers.compose(self.page)))
     def test_placement_and_existing_order(self):
         self.assertEqual([n['id'] for n in self.nodes['settings-body']['children']],['performance-band','interface-band','display-column','dimensions-column','image-column','render-column'])
-        self.assertEqual([n['id'] for n in self.nodes['performance-band']['children']],['settings_preset','settings_autodetect'])
+        self.assertEqual([n['id'] for n in self.nodes['performance-band']['children']],['settings_backend','settings_gpu','settings_preset','settings_autodetect','settings_restart_renderer','rendering-active','rendering-notice'])
         self.assertEqual(self.nodes['performance-band']['properties']['flex-wrap'],presets.keyword('wrap'))
         for id in ('settings_preset','settings_autodetect'):
             self.assertGreater(self.nodes[id]['properties']['flex-shrink']['value'],0)
@@ -71,7 +72,7 @@ class Presets(unittest.TestCase):
                 self.assertEqual(self.nodes[new+'-'+part],expected)
         for id,node in self.nodes.items():
             if id.startswith(('settings_preset','settings_autodetect')):self.assertNotEqual(node['type'],'image')
-    def test_all_locales_have_exact_six_labels(self):
+    def test_all_locales_have_exact_seven_labels(self):
         files=sorted((ROOT/'content/baseoq4/pak0/strings').glob('*_openq4.lang'))
         self.assertEqual({f.stem for f in files},{n+'_openq4' for n in ('english','french','german','italian','spanish','polish','russian',
             'brazilian','czech','hungarian','turkish','ukrainian')})
@@ -79,7 +80,7 @@ class Presets(unittest.TestCase):
             for id in ('229976','229977','229978','230010'):
                 values=re.findall(r'"#str_'+id+r'"\s+"([^"\r\n]+)"',file.read_text(encoding='utf-8'))
                 self.assertEqual(len(values),1,file.name+id)
-                if id=='229977':self.assertEqual(len(values[0].split(';')),6)
+                if id=='229977':self.assertEqual(len(values[0].split(';')),7)
     def test_no_duplicate_profile_values_in_page(self):
         self.assertEqual(self.page['actions']['preset']['arguments'],{'name':{'input':'value'}})
         self.assertEqual(self.page['events']['autoDetect'][0]['then'],[{'op':'action','action':'autoDetect'}])

@@ -10,6 +10,7 @@ class idRenderTexture;
 
 #include "ImageOpts.h"
 #include "RendererCaps.h"
+#include "RendererHardware.h"
 #include "RetainedFontTypes.h"
 // jmarshall end
 
@@ -137,6 +138,8 @@ typedef struct glconfig_s {
 #endif
 // INTEL END
 
+	RendererGpuClass gpuClass;
+	int dedicatedVideoMemoryMB; // Active device only. 0 = unavailable or shared memory.
 } glconfig_t;
 
 // outside of TR since it shouldn't be cleared during ref re-init; the window
@@ -813,6 +816,13 @@ public:
 	// BindRenderTexture retains its unconditional flush/barrier semantics.
 	// Appended slot, render API 24; existing game API slots are unchanged.
 	virtual void BeginGuiRoot() { BindRenderTexture(NULL,NULL); }
+
+	// One checkpoint thumbnail from the next ordinary frame, without an extra
+	// scene draw or GPU wait. Poll returns 0 pending, 1 written, -1 unavailable.
+	// A new request is rejected until the previous request is polled or cancelled.
+	virtual bool BeginSavePreview() = 0;
+	virtual int PollSavePreview( const char *fileName ) = 0;
+	virtual void CancelSavePreview() = 0;
 };
 
 extern idRenderSystem *		renderSystem;

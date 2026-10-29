@@ -77,7 +77,9 @@ def multiplayer_document() -> dict:
     check_multiplayer_fits()
     doc = Document("openq4.multiplayer")
     doc.session("back", "multiplayerBack")
-    doc.events["onBack"] = [{"op": "action", "action": "back"}]
+    doc.events["onBack"] = [{"op": "if", "condition": {"state": "setup.open"},
+                             "then": [{"op": "action", "action": "playerSetupClose"}],
+                             "else": [{"op": "action", "action": "back"}]}]
     buttons = []
     for ident, key, action in SECTIONS:
         doc.session(action, action)
@@ -97,6 +99,14 @@ def multiplayer_document() -> dict:
         group("details", {**absolute(left=U * 395, top=U * 190, width=U * DETAILS[0], height=U * DETAILS[1]), "opacity": number(0)},
               [description]),
     ])
+    from retained_player_setup import player_setup
+    content["children"].append(player_setup(doc))
+    for ident in ("navigation", "details"):
+        content_node = next(node for node in content["children"] if node["id"]==ident)
+        content_node["properties"]["display"] = keyword("block" if ident=="details" else "flex")
+        doc.bind(f"{ident}.setup-display",ident,"display",{"op":"select","args":[{"state":"setup.open"},"none","block" if ident=="details" else "flex"]})
+    doc.events["setupOpen"] = [{"op":"setState","values":{"setup.open":True}}, {"op":"focus","control":"setup-name"}]
+    doc.events["setupClose"] = [{"op":"setState","values":{"setup.open":False}}, {"op":"focus","control":"setup"}]
     # Going deeper, the section's label carries from its row into the slot at
     # the step's foot (title.carry, 300 ms).
     carry_starts = {ident: {"type": "transform", "unit": "dp", "value": [round(U * (44 - SUBPAGE_SLOT[0]), 3),
@@ -184,9 +194,9 @@ def multiplayer_document() -> dict:
     returns = [ident for ident, *_rest in DEEPER] + ["setup"]
     for ident in returns:
         doc.state[f"from_{ident}"] = {"type": "boolean", "initial": False}
-    doc.events["onActivate"] = [{"op": "playTimeline", "timeline": "arrive"}, {"op": "focus", "control": "join"}] + [
+    doc.events["onActivate"] = [{"op":"setState","values":{"setup.open":False}}, {"op": "playTimeline", "timeline": "arrive"}, {"op": "focus", "control": "join"}] + [
         {"op": "if", "condition": {"state": f"from_{ident}"}, "then": [{"op": "focus", "control": ident}]} for ident in returns]
-    doc.events["onDeactivate"] = [{"op": "playTimeline", "timeline": "rest"}]
+    doc.events["onDeactivate"] = [{"op":"setState","values":{"setup.open":False}}, {"op": "playTimeline", "timeline": "rest"}]
     doc.events["depart"] = [{"op": "playTimeline", "timeline": "depart"}]
     for _ident, _row, _key, timeline in DEEPER:
         doc.events[timeline] = [{"op": "playTimeline", "timeline": timeline}, *by_language(doc, "crumbEnter", fits)]

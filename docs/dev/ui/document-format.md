@@ -63,7 +63,7 @@ The [independent text-scale contract](text-scale.md) applies to absolute font
 size, line height and tracking at presentation. Use `em` for dimensions that
 must grow with typography; fixed `dp` furniture retains its own scale.
 
-The current node types are `group`, `text` and `vector`. Each has an `id`, `type`, optional
+The current node types are `group`, `text`, `vector`, `image` and `model`. Each has an `id`, `type`, optional
 `properties`, `children`, `mask`, `control` and `extensions`. Text content belongs only to text
 nodes; text nodes cannot own children. The root is a normal node inside a
 viewport-filling retained document.
@@ -136,6 +136,113 @@ property. The default fit is `fill`; ordinary pictures also support `contain`,
 `image-blend: additive` adds premultiplied light without opaque rectangle
 coverage. Approved HUD bitmap exceptions reference installed art; no retail
 image is copied into the repository.
+
+### Model scenes
+
+The 28 October runtime foundation adds a typed `model` node. Its `scene`
+describes one root model, up to two attachments and up to five lights, using
+the engine's renderDef contract. This is infrastructure for Player Setup and
+multiplayer cards; it does not establish completion of those player flows or
+accept any migration variant. A host without model support explicitly refuses
+the frame before UI paint so its owner can choose the stock fallback.
+
+```json
+"scene": {
+  "parts": [
+    {"model":{"state":"player.body"}, "skin":{"state":"player.skin"},
+     "anim":"idle", "animClass":"player_ui_anims"},
+    {"model":{"state":"player.head"}, "skin":{"state":"player.headSkin"},
+     "joint":"chest", "anim":"idle", "animClass":{"state":"player.head"}},
+    {"model":"weapon_machinegun_world", "joint":"PST_ATTACHER",
+     "anim":"idle", "animClass":"weapon_blaster_gui"}
+  ],
+  "origin":[-50,0,-40], "rotation":[0,200,0], "camera":[-160,65,-5],
+  "lights":[
+    {"origin":[-100,-50,-60], "colour":[0.45,0.25,0.125]},
+    {"origin":[-120,120,120], "colour":[0.8,0.9,1]}
+  ]
+}
+```
+
+Asset fields accept string expressions; vectors, FOV and effect width accept
+numeric expressions. They use the ordinary binding expression language and
+canonical state. A state transaction resolves every scene before publication;
+invalid assets or non-finite/out-of-range values refuse the complete change.
+Asset names are relative VFS names of at most 256 bytes. Empty names allow
+application state to populate a document before its first presentation. The
+root cannot have a joint. Each attachment names a joint on the root.
+
+`origin`, `rotation` and `camera` are three-component vectors. Defaults are
+zero origin/rotation, camera `[-128,0,0]`, horizontal `fov:90` and one white
+light at `[-128,0,0]`. Explicit `lights:[]` disables lights. Position components
+are bounded to ±32768, rotation to ±360000 degrees, light RGB to 0–16 and FOV
+to 1–179 degrees. Four-component `outline`, `rimlight` and `brightSkin` default
+to zero and have components 0–16; `outlineWidth` defaults to 2 and is 0–6.
+Unknown scene/part/light fields are rejected; `extensions` remains opaque.
+
+The runtime measures the visible model's projected box after layout and asks
+the host to prepare its image before painting any retained geometry. Hidden
+or empty boxes submit no model view. One process-local owner lease follows
+each live scene and is retired on close, replacement or shutdown. Reduced
+motion holds animation time at zero while allowing model and camera changes.
+Every document is bounded to 32 model nodes; the portable frame guard rejects
+targets above 8192 pixels per axis or 16,777,216 pixels. A host may impose a
+smaller device or shared-memory limit and must report failure, never silently
+substitute a different asset. The resulting image uses ordinary retained
+geometry, subtree opacity, clipping, masks and transforms.
+
+The native host reuses `idRenderWindow` for animations, root-joint attachments
+and per-part skins. It renders colour and depth into private targets, then
+resolves coverage into a premultiplied image. The resolve shader is built into
+the renderer; no material/shader file or extracted model asset is added to the
+package. Independent views preserve the surrounding frame's material clock,
+primary world and scene-resolution crop. Forced offscreen crops can exceed the
+window while remaining within the device/host limit.
+
+The host has 64 physical slots, at most 4096 pixels per axis and 16,777,216
+resident pixels across live and retired targets. Colour, resolved RGBA and the
+device's depth/stencil format use at most 256 MiB before allocator overhead.
+A changed size or a changed second submission in the same front-end frame
+gets a fresh slot; retired storage is collected after that submission frame.
+Map loads and game-module unloads release borrowed animation/model references;
+live scenes precache again inside the following load. Renderer/language
+recreation retires the old contexts before resetting shared storage. Renderer
+demo recording explicitly refuses this output: serializing offscreen targets
+into that stream remains unsupported.
+
+#### Model foundation evidence, 28 October 2026
+
+The full Windows x64 client/dedicated/GL/Vulkan build and stage pass. Seven
+selected native UI suites pass, including 31 model-scene checks against the
+actual Runtime/Rml implementation, document/state/vector checks, 295 canvas
+checks, 539 native-view publication checks and generated-image lifetime tests.
+The actual Vulkan material compiler passes 36 cases including the built-in
+colour/depth resolve source and its sampler interface.
+
+After `game/airdefense1` gameplay, hidden/windowed OpenGL and Vulkan captures
+show the complete body, head and attached weapon over the fixture's backing.
+The active API is recorded. Vulkan also restores the model after language
+reload and a windowed video restart. Only engine `screenshot` output is used;
+host input remains disabled. The agent inspected both images for complete,
+upright geometry and transparent coverage; this is not independent artwork
+acceptance. Evidence is
+`.tmp/retained-ui-completion/models/validation-evidence.json`.
+
+The first GL run failed the generated-material warning check. Two following
+captures passed automated checks but used a misplaced fixture whose model was
+outside the view; they are retained as failed visual evidence. The final
+fixture uses physical pixels because the diagnostic preview does not yet
+adopt its document's authored canvas header. The corrected GL/Vulkan captures
+have no retained-preview diagnostics or engine errors, but each retains 12
+late model/material/entity declaration precache warnings from opening this
+test document after gameplay. They do not establish clean production loading.
+
+Player Setup and both production previews, animation sampling over time,
+alternate native head skins, masked/transformed composition, repeated native
+target turnover, map/module changes, failure injection and remaining device/
+platform/performance qualification stay open under UI-01/UI-09. The current
+reduced-motion captures establish the rendered pose and resource resets only.
+No requirement, migration resource or final gate is accepted.
 
 Declaring any of `image-offset-x`, `image-offset-y`, `image-scale-x` or
 `image-scale-y` enables repeating normalized UVs on a stationary image quad.

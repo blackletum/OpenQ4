@@ -134,6 +134,77 @@ def validate_vulkan_pipeline_creation_accounting() -> None:
     require(backend, "VK_Device_PrintPipelineInfo();", "gfxInfo pipeline accounting")
 
 
+def validate_vulkan_pipeline_statistics() -> None:
+    """Exercise the production opt-in allocation and single-span query guards."""
+    source = read(RENDERER / "Vulkan" / "VulkanGpuFrameTiming.cpp")
+    harness = r'''
+#include <cassert>
+#include <cstddef>
+using VkCommandBuffer = int;
+using VkQueryPool = int;
+constexpr int VK_NULL_HANDLE=0, VK_SUCCESS=0, VK_FRAMES_IN_FLIGHT=3;
+constexpr int VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO=11, VK_QUERY_TYPE_PIPELINE_STATISTICS=12;
+constexpr int vkGpuPipelineCounters=0xe7;
+struct VkQueryPoolCreateInfo { int sType, queryType, queryCount, pipelineStatistics; };
+struct { bool pipelineStatisticsEnabled=false; int device=7; } vkCtx;
+struct Slot { bool open=false, profile=false, pipelineOpen=false, pipelineComplete=false; int pipelineScope=0,pipelineLight=-1,pipelineOrthographic=-1; } vkGpuTimingSlots[3];
+int vkGpuPhaseActiveSlot=-1, vkGpuPipelineQueryPool=0, vkGpuPipelineScopeRequested=0;
+int created=0, began=0, ended=0; bool failCreate=false;
+int vkCreateQueryPool(int device,const VkQueryPoolCreateInfo* info,void*,int* pool) {
+    ++created; assert(device==7 && info->sType==11 && info->queryType==12);
+    assert(info->queryCount==3 && info->pipelineStatistics==0xe7);
+    *pool=55; return failCreate ? -1 : 0;
+}
+void begin(int cmd,int pool,int slot,int flags) { ++began;assert(cmd==9 && pool==55 && slot==1 && flags==0); }
+void end(int cmd,int pool,int slot) { ++ended;assert(cmd==9 && pool==55 && slot==1); }
+auto vkCmdBeginQuery=&begin;auto vkCmdEndQuery=&end;
+'''
+    for signature in ("static bool VK_GpuFrameTiming_EnsurePipelineQueryPool()",
+                      "bool VK_GpuProjectedShadowStatistics_Begin( VkCommandBuffer commandBuffer, int scope, int light, int orthographic )",
+                      "void VK_GpuProjectedShadowStatistics_End( VkCommandBuffer commandBuffer )"):
+        harness += signature + " {" + function_body(source, signature) + "}\n"
+    harness += r'''
+int main() {
+    assert(!VK_GpuFrameTiming_EnsurePipelineQueryPool() && created==0);
+    vkCtx.pipelineStatisticsEnabled=true;vkCmdBeginQuery=nullptr;
+    assert(!VK_GpuFrameTiming_EnsurePipelineQueryPool() && created==0);
+    vkCmdBeginQuery=&begin;failCreate=true;
+    assert(!VK_GpuFrameTiming_EnsurePipelineQueryPool() && created==1 && vkGpuPipelineQueryPool==0);
+    assert(!VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1));
+    failCreate=false;assert(VK_GpuFrameTiming_EnsurePipelineQueryPool() && created==2);
+    assert(VK_GpuFrameTiming_EnsurePipelineQueryPool() && created==2);
+    assert(!VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1));
+    vkGpuPhaseActiveSlot=1;auto& slot=vkGpuTimingSlots[1];
+    assert(!VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1));slot.open=true;
+    assert(!VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1));slot.profile=true;
+    assert(!VK_GpuProjectedShadowStatistics_Begin(0,0,-1,-1));
+    VK_GpuProjectedShadowStatistics_End(9);assert(ended==0);
+    assert(VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1) && began==1 && slot.pipelineOpen);
+    assert(!VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1));
+    VK_GpuProjectedShadowStatistics_End(0);assert(slot.pipelineOpen && ended==0);
+    VK_GpuProjectedShadowStatistics_End(9);assert(ended==1 && slot.pipelineComplete && !slot.pipelineOpen);
+    VK_GpuProjectedShadowStatistics_End(9);assert(ended==1);
+    assert(!VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1));
+    slot={};slot.open=slot.profile=true;
+    assert(VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1) && began==2);
+    VK_GpuProjectedShadowStatistics_End(9);assert(ended==2);
+    slot={};slot.open=slot.profile=true;vkGpuPipelineScopeRequested=3;
+    assert(!VK_GpuProjectedShadowStatistics_Begin(9,0,-1,-1));
+    assert(VK_GpuProjectedShadowStatistics_Begin(9,3,7,1));
+    assert(slot.pipelineScope==3 && slot.pipelineLight==7 && slot.pipelineOrthographic==1);
+    VK_GpuProjectedShadowStatistics_End(9);assert(ended==3);
+}
+'''
+    compiler = next((p for name in ("clang++", "g++", "c++") if (p := shutil.which(name))), None)
+    if compiler is None:
+        raise RuntimeError("a C++ compiler is required for the pipeline statistics contract")
+    with tempfile.TemporaryDirectory(prefix="gpu-pipeline-statistics-", dir=ROOT / ".tmp") as directory:
+        cpp, binary = Path(directory) / "statistics.cpp", Path(directory) / "statistics.exe"
+        cpp.write_text(harness, encoding="utf-8")
+        subprocess.run([compiler, "-std=c++17", str(cpp), "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+
+
 def main() -> int:
     public_header = read(RENDERER / "RenderSystem.h")
     companion_header_path = GAME_ROOT / "src" / "renderer" / "RenderSystem.h"
@@ -174,7 +245,7 @@ def main() -> int:
         require(public_header, token, "public renderer module ABI")
 
     module_api = read(RENDERER / "RenderModuleAPI.h")
-    require(module_api, "#define RENDER_API_VERSION\t\t\t25", "renderer module ABI v25")
+    require(module_api, "#define RENDER_API_VERSION\t\t\t29", "renderer module ABI v29")
 
     core = read(RENDERER / "GpuFrameTimingCore.h")
     require(core, "elapsedMicroseconds == 0", "zero-duration rejection")
@@ -287,8 +358,31 @@ def main() -> int:
         raise AssertionError("Vulkan timestamp query reads must not use WAIT_BIT")
     require(vk_timing, "GpuFrameTimingCore_TimestampDelta", "valid-bit timestamp math")
     require(vk_timing, "elapsedMicroseconds", "Vulkan microsecond result")
+    require(vk_timing, '"worldShadowMaps"', "separate shadow-map production timing")
+    phase_begin = function_body(vk_timing, "bool VK_GpuPhaseTiming_Begin(")
+    require(phase_begin, "!slot.profile", "disabled phase profiler emits no queries")
+    shadow_map = read(RENDERER / "Vulkan" / "vk_ShadowMap.cpp")
+    map_render = function_body(shadow_map, "bool VK_ShadowMap_RenderAtlas(")
+    require(map_render, "vkGpuPhaseScope mapTiming( cmd, VK_GPU_PHASE_WORLD_SHADOW_MAPS, profileMainView );",
+            "frame-owned nested map-production interval")
+    for token in ("!viewDef->isSubview", "viewDef->superView == NULL", "RF_PORTAL_SKY"):
+        require(map_render, token, "main-view-only shadow-map timing")
+    for token in ("VK_GPU_PHASE_SHADOW_PROJECTED", "VK_GPU_PHASE_SHADOW_CACHE",
+                  "VK_GPU_PHASE_SHADOW_COMPOSE", "VK_GPU_PHASE_SHADOW_POINT"):
+        require(map_render, token, "frame-owned shadow production class interval")
+    require(map_render, "cacheTiming.End();", "cache timing ends before dynamic composition")
 
     vk_gui = read(RENDERER / "Vulkan" / "vk_GuiExecutor.cpp")
+    for token in ("VK_GPU_PHASE_WORLD_AMBIENT_PRE", "VK_GPU_PHASE_WORLD_COMPOSITION",
+                  "VK_GPU_PHASE_WORLD_FOG", "VK_GPU_PHASE_WORLD_AMBIENT_POST",
+                  "VK_GPU_PHASE_WORLD_MATERIAL_POST", "VK_GPU_PHASE_SMAA_EDGE",
+                  "VK_GPU_PHASE_SMAA_WEIGHTS", "VK_GPU_PHASE_SMAA_BLEND",
+                  "VK_GPU_PHASE_WORLD_VIEW", "VK_GPU_PHASE_PORTAL_VIEW", "VK_GPU_PHASE_TARGET_RESOLVE"):
+        require(vk_gui, token, "ambient/composition/SMAA phase attribution")
+    require(vk_timing, "VK_GPU_PHASE_COUNT <= 32", "phase mask capacity")
+    require(vk_timing, "slot.profile && VK_GpuFrameTiming_EnsurePipelineQueryPool()", "profile-only pipeline query reset")
+    require(vk_timing, "slot.pipelineComplete && vkGpuPipelineQueryPool != VK_NULL_HANDLE", "completed pipeline query read")
+    require(vk_timing, "projectedPipelineValid", "explicit validity for optional pipeline counters")
     wait_at = vk_gui.find("const VkResult frameFenceResult = vkWaitForFences")
     resolve_at = vk_gui.find("VK_GpuFrameTiming_BeginFrame( cmd, slot, tr.frameCount )")
     if wait_at < 0 or resolve_at < 0 or wait_at >= resolve_at:
@@ -319,6 +413,7 @@ def main() -> int:
     require(native_test, "state.generation, 0, 1", "native zero-duration test")
 
     validate_vulkan_pipeline_creation_accounting()
+    validate_vulkan_pipeline_statistics()
 
     print("renderer GPU frame timing contracts: PASS")
     return 0

@@ -1097,6 +1097,53 @@ SCENARIOS = {
         'openq4_retainedGui event onBack', 'waitMsec 1500', 'ui_retainedStatus', 'openq4_guiGet p_settings_ctrls::visible',
         'screenshot "screenshots/controls-back.tga"',
     ]),
+    # The retained SETTINGS page (UI-01): SETTINGS on the title hands off to
+    # it; CONTROLS opens its page, whose Back lands on CONTROLS; DISPLAY (the
+    # SYSTEM page off) sends it away to the stock settings screen on that
+    # panel, whose Back returns it onto DISPLAY; LOAD DEFAULTS asks, and NO
+    # closes the question; BACK returns the title.
+    'settings-page': (None, [
+        'waitMsec 9500', 'openq4_retainedGui focus nav_settings', 'openq4_retainedGui report', *menu_step('accept'), 'waitMsec 1200',
+        'ui_retainedStatus',
+        'openq4_retainedGui report', 'screenshot "screenshots/settings-page.tga"',
+        *menu_step('accept'), 'waitMsec 800', 'openq4_retainedGui event onBack', 'waitMsec 800', 'openq4_retainedGui report',
+        'screenshot "screenshots/settings-page-controls-back.tga"',
+        'openq4_retainedGui focus display', *menu_step('accept'), 'waitMsec 1500', 'openq4_guiGet p_settings_sys::visible',
+        'ui_retainedStatus', 'screenshot "screenshots/settings-page-display.tga"',
+        'openq4_guiAction set_b_back', 'waitMsec 1500', 'openq4_retainedGui report', 'ui_retainedStatus',
+        'screenshot "screenshots/settings-page-display-back.tga"',
+        'openq4_retainedGui focus defaults', *menu_step('accept'), 'waitMsec 600', 'screenshot "screenshots/settings-page-defaults.tga"',
+        'openq4_retainedGui focus defaultsModal_no', *menu_step('accept'), 'waitMsec 600', 'openq4_retainedGui report',
+        'openq4_retainedGui event onBack', 'waitMsec 1500', 'ui_retainedStatus', 'openq4_retainedGui report',
+        'screenshot "screenshots/settings-page-back.tga"',
+    ]),
+    # LOAD DEFAULTS' YES restores the defaults: a changed sensitivity returns
+    # to its default.
+    'settings-defaults': (None, [
+        'waitMsec 9500', 'sensitivity 9', 'openq4_retainedGui focus nav_settings', *menu_step('accept'), 'waitMsec 1200',
+        'openq4_retainedGui focus defaults', *menu_step('accept'), 'waitMsec 600', 'openq4_retainedGui focus defaultsModal_yes',
+        # cvar_restart resets the log CVars too, so the run logs on in the
+        # continuation file.
+        *menu_step('accept'), 'waitMsec 2000', 'set logFile 2', 'set logFileName "logs/openq4-match.log"', 'sensitivity',
+        'openq4_retainedGui report', 'screenshot "screenshots/settings-defaults.tga"',
+    ]),
+    # SETTINGS on the pause opens the page over the level; BACK returns the pause.
+    'settings-pause': ('game/airdefense1', [
+        'openq4_assertMenuActivation 10000', 'waitMsec 1200', 'openq4_retainedGui focus nav_settings', *menu_step('accept'),
+        'waitMsec 1200', 'ui_retainedStatus', 'openq4_retainedGui report', 'screenshot "screenshots/settings-pause.tga"',
+        'openq4_retainedGui event onBack', 'waitMsec 1500', 'ui_retainedStatus', 'openq4_retainedGui report',
+        'screenshot "screenshots/settings-pause-back.tga"',
+    ]),
+    'settings-strogg': ('game/recomp', [
+        'openq4_assertMenuActivation 10000', 'waitMsec 1200', 'openq4_retainedGui focus nav_settings', *menu_step('accept'),
+        'waitMsec 1200', 'ui_retainedStatus', 'openq4_retainedGui report', 'screenshot "screenshots/settings-strogg.tga"',
+        'openq4_retainedGui event onBack', 'waitMsec 1500', 'ui_retainedStatus', 'openq4_retainedGui report',
+        'screenshot "screenshots/settings-strogg-back.tga"',
+    ]),
+    'fallback-settings': (None, [
+        'waitMsec 9500', 'openq4_retainedGui focus nav_settings', *menu_step('accept'), 'waitMsec 1500',
+        'ui_retainedStatus', 'openq4_guiGet p_settings::visible', 'screenshot "screenshots/fallback-settings.tga"',
+    ]),
     # The settings screen with the retained pages: it arrives on no panel,
     # titled SETTINGS, every button showing; CONTROLS opens its page, and Back
     # returns to the screen as it was; the stock DISPLAY panel opens, and
@@ -1435,6 +1482,7 @@ OVERRIDES = {
     'fallback-game': {'guis/menu/settings/game.q4ui': lambda runtime: BROKEN_DOCUMENT},
     'fallback-game-mp': {'guis/menu/settings/game.q4ui': lambda runtime: BROKEN_DOCUMENT},
     'fallback-controls': {'guis/menu/settings/controls.q4ui': lambda runtime: BROKEN_DOCUMENT},
+    'fallback-settings': {'guis/menu/settings.q4ui': lambda runtime: BROKEN_DOCUMENT},
     'fallback-campaign': {'guis/menu/singleplayer.q4ui': lambda runtime: BROKEN_DOCUMENT},
     'fallback-loading': {'guis/loading/splevel.gui': lambda runtime: MOD_LOADING_GUI,
                          'guis/loading/generic.gui': lambda runtime: MOD_LOADING_GUI},

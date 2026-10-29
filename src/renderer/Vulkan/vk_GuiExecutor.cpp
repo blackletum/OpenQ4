@@ -78,6 +78,8 @@
 #include "shaders/display_color_mapping_spv.h"
 
 extern idCVar r_skipDynamicTextures;
+static idCVar r_vkCopyResolveScratchReference( "r_vkCopyResolveScratchReference", "0", CVAR_RENDERER | CVAR_BOOL,
+	"resolve color captures through an intermediate image even when no conversion is needed" );
 
 // vk_Interactions.cpp: the Phase F1 per-light interaction pass, inserted
 // between the depth fill and the ambient walks
@@ -105,6 +107,8 @@ bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef );
 bool VK_SceneEffects_DrawPreFog( const viewDef_t *viewDef, int processed );
 bool VK_PostProcess_DrawUnderwater( const viewDef_t *viewDef );
 void VK_DebugTools_DrawView( const viewDef_t *viewDef );
+#include "../SavePreviewCapture.h"
+static void VK_ConsumeSavePreview( int slot );
 static void VK_Exec_ReleaseStencilReadbacks( void );
 static void VK_Exec_PrintStencilReadbacks( int slot );
 static void VK_Exec_ReleaseHDRReadbacks( void );
@@ -461,8 +465,8 @@ typedef struct vkGuiExecutor_s {
 	// fog/blend lights: 2 single-combined-sampler sets (0=fog/projection,
 	// 1=fogEnter/falloff) + set 2 dynamic UBO (blend-light block ring)
 	VkPipelineLayout	fogBlendPipelineLayout;
-	VkPipeline			casterPipeline;			// lazily built; depth-only atlas caster
-	VkPipeline			pointCasterPipeline;	// lazily built; depth-only cube-face caster
+	VkPipeline			casterPipeline[2];			// lazily built; depth-only atlas caster
+	VkPipeline			pointCasterPipeline[2];	// lazily built; depth-only cube-face caster
 	VkPipeline			momentCasterPipeline;	// lazily built; translucent moments, projected
 	VkPipeline			pointMomentCasterPipeline;	// lazily built; translucent moments, point faces
 	// r_shadowMapTranslucentMoments: what bindings 3-5 of every shadow set
@@ -2325,8 +2329,10 @@ static VkPipeline VK_Exec_GetGlassWarpPipeline( int stateBits ) {
 // depth-only shadow-map caster (Phase F2a): zero color attachments,
 // single-image layout (slot 0 = alpha map)
 VkPipeline VK_Exec_CasterPipeline( void ) {
-	if ( vkExec.casterPipeline != VK_NULL_HANDLE ) {
-		return vkExec.casterPipeline;
+	const bool withStencil = VK_ShadowMap_UseStencilAttachment();
+	VkPipeline &pipeline = vkExec.casterPipeline[withStencil ? 1 : 0];
+	if ( pipeline != VK_NULL_HANDLE ) {
+		return pipeline;
 	}
 	if ( vkExec.casterVertModule == VK_NULL_HANDLE || vkExec.casterFragModule == VK_NULL_HANDLE ) {
 		return VK_NULL_HANDLE;
@@ -2339,11 +2345,11 @@ VkPipeline VK_Exec_CasterPipeline( void ) {
 
 	vkPipelineTarget_t target = {};
 	target.depthFormat = vkCtx.shadowDepthFormat;
-	target.stencilFormat = vkCtx.shadowDepthHasStencil ? vkCtx.shadowDepthFormat : VK_FORMAT_UNDEFINED;
+	target.stencilFormat = withStencil ? vkCtx.shadowDepthFormat : VK_FORMAT_UNDEFINED;
 	target.samples = VK_SAMPLE_COUNT_1_BIT;
-	vkExec.casterPipeline = VK_Exec_CreatePipeline( vkExec.casterVertModule, vkExec.casterFragModule,
+	pipeline = VK_Exec_CreatePipeline( vkExec.casterVertModule, vkExec.casterFragModule,
 			&vertexInput, 0, vkExec.pipelineLayout, true, false, target );
-	return vkExec.casterPipeline;
+	return pipeline;
 }
 
 // depth-only point cube-face caster (Phase F2b): same shape as the atlas
@@ -2351,8 +2357,10 @@ VkPipeline VK_Exec_CasterPipeline( void ) {
 // depths from triangles crossing a cube face's origin. The point projection
 // uses a tiny positive near plane independent of the radial depth precision.
 VkPipeline VK_Exec_PointCasterPipeline( void ) {
-	if ( vkExec.pointCasterPipeline != VK_NULL_HANDLE ) {
-		return vkExec.pointCasterPipeline;
+	const bool withStencil = VK_ShadowMap_UseStencilAttachment();
+	VkPipeline &pipeline = vkExec.pointCasterPipeline[withStencil ? 1 : 0];
+	if ( pipeline != VK_NULL_HANDLE ) {
+		return pipeline;
 	}
 	if ( vkExec.pointCasterVertModule == VK_NULL_HANDLE || vkExec.pointCasterFragModule == VK_NULL_HANDLE ) {
 		return VK_NULL_HANDLE;
@@ -2365,11 +2373,11 @@ VkPipeline VK_Exec_PointCasterPipeline( void ) {
 
 	vkPipelineTarget_t target = {};
 	target.depthFormat = vkCtx.shadowDepthFormat;
-	target.stencilFormat = vkCtx.shadowDepthHasStencil ? vkCtx.shadowDepthFormat : VK_FORMAT_UNDEFINED;
+	target.stencilFormat = withStencil ? vkCtx.shadowDepthFormat : VK_FORMAT_UNDEFINED;
 	target.samples = VK_SAMPLE_COUNT_1_BIT;
-	vkExec.pointCasterPipeline = VK_Exec_CreatePipeline( vkExec.pointCasterVertModule, vkExec.pointCasterFragModule,
+	pipeline = VK_Exec_CreatePipeline( vkExec.pointCasterVertModule, vkExec.pointCasterFragModule,
 			&vertexInput, 0, vkExec.pipelineLayout, true, false, target );
-	return vkExec.pointCasterPipeline;
+	return pipeline;
 }
 
 // Translucent shadow moments (r_shadowMapTranslucentMoments, GL
@@ -3646,6 +3654,7 @@ void VK_GuiExecutor_Shutdown( void ) {
 	VK_PostProcess_Shutdown();
 	VK_Exec_ReleaseStencilReadbacks();
 	VK_Exec_ReleaseHDRReadbacks();
+	RB_ReleaseSavePreview();
 	for ( int i = 0; i < 2; ++i ) {
 		if ( vkExec.temporalDirectHistoryRenderTextures[i] != NULL ) {
 			delete vkExec.temporalDirectHistoryRenderTextures[i];
@@ -3714,11 +3723,13 @@ void VK_GuiExecutor_Shutdown( void ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.specialPipelines[ i ].pipeline, NULL );
 		}
 	}
-	if ( vkExec.casterPipeline != VK_NULL_HANDLE ) {
-		vkDestroyPipeline( vkCtx.device, vkExec.casterPipeline, NULL );
+	for ( VkPipeline &pipeline : vkExec.casterPipeline ) {
+		if ( pipeline != VK_NULL_HANDLE ) vkDestroyPipeline( vkCtx.device, pipeline, NULL );
+		pipeline = VK_NULL_HANDLE;
 	}
-	if ( vkExec.pointCasterPipeline != VK_NULL_HANDLE ) {
-		vkDestroyPipeline( vkCtx.device, vkExec.pointCasterPipeline, NULL );
+	for ( VkPipeline &pipeline : vkExec.pointCasterPipeline ) {
+		if ( pipeline != VK_NULL_HANDLE ) vkDestroyPipeline( vkCtx.device, pipeline, NULL );
+		pipeline = VK_NULL_HANDLE;
 	}
 	if ( vkExec.momentCasterPipeline != VK_NULL_HANDLE ) {
 		vkDestroyPipeline( vkCtx.device, vkExec.momentCasterPipeline, NULL );
@@ -4058,13 +4069,13 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 			}
 		}
 		vkExec.numSpecialPipelines = 0;
-		if ( vkExec.casterPipeline != VK_NULL_HANDLE ) {
-			vkDestroyPipeline( vkCtx.device, vkExec.casterPipeline, NULL );
-			vkExec.casterPipeline = VK_NULL_HANDLE;
+		for ( VkPipeline &pipeline : vkExec.casterPipeline ) {
+			if ( pipeline != VK_NULL_HANDLE ) vkDestroyPipeline( vkCtx.device, pipeline, NULL );
+			pipeline = VK_NULL_HANDLE;
 		}
-		if ( vkExec.pointCasterPipeline != VK_NULL_HANDLE ) {
-			vkDestroyPipeline( vkCtx.device, vkExec.pointCasterPipeline, NULL );
-			vkExec.pointCasterPipeline = VK_NULL_HANDLE;
+		for ( VkPipeline &pipeline : vkExec.pointCasterPipeline ) {
+			if ( pipeline != VK_NULL_HANDLE ) vkDestroyPipeline( vkCtx.device, pipeline, NULL );
+			pipeline = VK_NULL_HANDLE;
 		}
 		for ( int i = 0; i < vkExec.numBlendLightPipelines; i++ ) {
 			vkDestroyPipeline( vkCtx.device, vkExec.blendLightPipelines[ i ].pipeline, NULL );
@@ -4111,6 +4122,7 @@ bool VK_GuiExecutor_BeginFrame( void ) {
 	// the debug tools' stencil copies from this slot's last frame are done
 	VK_Exec_PrintStencilReadbacks( slot );
 	VK_Exec_ConsumeHDRReadback( slot );
+	VK_ConsumeSavePreview( slot );
 	// retire the last upload batch (and, per fence submission-order scope,
 	// every earlier one) before deferred destroys can release images those
 	// batches referenced; near-free, since the batch was submitted before the
@@ -4581,14 +4593,16 @@ static bool VK_Exec_RenderTextureEntries( idRenderTexture *renderTexture,
 	return true;
 }
 
-static void VK_Exec_TransitionActiveTargetToSampled( void ) {
+static void VK_Exec_TransitionActiveTargetToSampled( bool sampleDepth = true ) {
 	if ( vkExec.activeRenderTexture == NULL ) {
 		return;
 	}
 	for ( uint32_t i = 0; i < vkExec.activePipelineTarget.colorCount; i++ ) {
 		VK_Exec_TransitionImage( vkExec.activeColorEntries[ i ], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 	}
-	VK_Exec_TransitionImage( vkExec.activeDepthEntry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	if ( sampleDepth ) {
+		VK_Exec_TransitionImage( vkExec.activeDepthEntry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	}
 }
 
 static void VK_Exec_TransitionActiveTargetToAttachments( void ) {
@@ -4601,7 +4615,7 @@ static void VK_Exec_TransitionActiveTargetToAttachments( void ) {
 	VK_Exec_TransitionImage( vkExec.activeDepthEntry, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL );
 }
 
-bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace ) {
+bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace, bool samplePreviousDepth ) {
 	if ( cubeFace < 0 || cubeFace >= 6 || ( renderTexture == NULL && cubeFace != 0 ) ) {
 		return false;
 	}
@@ -4636,7 +4650,7 @@ bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture, int cubeFace ) {
 	}
 
 	VK_Exec_EndMainRendering();
-	VK_Exec_TransitionActiveTargetToSampled();
+	VK_Exec_TransitionActiveTargetToSampled( samplePreviousDepth );
 
 	vkExec.activeRenderTexture = renderTexture;
 	vkExec.activeCubeFace = cubeFace;
@@ -5909,13 +5923,33 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 	// With r_multiSamples on, the scene target is multisampled and
 	// vkCmdBlitImage refuses it outright, so the capture failed here and
 	// VK_GuiExecutor_Draw3DView then skipped every _currentRender-consuming
-	// surface. Resolve into single-sample scratch of the source's own format
-	// first; the format-converting, Y-flipping blit below then runs exactly as
-	// it does at one sample (a resolve can neither flip nor convert, so both
-	// steps are needed).
+	// surface. Matching-format captures in GL row order can resolve directly.
+	// Otherwise resolve into single-sample scratch of the source's own format
+	// before the converting/flipping blit (a resolve can do neither).
 	VkImage blitSource = sourceImage;
 	uint32_t blitSourceLayer = sourceLayer;
-	if ( !copyDepth && sourceEntry != NULL
+	const bool directColorResolve = !copyDepth && sourceEntry != NULL
+		&& sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT && lowerSource
+		&& sourceFormat == destination->format && !r_vkCopyResolveScratchReference.GetBool();
+	if ( directColorResolve ) {
+		// Matching-format captures already in GL row order need only the MSAA
+		// resolve. Resolve the requested rectangle straight into its destination
+		// instead of resolving the whole source and copying those texels again.
+		VkImageResolve region = {};
+		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.srcSubresource.baseArrayLayer = sourceLayer;
+		region.srcSubresource.layerCount = 1;
+		region.srcOffset.x = x;
+		region.srcOffset.y = y;
+		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.dstSubresource.baseArrayLayer = targetIsCube ? (uint32_t)cubeFace : 0;
+		region.dstSubresource.layerCount = 1;
+		region.extent.width = (uint32_t)width;
+		region.extent.height = (uint32_t)height;
+		region.extent.depth = 1;
+		vkCmdResolveImage( vkExec.cmd, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
+	} else if ( !copyDepth && sourceEntry != NULL
 			&& sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT ) {
 		vkImageEntry_t *scratch = VK_Image_AcquireResolveScratch( sourceWidth,
 				sourceHeight, sourceFormat );
@@ -6037,24 +6071,26 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 		return true;
 	}
 
-	VkImageBlit region;
-	memset( &region, 0, sizeof( region ) );
-	region.srcSubresource.aspectMask = copyAspect;
-	region.srcSubresource.baseArrayLayer = blitSourceLayer;
-	region.srcSubresource.layerCount = 1;
-	region.srcOffsets[ 0 ].x = x;
-	region.srcOffsets[ 0 ].y = lowerSource ? y : sourceHeight - y;
-	region.srcOffsets[ 1 ].x = x + width;
-	region.srcOffsets[ 1 ].y = lowerSource ? y + height : sourceHeight - y - height;
-	region.srcOffsets[ 1 ].z = 1;
-	region.dstSubresource.aspectMask = copyAspect;
-	region.dstSubresource.baseArrayLayer = targetIsCube ? (uint32_t)cubeFace : 0;
-	region.dstSubresource.layerCount = 1;
-	region.dstOffsets[ 1 ].x = width;
-	region.dstOffsets[ 1 ].y = height;
-	region.dstOffsets[ 1 ].z = 1;
-	vkCmdBlitImage( vkExec.cmd, blitSource, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST );
+	if ( !directColorResolve ) {
+		VkImageBlit region;
+		memset( &region, 0, sizeof( region ) );
+		region.srcSubresource.aspectMask = copyAspect;
+		region.srcSubresource.baseArrayLayer = blitSourceLayer;
+		region.srcSubresource.layerCount = 1;
+		region.srcOffsets[ 0 ].x = x;
+		region.srcOffsets[ 0 ].y = lowerSource ? y : sourceHeight - y;
+		region.srcOffsets[ 1 ].x = x + width;
+		region.srcOffsets[ 1 ].y = lowerSource ? y + height : sourceHeight - y - height;
+		region.srcOffsets[ 1 ].z = 1;
+		region.dstSubresource.aspectMask = copyAspect;
+		region.dstSubresource.baseArrayLayer = targetIsCube ? (uint32_t)cubeFace : 0;
+		region.dstSubresource.layerCount = 1;
+		region.dstOffsets[ 1 ].x = width;
+		region.dstOffsets[ 1 ].y = height;
+		region.dstOffsets[ 1 ].z = 1;
+		vkCmdBlitImage( vkExec.cmd, blitSource, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST );
+	}
 
 	destination->everUploaded = true;
 	destination->materialSampleFlipY = false; // CopyRender exports GL row order.
@@ -6766,6 +6802,7 @@ bool VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
 			|| destinationRenderTexture == NULL ) {
 		return false;
 	}
+	vkGpuPhaseScope resolveTiming( vkExec.cmd, VK_GPU_PHASE_TARGET_RESOLVE );
 	vkRenderTargetAttachments_t source, destination;
 	if ( !sourceRenderTexture->EnsureDeviceHandle() || !destinationRenderTexture->EnsureDeviceHandle()
 			|| !VK_Image_GetRenderTargetAttachments( sourceRenderTexture, 0, source )
@@ -7013,6 +7050,101 @@ change came back black with a warning -- the same silent-black failure the ES
 fix was written to cure, moved to a different backend.
 ====================
 */
+static struct {
+	VkBuffer buffer;
+	VmaAllocation allocation;
+	void *mapped;
+	int width, height, slot, state;
+	bool bgra;
+} vkSavePreview = {};
+
+bool RB_RequestSavePreview() {
+	if ( vkSavePreview.state != 0 || !vkCtx.initialized || vkCtx.presentationBlocked ||
+		( !vkCtx.offscreenFrames && !vkCtx.swapchainTransferSrc ) ) return false;
+	vkSavePreview.state = 1;
+	return true;
+}
+
+void RB_QueueSavePreview() {
+	if ( vkSavePreview.state != 1 || !vkExec.frameOpen ) return;
+	vkSavePreview.state = -1;
+	vkSavePreview.width = (int)vkCtx.swapchainExtent.width;
+	vkSavePreview.height = (int)vkCtx.swapchainExtent.height;
+	const int64 pixels = (int64)vkSavePreview.width * vkSavePreview.height;
+	if ( pixels <= 0 || pixels > 33554432 ) return;
+	vkSavePreview.bgra = vkCtx.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM ||
+		vkCtx.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB;
+	if ( !vkSavePreview.bgra && vkCtx.swapchainFormat != VK_FORMAT_R8G8B8A8_UNORM &&
+		vkCtx.swapchainFormat != VK_FORMAT_R8G8B8A8_SRGB ) return;
+	VkBufferCreateInfo buffer = {};
+	buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	buffer.size = (VkDeviceSize)pixels * 4;
+	buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	VmaAllocationCreateInfo allocation = {};
+	allocation.usage = VMA_MEMORY_USAGE_AUTO;
+	allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+	VmaAllocationInfo mapped = {};
+	if ( vmaCreateBuffer( vkCtx.allocator, &buffer, &allocation, &vkSavePreview.buffer,
+		&vkSavePreview.allocation, &mapped ) != VK_SUCCESS ) return;
+	vkSavePreview.mapped = mapped.pMappedData;
+	VK_Exec_EndMainRendering();
+	VK_Exec_TransitionSwapchain( VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+	VkBufferImageCopy copy = {};
+	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copy.imageSubresource.layerCount = 1;
+	copy.imageExtent.width = vkSavePreview.width;
+	copy.imageExtent.height = vkSavePreview.height;
+	copy.imageExtent.depth = 1;
+	vkCmdCopyImageToBuffer( vkExec.cmd, vkExec.frameImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		vkSavePreview.buffer, 1, &copy );
+	VkBufferMemoryBarrier2 barrier = {};
+	barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+	barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+	barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+	barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.buffer = vkSavePreview.buffer;
+	barrier.size = VK_WHOLE_SIZE;
+	VkDependencyInfo dependency = {};
+	dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+	dependency.bufferMemoryBarrierCount = 1;
+	dependency.pBufferMemoryBarriers = &barrier;
+	vkCmdPipelineBarrier2( vkExec.cmd, &dependency );
+	VK_Exec_TransitionSwapchain( VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+	vkSavePreview.slot = vkExec.frameSlot;
+	vkSavePreview.state = 2;
+}
+
+static void VK_ConsumeSavePreview( int slot ) {
+	if ( vkSavePreview.state == 2 && vkSavePreview.slot == slot ) {
+		vkSavePreview.state = vmaInvalidateAllocation( vkCtx.allocator, vkSavePreview.allocation,
+			0, VK_WHOLE_SIZE ) == VK_SUCCESS ? 3 : -1;
+	}
+}
+
+int RB_PollSavePreview( const byte *&pixels, int &width, int &height, bool &topDown, bool &bgra ) {
+	if ( vkCtx.presentationBlocked || vkSavePreview.state <= 0 ) return -1;
+	if ( vkSavePreview.state != 3 ) return 0;
+	pixels = static_cast<const byte *>( vkSavePreview.mapped );
+	width = vkSavePreview.width;
+	height = vkSavePreview.height;
+	topDown = true;
+	bgra = vkSavePreview.bgra;
+	return pixels != NULL ? 1 : -1;
+}
+
+void RB_ReleaseSavePreview() {
+	if ( vkSavePreview.buffer != VK_NULL_HANDLE ) {
+		if ( vkSavePreview.state == 2 ) {
+			VK_Device_DeferDestroy( VK_NULL_HANDLE, VK_NULL_HANDLE, vkSavePreview.buffer, vkSavePreview.allocation );
+		} else {
+			vmaDestroyBuffer( vkCtx.allocator, vkSavePreview.buffer, vkSavePreview.allocation );
+		}
+	}
+	memset( &vkSavePreview, 0, sizeof( vkSavePreview ) );
+}
+
 bool VK_GuiExecutor_ReadPixels( int x, int y, int width, int height, void *pixels, int components ) {
 	if ( components != 3 && components != 4 ) {
 		return false;
@@ -7199,6 +7331,7 @@ static bool VK_GuiExecutor_SubmitFrame( bool present ) {
 	VkCommandBuffer cmd = vkExec.cmd;
 	// A hidden window's offscreen frame completes without a presentation.
 	const bool presentImage = present && vkExec.framePresentable;
+	if ( present ) RB_QueueSavePreview();
 
 	// submit any batched image uploads first: same-queue submission order makes
 	// them execute before this frame samples the images, and this frame's fence
@@ -10544,6 +10677,12 @@ static bool VK_Exec_DrawGLSLProgramStage( const viewDef_t *viewDef,
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return false;
 	}
+	// Native SMAA draws in separate full-screen material views. Keep each
+	// draw interval distinct from the main world's ambient/post walks.
+	const vkGpuPhase_t smaaPhase = family == VK_GLSL_PROGRAM_FAMILY_SMAA_EDGE ? VK_GPU_PHASE_SMAA_EDGE
+		: family == VK_GLSL_PROGRAM_FAMILY_SMAA_WEIGHTS ? VK_GPU_PHASE_SMAA_WEIGHTS
+		: family == VK_GLSL_PROGRAM_FAMILY_SMAA_BLEND ? VK_GPU_PHASE_SMAA_BLEND : VK_GPU_PHASE_COUNT;
+	vkGpuPhaseScope smaaTiming( vkExec.cmd, smaaPhase, smaaPhase != VK_GPU_PHASE_COUNT );
 
 	vkGuiPushConstants_t push;
 	memset( &push, 0, sizeof( push ) );
@@ -14116,6 +14255,11 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 	const int slot = vkExec.frameSlot;
 
 	drawSurf_t **drawSurfs = (drawSurf_t **)viewDef->drawSurfs;
+	const bool profileMainView = !viewDef->isSubview && viewDef->superView == NULL
+		&& ( viewDef->renderFlags & RF_PORTAL_SKY ) == 0;
+	vkGpuPhaseScope worldTiming( cmd, VK_GPU_PHASE_WORLD_VIEW, profileMainView );
+	vkGpuPhaseScope portalTiming( cmd, VK_GPU_PHASE_PORTAL_VIEW,
+		( viewDef->renderFlags & RF_PORTAL_SKY ) != 0 );
 	const int numDrawSurfs = viewDef->numDrawSurfs;
 	// This is deliberately before any viewport/depth/cull state owned by the
 	// caller. Compute ends and resumes dynamic rendering exactly once, then the
@@ -14223,6 +14367,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 	// and vk_PostProcess.cpp copies depth between the phases.
 	const int worldDepthCaptures = VK_PostProcess_WorldDepthCaptures( viewDef );
 	int fillPhaseDrawn[ 4 ] = { 0, 0, 0, 0 };
+	vkGpuPhaseScope depthTiming( cmd, VK_GPU_PHASE_WORLD_DEPTH, profileMainView );
 	for ( int fillPhase = worldDepthCaptures != 0 ? 0 : 3; fillPhase < 4; fillPhase++ ) {
 		vkCmdSetDepthTestEnable( cmd, VK_TRUE );
 		vkCmdSetDepthWriteEnable( cmd, VK_TRUE );
@@ -14433,6 +14578,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 		vkCmdSetViewport( cmd, 0, 1, &viewport );
 	}
 
+	depthTiming.End();
 	// ---- interactions: per-light bump/diffuse/specular (Phase F1) ----
 	// RB_STD_DrawView order: depth fill, then RB_ARB2_DrawInteractions,
 	// then the ambient walks. The pass tracks its own space/depth-range
@@ -14442,6 +14588,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 	// has consumed its transient allocations but before the first interaction
 	// framebuffer write. A rejection leaves the complete classic light/shadow
 	// walker untouched.
+	vkGpuPhaseScope lightTiming( cmd, VK_GPU_PHASE_WORLD_LIGHTS, profileMainView );
 	const bool sharedWorldInteractionOwned =
 		!sceneScaleState.active && r_rendererSharedWorldInteraction.GetBool()
 		&& VK_ClassicInteraction_Preflight( viewDef );
@@ -14455,6 +14602,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 		}
 		VK_Interactions_DrawLights( viewDef );
 	}
+	lightTiming.End();
 	// r_shadowMapDebugOverlay draws where RB_ARB2_DrawInteractions draws it:
 	// after the last receiver, while the shadow atlas and point cubes still
 	// hold this view's contents. One call site covers both walkers and the
@@ -14516,6 +14664,7 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 		// space/depth-range state and exits at maxDepth 1.0 with depth
 		// bias off; restart the walk baseline like the interaction pass.
 		if ( pass == 1 ) {
+			vkGpuPhaseScope compositionTiming( cmd, VK_GPU_PHASE_WORLD_COMPOSITION, profileMainView );
 			// ---- light grid, player visibility effects, cel shells ----
 			// RB_STD_DrawView draws them between the pre-fog material
 			// passes and the fog (vk_SceneEffects.cpp)
@@ -14532,6 +14681,8 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 				VK_TemporalPresentation_EndView( viewDef, sceneScaleState, false );
 				return;
 			}
+			compositionTiming.End();
+			vkGpuPhaseScope fogTiming( cmd, VK_GPU_PHASE_WORLD_FOG, profileMainView );
 			const bool sharedFogBlendOwned =
 				!sceneScaleState.active && r_rendererSharedWorldFogBlend.GetBool()
 				&& VK_ClassicFogBlend_Preflight( viewDef );
@@ -14575,6 +14726,9 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 			viewport.maxDepth = 1.0f;
 			vkCmdSetViewport( cmd, 0, 1, &viewport );
 		}
+		const vkGpuPhase_t ambientPhase = pass == 0 ? VK_GPU_PHASE_WORLD_AMBIENT_PRE
+			: pass == 1 ? VK_GPU_PHASE_WORLD_AMBIENT_POST : VK_GPU_PHASE_WORLD_MATERIAL_POST;
+		vkGpuPhaseScope ambientTiming( cmd, ambientPhase, profileMainView );
 		if ( !r_skipAmbient.GetBool() ) {
 			if ( sharedWorldAmbientOwned && pass < 2 ) {
 				VK_ClassicWorldAmbient_DrawPhase(
@@ -15672,6 +15826,89 @@ static bool VK_Exec_TestColorResolveCase( VkShaderModule vertex, VkShaderModule 
 	return passed;
 }
 
+static bool VK_Exec_TestCopyResolveCase( VkShaderModule vertex, VkShaderModule fragment,
+		int samples, textureFormat_t format ) {
+	idImageOpts options;
+	options.textureType = TT_2D;
+	options.format = format;
+	options.width = samples + 1;
+	options.height = 3;
+	options.numLevels = 1;
+	options.numMSAASamples = samples;
+	idImage *color = globalImages->ScratchImage( va( "_vkTestCopySource%d_%d", samples, format ),
+		&options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	options.numMSAASamples = 0;
+	idImage *capture = globalImages->ScratchImage( va( "_vkTestCopyCapture%d_%d", samples, format ),
+		&options, TF_NEAREST, TR_CLAMP, TD_DEFAULT );
+	if ( color == NULL || capture == NULL ) { return false; }
+	if ( color->GetOpts().numMSAASamples != samples ) {
+		color->PurgeImage();
+		capture->PurgeImage();
+		return true;
+	}
+	const bool savedReference = r_vkCopyResolveScratchReference.GetBool();
+	idRenderTexture source( color, NULL );
+	bool passed = VK_GuiExecutor_BeginFrame() && source.MakeCurrent();
+	if ( passed ) {
+		const float zero[4] = {};
+		VK_Exec_ClearRenderTarget( true, false, 1.0f, zero );
+		const VkPipeline pipeline = VK_Exec_ExtraPipeline( VK_EXTRA_KIND_EXECUTOR_BASE + 6,
+			vertex, fragment, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO, VK_EXTRA_VERTEX_NONE, 0 );
+		passed = pipeline != VK_NULL_HANDLE;
+		if ( passed ) {
+			VkViewport viewport = { 0, 0, float( samples + 1 ), 3, 0, 1 };
+			// Fractional coverage varies horizontally; the untouched final row
+			// makes vertical flips and cropped origins observable too.
+			VkRect2D scissor = { { 0, 0 }, { uint32_t( samples + 1 ), 2 } };
+			vkCmdSetViewport( vkExec.cmd, 0, 1, &viewport );
+			vkCmdSetScissor( vkExec.cmd, 0, 1, &scissor );
+			vkCmdSetDepthTestEnable( vkExec.cmd, VK_FALSE );
+			vkCmdSetDepthWriteEnable( vkExec.cmd, VK_FALSE );
+			vkCmdBindPipeline( vkExec.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+			vkCmdDraw( vkExec.cmd, 3, 1, 0, 0 );
+		}
+	}
+	// Full capture, interior crop, and a rectangle clamped at the source edge.
+	const int rectangles[3][4] = { { 0, 0, samples + 1, 3 },
+		{ 1, 0, samples - 1, 2 }, { 2, 1, samples + 1, 3 } };
+	for ( int origin = 0; origin < 2 && passed; ++origin ) {
+		for ( int rect = 0; rect < 3 && passed; ++rect ) {
+			idList<byte> bytes[2];
+			idList<float> floats[2];
+			for ( int reference = 0; reference < 2 && passed; ++reference ) {
+				passed = VK_GuiExecutor_BeginFrame() && source.MakeCurrent();
+				if ( !passed ) { break; }
+				VK_Exec_MarkColorOrigin( origin != 0 );
+				r_vkCopyResolveScratchReference.SetBool( reference != 0 );
+				const int *r = rectangles[rect];
+				passed = VK_Exec_CopyRender( capture, r[0], r[1], r[2], r[3], 0, false )
+					&& vkExec.activeRenderTexture == &source && vkExec.mainScopeOpen
+					&& !VK_Image_GetEntry( capture->GetDeviceHandle() )->materialSampleFlipY;
+				passed = passed && ( format == FMT_RGBA8
+					? VK_Exec_ReadImage( capture, NULL, &bytes[reference], false )
+					: VK_Exec_TestReadFloatImage( capture, floats[reference] ) );
+			}
+			if ( format == FMT_RGBA8 ) {
+				passed = passed && bytes[0].Num() > 0 && bytes[0].Num() == bytes[1].Num()
+					&& memcmp( bytes[0].Ptr(), bytes[1].Ptr(), bytes[0].Num() ) == 0;
+			} else {
+				passed = passed && floats[0].Num() > 0 && floats[0].Num() == floats[1].Num()
+					&& memcmp( floats[0].Ptr(), floats[1].Ptr(), floats[0].Num() * sizeof( float ) ) == 0;
+			}
+		}
+	}
+	if ( vkExec.frameOpen ) {
+		(void)VK_Exec_SetRenderTarget( NULL );
+		(void)VK_GuiExecutor_EndFrameAndPresent();
+	}
+	r_vkCopyResolveScratchReference.SetBool( savedReference );
+	color->PurgeImage();
+	capture->PurgeImage();
+	common->Printf( "Vulkan MSAA copy capture: samples=%d format=%d both origins, fractional coverage and cropped extents %s\n",
+		samples, format, passed ? "passed" : "FAILED" );
+	return passed;
+}
+
 static bool VK_Exec_TestColorResolve() {
 	VkShaderModule modules[2] = {};
 	const unsigned char *code[2] = { vk_target_test_vert_spv, vk_target_test_resolve_frag_spv };
@@ -15685,7 +15922,9 @@ static bool VK_Exec_TestColorResolve() {
 		passed = vkCreateShaderModule( vkCtx.device, &info, NULL, &modules[i] ) == VK_SUCCESS;
 	}
 	for ( int samples = 2; samples <= 8 && passed; samples *= 2 ) {
-		passed = VK_Exec_TestColorResolveCase( modules[0], modules[1], samples );
+		passed = VK_Exec_TestColorResolveCase( modules[0], modules[1], samples )
+			&& VK_Exec_TestCopyResolveCase( modules[0], modules[1], samples, FMT_RGBA8 )
+			&& VK_Exec_TestCopyResolveCase( modules[0], modules[1], samples, FMT_RGBA16F );
 	}
 	for ( int i = 0; i < 2; ++i ) {
 		if ( modules[i] != VK_NULL_HANDLE ) { vkDestroyShaderModule( vkCtx.device, modules[i], NULL ); }

@@ -1997,3 +1997,1055 @@ frame. GPU timings, frame pacing at the supported refresh rates, the complete
 density/aspect matrix, all GUI families and other platforms remain unqualified.
 Composition/masks, complete paints/strokes/fonts, the visual editor and all
 current GUI replacements remain separate required work.
+
+## Airdefense maximum-quality reference, 27 October 2026
+
+User-qualified target: fullscreen native 2560 x 1440, starting position in
+`game/airdefense1`, rotating camera, new Marine HUD, all supported graphics
+quality maxima, and **every measured frame <=6.67 ms**. A mean or percentile
+pass is insufficient. The revised Ultra preset defines the quality workload;
+SMAA Ultra is the highest stable post-AA quality, while color-edge mode is a
+prototype. MSAA requests 16 and the current Vulkan backend/device uses 8.
+Native render scale stays 100%; diagnostic/experimental modes and artistic
+strength controls are not numeric quality levels.
+
+Reference host: i7-13700H, RTX 4060 Laptop GPU, hybrid display path, 240 Hz panel.
+Build: standard `builddir`, debugoptimized/O2, staged into `.install` with matching
+modules. The engine's focus-loss minimization fallback now honors SDL's explicit
+hint; the test sets that hint to keep the fullscreen surface visible without
+injecting input or changing OS focus. Default minimize behavior is preserved.
+
+`tools/tests/airdefense_performance.py` warms 1,000 HUD frames and a full 360-degree
+rotation, then requires a complete 720-degree rotation inside a 27-second window.
+It records actual CVar readbacks, native framebuffer/MSAA/backend evidence,
+starting coordinates, full-window frame rate, maximum interval and an engine
+`screenshot`. The gameplay harness now computes the average from the entire
+recorded window and has an optional maximum-frame gate. The executable path is
+stable and all writable state is isolated under `.tmp/airdefense-perf`.
+
+First complete rotation with revised-Ultra CVar readbacks:
+
+| Measure | Observed |
+| --- | --- |
+| Samples / interval | 1,694 / 27.014 seconds |
+| Whole-window mean | 15.946622 ms / 62.709206 FPS |
+| p95 / p99 / maximum | 21.90 / 22.95 / 24.08 ms |
+| Retained HUD CPU mean | 0.032756 ms update + 0.079163 ms render |
+| Retained HUD CPU p95 / p99 | 0.1951 / 0.3094 ms |
+| Draws / submitted vertices | 19 / 10,348 per frame |
+
+Evidence: `.tmp/airdefense-perf/qualification-ultra-vk-corrected/qualification.json`
+and its underlying report, log and engine capture. The settings/display/rotation
+checks passed, with no missing-shadow warning; every performance gate failed.
+Further GPU profiling found portal-sky views invalidated main-camera motion-blur
+history, so that enabled effect was not drawing. This run therefore also fails
+the stronger functional workload gate now requiring actual SSAO, motion-blur
+and bloom draw evidence before sampling. Both renderer paths now preserve main
+history across unrelated subviews; world/time/projection/restart validation
+still rejects discontinuities. The Vulkan diagnostic after this fix records
+motion blur drawing with object vectors at approximately 1.1 ms GPU time.
+This is a **failed reference**, not a 150 FPS claim. The earlier three Vulkan
+runs averaging 330-339 FPS used MSAA off and stencil shadows, and remain
+explicitly diagnostic only after the maximum-quality requirement.
+
+Current changes reduce repeated particle-distance work with stable depth ties
+and avoid copying opaque cached HUD raster quads. Neither is credited with an
+unmeasured scene-level gain. `profileFrameWork` adds bounded phase timing and a
+CSV after collection; its output frame can stall and is excluded from acceptance
+runs. Further work is tracked under HF-07, REN-07 and UI-07 in the roadmap.
+
+The subsequent preset audit added explicit object vectors, hashed cutouts,
+translucent receivers and four stabilized cascades to Ultra. At 4096 per cascade,
+the previous 8192 atlas could hold only one required ownership set in this scene.
+Both backends and the shared planner now accept a 16384 atlas, bounded by device
+limits. Ultra requests that capacity; the diagnostic rotation retains both LOCAL
+and GLOBAL sets without the earlier missing-resource warning. The older table
+also predates this cascade workload and is not its performance qualification.
+
+Vulkan diagnostics (`max-phases-full-vk`) now attribute approximately 13.9 ms to
+lighting/shadows, 1.2 ms to the depth prepass, 2.3 ms to SSAO drawing, 0.6 ms to
+its final-depth capture, 1.1 ms to motion blur and 1.7 ms to bloom/tone mapping.
+These are GPU phase measurements, not acceptance frame intervals. SSAO's scalar
+factor can blend into existing samples without copying scene color; paired
+rotations measured about 0.6 ms saved, with unchanged sample count/resolution.
+The reference composition remains available for image comparisons.
+
+Complete revised-Ultra qualification after the cascade/history fixes:
+
+| Backend | Frames / window | Mean FPS | p95 / p99 / maximum ms |
+| --- | --- | --- | --- |
+| Vulkan | 1,039 / 27.013 s | 38.463512 | 31.70 / 33.45 / 37.55 |
+| OpenGL | 834 / 27.009 s | 30.879080 | 45.95 / 51.20 / 69.85 |
+
+Both runs completed the rotations, kept native fullscreen and the new HUD,
+reported the requested quality values, drew SSAO/motion blur/bloom, and emitted
+no missing-shadow warnings. Both fail every performance gate. OpenGL also falls
+below the harness's 1,000-frame qualification minimum despite completing the
+time window. Evidence and engine captures are retained under
+`.tmp/airdefense-perf/qualification-complete-ultra-{vk,gl}`. The strict 150 FPS
+goal remains open. Skipping shadow samples for exactly zero light contribution
+showed no repeatable gain in alternating runs, so that experiment was removed.
+
+Vulkan now bounds the projected-shadow clear to fresh ownership blocks instead
+of clearing unused atlas space. Every allocated cascade retains its size,
+contents and filtering; cache-hit blocks are restored after the fresh pass.
+Paired fullscreen 1440p rotations (`max-shadowclear-vk`) measured means of
+25.662/25.624 ms with the full-atlas reference and 23.320/23.718 ms with the
+bounded clear. A frozen-scene capture pair is byte-identical (zero changed RGB
+pixels). `r_vkShadowFullAtlasClear 1` retains the diagnostic reference; this is
+not a graphics-quality option. The Vulkan shadow compatibility contract passes.
+The subsequent strict qualification (`qualification-shadow-clear-vk`) records
+1,130 frames in 27.005 seconds: mean 23.897799 ms / 41.844858 FPS,
+p95 29.05 ms, p99 30.55 ms, maximum 33.87 ms. Workload/display/quality checks pass;
+all frame-rate gates still fail. The reference before this change was 38.46 FPS,
+but the paired runs above are the narrower evidence for its contribution.
+
+Two subsequent shadow experiments were rejected and removed. Preferring D32
+float over D24/stencil increased mean frame time from 23.799 to 24.817 ms
+(`max-shadowformat-{packed,float}-a-vk`). Conservative raster-depth bounds for
+parallel and then general projected casters preserved frozen RGB captures
+exactly, but did not improve paired rotations (`max-shadowdepth-vk` and
+`max-shadowdepth-bounded-vk`). The latter measured reference means
+23.550/23.665 ms versus candidate 23.648/23.756 ms. No shader, pipeline or depth
+format changes from these experiments remain in the implementation.
+
+Post-processing now leaves unused scene depth in attachment layout while
+rendering color-only intermediates. Motion-vector passes still transition it
+when they sample the actual scene depth. Paired rotations (`max-postdepth-vk`)
+measured reference means 23.517/23.541 ms versus 23.275/23.424 ms, with identical
+frozen RGB captures. `r_vkPostDepthTransitionReference 1` restores the old behavior.
+
+Matching-format MSAA captures in GL row order now resolve their requested
+rectangle directly into the destination, avoiding a full-source scratch resolve
+and an identity blit. Flipped or format-converting captures retain the scratch
+path. `max-copyresolve-vk` alternates the reference and optimized paths: means
+23.203/23.293 ms versus 22.309/22.468 ms. Frozen RGB captures are byte-identical.
+`r_vkCopyResolveScratchReference 1` retains the diagnostic reference. These are
+paired local observations, not achievement of the strict frame-time floor.
+The strict `qualification-copy-resolve-vk` run records 1,196 frames in 27.021 s:
+22.592475 ms mean / 44.262525 FPS, p95 27.85 ms, p99 29.55 ms and maximum
+36.84 ms. Workload/display/quality checks pass; all frame-rate gates still fail.
+The render-target and HDR suites pass with Vulkan validation enabled
+(`copy-capture-validation`). Added GPU readback fixtures cover RGBA8/FP16,
+2x/4x/8x fractional coverage, both image origins, full/interior/clamped rectangles
+and reuse of the original multisampled source.
+`max-validation-vk` also completes the actual maximum-quality fullscreen map
+rotation with the validation layer enabled and no validation warnings/errors;
+SSAO, bloom/tone mapping, motion vectors/blur and shadowed interactions draw.
+Its instrumented timing is diagnostic, not the qualification result above.
+
+The temporal-motion suite initially passed before restart and then timed out on
+both reference and optimized paths. A non-invasive debugger stack found a crash
+behind the engine's error dialog: Vulkan's separate backend state retained a view
+pointer into the engine's freed frame memory. Device teardown now clears that
+state before console GPU work can reuse it. `temporal-restart-fixed` passes all
+36 temporal fixtures before and after restart, plus the probe-source lifecycle
+suite across partial/full restart and MSAA changes, with Vulkan validation enabled.
+Earlier failing logs and the debugger stack remain under `temporal-restart-debug`
+and `temporal-restart-stack.log` for provenance.
+
+Fresh projected ownership maps now reuse opaque global-caster depth: LOCAL renders
+the global chains, then GLOBAL copies that depth and adds its local chains.
+Resolution, cascades, filtering and the receiver ownership split are unchanged.
+Cached/composed passes, perforated global casters and the sealed executor retain
+their original paths. With the subsequent depth-union path disabled,
+`r_vkShadowOwnershipCopy 0` selects the original drawing reference.
+The in-atlas copy uses GENERAL layout between attachment scopes and resumes with
+LOAD, preserving the already-cleared fresh blocks and existing cache transfers.
+
+`max-ownership-extended-vk/comparison.json` contains five alternating native
+fullscreen reference/candidate rotations. Mean frame times average 22.522 versus
+22.140 ms (0.382 ms saved); reference p99 ranges 28.70–29.60 ms and candidate
+p99 28.60–29.25 ms. The two initial pairs in `max-ownership-vk` also improve.
+Frozen captures include exact RGB matches. A rotated pair in
+`max-ownership-views-vk` differs at 2,722 pixels, with maximum channel MAE
+0.000458/255; the other three pairs are identical. The repeated reference in
+`max-ownership-views-control-vk` exposes residual temporal variation in one view,
+so these captures are not a claim of bitwise determinism for all effects.
+The extended timing run's additional angle-labelled captures stayed at the frozen
+camera pose; only the separate views probes advance the camera between pairs.
+The validation-layer map probes have no Vulkan warnings/errors. The shadow
+compatibility contract passes. `shadow-resize-vk` completes 100 windowed cycles
+between 4096/8192 atlases and 1024/2048 tiles: tracked resident shadow storage
+returns to 160/352 MiB each cycle, without growth or validation errors.
+The staged default-path qualification `qualification-ownership-vk` records 1,173
+frames over 27.011 s: **43.426925 FPS** mean (23.027189 ms), p95 29.10 ms,
+p99 31.05 ms and maximum **38.36 ms**. The native/fullscreen/maximum-quality
+workload gates pass, but every performance gate fails. This unpaired run is slower
+than the preceding 44.3 FPS qualification; the small paired saving is not evidence
+of an improved worst-frame floor.
+
+Fresh PCSS ownership maps now avoid the depth copy as well. GLOBAL stores its
+local casters; each unfiltered receiver/blocker-search read takes the minimum
+with the corresponding LOCAL global-caster depth. This preserves the exact
+minimum-depth union without changing resolution, filter taps or caster coverage.
+It is restricted to uncached/uncomposed projected passes with opaque global
+casters and manual PCSS filtering. Hardware comparison, moment/debug views,
+point lights and sealed executor paths keep the established representations.
+`r_vkShadowOwnershipUnion 0` restores the copy path; also set
+`r_vkShadowOwnershipCopy 0` for the original duplicated-caster reference.
+
+`max-union-extended-vk/comparison.json` records five alternating native fullscreen
+pairs: whole-window mean frame times average **23.627 versus 21.098 ms**, saving
+**2.529 ms**. All five candidate p99 values improve (29.30–31.10 ms versus
+32.75–34.00 ms), but the largest individual candidate frame is 37.36 ms versus
+37.23 ms in the reference. This is not a strict-floor pass. The final frozen
+capture is RGB-identical. In `max-union-views-vk`, reference/candidate images are
+identical at four distinct views; the repeat-reference control has small temporal
+variation at one view. Vulkan validation reports no warnings/errors.
+`shadow-resize-union-vk` completes 100 windowed atlas/tile resize cycles, returning
+to the same 160/352 MiB storage levels, with the union path active and no validation
+errors. Shader-header consistency and shadow compatibility contracts pass.
+The embedded SSAO shader was also regenerated to match the previously edited
+source; its constant-white factor path no longer needs the white texture read.
+
+Two preliminary scratch runs are explicitly rejected: `max-phases-ownership-vk`
+used the unsupported `vk` CVar alias, ran OpenGL and copied a stale timing CSV;
+that stale copy was removed and the probe now checks artifact freshness.
+`max-union-vk` omitted shader-header regeneration and failed image parity; its
+speed numbers do not qualify the union algorithm. The corrected diagnostic run,
+`max-phases-ownership-vk-verified`, measures 23.709 ms mean GPU time before the
+union change, including 12.424 ms in world lighting and 2.223 ms in SSAO drawing.
+Its final pacing maximum includes the profiler CSV write and is not acceptance
+evidence. The corrected union measurements above use regenerated shaders.
+
+The staged default-on qualification `qualification-union-vk` records 1,354
+frames over 26.995 s: **50.157245 FPS** mean (19.937299 ms), p95 25.00 ms,
+p99 26.35 ms and maximum **38.72 ms**. Native fullscreen, rotation, HUD and all
+maximum-quality/effect workload gates pass; the required performance gates fail.
+This unpaired qualification improves average/p99 versus the previous run but not
+the maximum frame time. The 150 FPS every-frame requirement remains open.
+
+The zero-contribution receiver shortcut was tested again after the ownership
+union change, then removed. Five alternating pairs in
+`max-zerolight-extended-vk` average **21.268 versus 21.325 ms**, providing no gain.
+Three frozen views match exactly; at 90 degrees the candidate matches the
+repeated-reference control. The extended run's final capture differs without
+such a control and cannot establish parity. No zero-light shader or CVar remains.
+
+The optional Vulkan GPU phase trace now nests `worldShadowMaps` inside
+`worldLights`, using the existing frame-slot query pool and retirement fence.
+It introduces no extra wait and is inactive when profiling is disabled.
+`max-phases-union-default-detail-vk/summary.json` records 1,024 native maximum-
+quality frames: **19.876 ms** mean GPU time, **8.539 ms** world lighting, of
+which **6.715 ms** is map production and **1.824 ms** is the remaining lighting
+work. Map production peaks at 10.936 ms. SSAO drawing averages 2.253 ms, its
+depth capture 0.584 ms, depth prepass 1.178 ms, motion blur 0.843 ms and bloom
+1.395 ms. These are diagnostic spans, not qualification frame intervals; the
+final CSV write stalls and must remain outside acceptance windows.
+`max-phases-union-validation-vk/validation.json` passes with the validation layer
+enabled: all 1,024 frames contain correctly nested map/light/whole-frame spans,
+and no Vulkan validation warning or error is reported. GPU timing and shadow
+compatibility contracts pass on the restored, staged build.
+
+The scratch profiler had inherited `r_shadowMapStaticCache 0` from resize tests.
+Its maximum-quality setup now explicitly restores the default cache settings
+(`r_shadowMapStaticCache 1`, `r_shadowMapCacheCSM 0`) and reports them. The
+default-cache capture above supersedes `max-phases-union-vk`, whose map-production
+mean was 8.140 ms with caching disabled. Earlier paired scratch comparisons used
+the same inherited value on both sides; their deltas are controlled comparisons,
+but their absolute times do not describe the default configuration. Fresh strict
+qualification profiles already used the correct cache defaults.
+
+Point-cube ownership copying was also rejected and removed. Five alternating
+native rotations in `max-pointcopy-extended-vk` average **20.141 ms** with the
+original drawing and **21.991 ms** with six-face copies before local-caster
+drawing. Every candidate pair is slower. Its validation-layer image probe has
+no validation errors, but includes temporal image differences; no copy-path
+quality or speed claim is retained.
+
+Shadow depth passes now omit their unused stencil attachments by default.
+The D24/stencil allocation, depth samples, caster geometry, filtering and
+combined-aspect layout barriers remain unchanged. Both projected and point
+casters disable stencil tests/writes, and receivers sample only depth, so those
+passes need not clear, load or store stencil. Pipeline metadata follows the
+attachment selection; both cached variants retire on shutdown/reconfiguration.
+`r_vkShadowStencilAttachmentReference 1` restores the previous attachments for
+comparison. It is a diagnostic reference, not a graphics quality setting.
+
+Five alternating native maximum-quality pairs in `max-shadowstencil-extended-vk`
+average **19.809 ms versus 18.589 ms**, saving **1.220 ms (6.16%)**. Every mean
+improves. Four p99 values improve; the first changes from 28.20 to 28.30 ms.
+The largest candidate frame is 37.98 ms versus 35.47 ms in the reference, so
+this does not establish an improved worst-frame floor. Graphics settings and
+the normal sound/camera workload are unchanged during those timing windows.
+
+Frozen comparisons exposed audio-driven random camera shake that continues
+while game time is stopped. `max-shadowstencil-views-stable-settled-vk` suppresses
+that shake only for image comparisons and settles each view before capture.
+Three distinct views match exactly; the fourth differs at 35 pixels by at most
+one 8-bit intensity level. Earlier uncontrolled/repeat-reference variations are
+retained separately, not treated as bitwise parity evidence. All image probes
+run with Vulkan validation enabled and report no validation warnings/errors.
+`shadow-resize-stencil-vk/validation.json` passes 100 windowed atlas/point-size
+cycles with repeatable 70/262 MiB intermediate storage (280 MiB at the final
+point size), followed by a video restart and resumed gameplay with the optimized
+default still selected. GPU timing and shadow compatibility contracts pass.
+
+The staged default-path qualification `qualification-shadow-stencil-vk` records
+1,420 frames over 27.021 seconds: **52.551085 FPS** mean (19.029103 ms),
+**23.85 ms p95**, **25.05 ms p99**, and **29.82 ms maximum**. All native-display,
+rotation, maximum-quality/HUD/effect workload checks pass; every performance gate
+fails. This unpaired run is better than the previous 49.95 FPS / 33.04 ms maximum,
+but the paired measurements above are the evidence for the optimization's
+contribution. The 150 FPS every-frame requirement remains open.
+
+The optional GPU trace now also separates the main and portal-sky views,
+ambient walks, HDR composition, fog, authored post materials, native SMAA draws
+and the first render-target resolve. Each phase has one frame-owned query pair;
+subsequent occurrences are ignored, and no query is emitted while profiling is
+disabled. The main-view interval contains its depth/light/post intervals; the
+portal interval is separate. Mask capacity is checked at compile time.
+
+`max-phases-views-vk/summary.json` records 1,024 default-cache, native maximum-
+quality frames after the stencil change: **18.317 ms** mean GPU time, including
+**15.008 ms** for the main view, **2.269 ms** for portal-sky rendering and
+**0.238 ms** for the target resolve. Main-view map production averages
+**5.275 ms** and SSAO drawing **2.188 ms**. SMAA's three draws total **0.243 ms**;
+HDR composition and fog each take less than 0.001 ms here because their heavy
+paths are inactive. A further **0.559 ms** lies outside the view/resolve/SMAA
+intervals. This is diagnostic attribution, not a new strict qualification.
+`max-phases-views-validation-vk/validation.json` passes all 1,024 expected masks,
+nested/disjoint interval checks and Vulkan validation with no warnings/errors.
+GPU timing contracts and the complete embedded shader-header check pass.
+
+Precomputing SSAO's spiral offsets was tested and removed. Five alternating
+pairs in `max-ssaospiral-extended-vk/comparison.json` average **16.554 ms** for
+the original calculation and **16.620 ms** for the candidate. The frozen view
+and repeat-reference control are RGB-identical, but the change provides no
+useful speed gain. The original shader calculation and uniform layout remain.
+
+A conservative portal-sky discard prototype was also tested and removed.
+It certified opaque coverage from the following main view's triangles and used
+up to eight optional [Vulkan discard rectangles](https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_discard_rectangles.html). Report-only rotations found
+8–20% screen coverage. An independent homogeneous barycentric oracle checked
+1,060 random rectangle certificates; four frozen views and their repeat-reference
+controls were RGB-identical, with Vulkan validation enabled and no errors.
+However, five alternating maximum-quality pairs in
+`max-portalocclusion-extended-vk/comparison.json` average **18.633 versus
+18.593 ms**, a **0.21%** difference below the 1.67–4.39% p95 repeat spread.
+The candidate's worst frame is 41.41 ms versus 35.88 ms for the reference.
+Separate diagnostic traces measure portal rendering at 2.260 versus 2.163 ms;
+they do not establish a whole-frame benefit. The optional device extension,
+pipeline state, geometry helper and experimental CVar were all removed. The
+isolated `rejected-prototype.patch` is retained with the evidence for reproducibility.
+
+After removing that prototype and re-staging the build,
+`qualification-portal-revert-vk/qualification.json` records **1,441 frames in
+27.010 seconds**, averaging **53.351496 FPS** (18.743617 ms), with **24.35 ms
+p95**, **26.40 ms p99** and a **32.79 ms maximum**. Native fullscreen, rotation,
+maximum settings, retained HUD and effect workload checks pass. All performance
+gates still fail. This unpaired restored-build run is the latest qualification;
+its variation from the earlier 52.55 FPS run is not credited to the removed
+experiment. GPU timing/shadow contracts and `git diff --check` pass.
+
+The frame-owned GPU profiler now also separates fresh projected maps, projected
+cache transfers, dynamic composition and point cubes. All four ranges remain
+disabled outside the explicit diagnostic, use the existing frame retirement
+fence, and exclude portal/subviews. `max-phases-shadowclasses-vk/validation.json`
+passes 1,024 masks and nested map-production intervals with Vulkan validation
+enabled. Point production appears in 329 frames. Mean projected production is
+**4.400 ms**, point production **0.914 ms**, and combined map production
+**5.323 ms**; no projected cache/compose work occurs in this rotation. The whole
+GPU frame averages 18.372 ms. These diagnostic samples prioritize projected-map
+work; they do not replace the strict qualification above.
+
+A conservative bounded-clear prototype for fresh PCSS local-caster tiles was
+rejected. It retained the 4096-square coordinate grid, derived per-cascade
+rectangles from caster bounds, and substituted empty depth outside those
+rectangles before the existing ownership union/filtering. The active rotating
+path usually covered 56–94% of those tiles. Four frozen Vulkan views match their
+repeat-reference controls exactly, with no validation messages; two views have
+small one-level differences from their earlier reference that are also present
+in the repeat control. Five alternating pairs in
+`max-sparseunion-extended-vk/comparison.json` average **18.753 versus 18.792 ms**,
+a **0.204% regression** within 2.31–4.58% p95 repeat spread. Four of five means
+are slower. The shader/uniform changes, bounded-clear logic and experimental
+CVar were removed; `rejected-prototype.patch` preserves the isolated experiment.
+The initial prototype's non-power-of-two uniform slice triggered OpenGL startup
+recovery. Those runs are explicitly invalid; the corrected comparisons confirm
+Vulkan remained active. The scratch harness now rejects backend recovery or
+missing final Vulkan readback before accepting artifacts. Native GPU timing and
+shadow contracts pass after restoration.
+
+Two projected-caster submission experiments were also rejected and removed.
+Bounded front-to-back sorting (`max-shadoworder-pairs-vk`) averages **18.884746
+versus 18.891235 ms**, with mean p99 **24.94/25.66 ms** over five pairs. Four
+frozen views match their repeat-reference controls exactly with validation
+active; one initial reference differs in 49 pixels, identically to its control.
+
+Compatible opaque indirect batching (`max-shadowbatch-pairs-vk`) averages
+**18.490569 versus 18.508991 ms**, with mean p99 **25.47/25.05 ms**. Three of
+five means regress. It preserves draw order, complete geometry and identical
+push constants/cull state, and falls back to direct draws for unsupported,
+incompatible or full-buffer cases. Vulkan validation reports no errors. The
+four-view capture probe has a one-RGB-level difference in 167 pixels at 270
+degrees that is absent from both reference controls; the other candidate views
+match their repeated controls exactly. No image-quality or speedup claim is
+made for the removed experiment. The checked indirect API contract is documented
+by [Khronos](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdDrawIndexedIndirect.html).
+
+Both isolated prototype patches, commands, runtime identities and measurements
+are retained in their respective pair directories. The submission/feature/buffer
+changes and experimental CVars are removed. These results prioritize reducing
+unneeded shadow-map coverage over caster ordering or command batching.
+
+The subsequent receiver-coverage diagnostic projects conservative surface
+bounds for all three receiver chains into each cascade, expands by the complete
+PCSS kernel guard, and includes the preceding cascade's blend band. It only
+reports coverage; no caster or atlas write changes. All 76 reports (19 per
+cascade during the rotation) cover 100% of the tile, with zero uncertain bounds.
+This rules out a useful simple rectangular crop from these bounds, rather than
+proving that every individual shadow texel is needed. The diagnostic is removed;
+its isolated patch, runtime identity, log and `coverage.json` remain under
+`.tmp/airdefense-perf/max-phases-receiver-detail-vk`. Its GPU-profile CSV flush
+is intrusive and the terminal pacing snapshot is not qualification evidence.
+
+A fixed 32-call SSAO sequence also fails the whole-frame acceptance check.
+It keeps the original sample positions, arithmetic and accumulation order,
+exposing each index as a compiler constant while retaining the original loop
+as a runtime reference. Five alternating rotations measure 18.868628 ms for
+the reference and 18.980067 ms for the candidate (0.591% slower); mean p99 is
+27.33/27.63 ms and the largest frames are 38.94/47.14 ms. Three individual
+pairs improve, but the full retained set does not establish a gain. Frozen
+captures have zero Vulkan validation messages but also show reference/control
+drift, so they do not prove exact parity. The shader, switch and generated
+header are restored. Evidence and the isolated rejected patch remain under
+`.tmp/airdefense-perf/max-ssaounroll-{views,pairs}-vk`.
+
+Read-only hardware telemetry on the restored build confirms that this remains
+a GPU workload bottleneck. The diagnostic records 73 one-second samples;
+all 55 samples with GPU utilization at least 99% report 100% utilization, P0,
+2550 MHz graphics, 8001 MHz memory and zero active clock-event flags.
+Temperature spans 55–63 C and power draw 57.24–77.15 W in that subset. The
+power-limit field is unavailable, rather than zero. NVIDIA documents P0 and
+the clock-event fields in its [nvidia-smi reference](https://docs.nvidia.com/deploy/nvidia-smi/index.html#performance-state).
+The accompanying 1,024 GPU intervals average 18.378 ms overall, 4.415 ms for
+projected maps, 0.918 ms for point maps, 2.195 ms for SSAO, 1.399 ms for bloom
+and 0.829 ms for motion blur. These closely reproduce the previous phase
+profile. One-second polling cannot exclude individual transient events; no
+device settings were changed and this instrumented run is not qualification.
+The runtime hashes, raw telemetry, phase CSV and summary are retained in
+`.tmp/airdefense-perf/max-phases-hardware-vk`.
+
+After restoring all three rejected code experiments and removing the temporary
+coverage report, the build is staged again. Equivalent PNGs replace duplicate
+engine TGA captures; patch files preserve each rejected change. Cleanup is
+recorded in `.tmp/airdefense-perf/caster-investigation-cleanup.json`.
+
+## Checkpoint save stalls, 27 October 2026
+
+The user's checkpoint-stall request is tracked under REN-07 alongside the
+fullscreen rendering goal. These save probes are **windowed**, request
+2560×1440, and actually render at the desktop-constrained 2538×1312 client
+extent. They use all Ultra quality options and the retained HUD. They do not
+qualify the separate native-fullscreen frame-time floor.
+
+The initial synchronous Vulkan saves spent 378–417 ms serializing, 75–127 ms
+redrawing/readback for the thumbnail, and 522–620 ms in the complete save call.
+The engine now serializes into a bounded memory file, keeping the current wire
+layout and 512 MiB total-file limit. CRC processing uses sixteen-byte slices with
+the same polynomial, incremental state and stored checksum. A native test
+compares it to an independent bitwise oracle across unaligned/chunked inputs.
+
+Checkpoints request a thumbnail from an ordinary presented frame. OpenGL polls
+a pixel-buffer fence without waiting; Vulkan retires its copy behind the
+existing frame-slot fence. Only the 320×240 result is converted/resampled on the
+CPU. The native resampling test checks GL RGBA/bottom-up versus Vulkan
+BGRA/top-down parity, including odd dimensions and single-pixel images. Render
+API 26 appends the capture lifecycle. On unavailable/failed capture, the existing
+transactional missing-preview path remains available; the snapshot is preserved.
+
+For snapshots fitting the existing 16 MiB durable-file bound, the portable job
+service builds the integrity trailer, persists the staged payload and description,
+and verifies every byte against readback. Workers own copied bytes and exact native paths;
+they do not access game state, the VFS, renderer, CVars or console. Larger saves,
+disabled/deterministic workers and saturated queues retain the synchronous
+storage fallback. After successful worker readback, main-thread header/footer/trailer
+validation reads the verified immutable payload in memory and compares the trailer
+with the worker's CRC, bound to that exact memory view and protected length. This
+avoids a second disk read, stdio offset queries and hashing the snapshot again.
+Loads, recovery and synchronous saves still calculate the complete CRC themselves;
+the synchronous path reopens its staged file. Validation and the existing payload-last sidecar
+transaction still gate publication. Load, delete, map teardown, another save
+and shutdown drain a pending checkpoint. Game API 56 delivers the HUD saved
+notification only after commit.
+
+Representative whole-frame peaks around the three stationary checkpoint probes:
+
+| Revision/backend | First checkpoint | Second | Third |
+| --- | ---: | ---: | ---: |
+| Original synchronous / Vulkan | 662.26 ms | 531.27 ms | 544.75 ms |
+| Buffered, deferred capture/storage / Vulkan | 128.97 ms | 48.81 ms | 51.67 ms |
+| Buffered, deferred capture/storage / OpenGL | 104.93 ms | 60.12 ms | 51.70 ms |
+
+Evidence: `.tmp/airdefense-perf/checkpoint-baseline-vk`,
+`checkpoint-background-vk` and `checkpoint-background-gl`. The new harness also
+warms and runs camera rotation so motion effects are exercised before and during
+saving; earlier stationary probes are retained as labelled diagnostic evidence.
+`com_saveGameProfile 1` reports phase CPU work across the save's lifetime,
+excluding time waiting between frames; it is not a single-frame duration.
+Level 2 also reports per-class object time and bytes. The latter adds per-object
+clock reads and console output and is diagnostic only.
+
+The subsequent rotating probes in `checkpoint-final-vk` and `checkpoint-final-gl`
+include batched dictionary serialization, cached immutable retained-UI document
+identity, and background description persistence. Their three checkpoint-window
+maxima are 38.23/35.80/39.21 ms on Vulkan and 82.62/55.84/46.06 ms on OpenGL.
+These are windowed, all-quality-max measurements, not the fullscreen acceptance
+run. Vulkan snapshot serialization still takes 22.6–26.6 ms. Description
+preparation now takes 0.02–0.16 ms; its durable write runs on the worker.
+
+The dictionary writer retains the existing little-endian length-prefixed bytes
+and limits. `openq4-save-dict` exercises both SP/MP production writers against an
+independent wire oracle, including null/empty dictionaries, the entry/string
+limits, Unicode, buffer boundaries and write failure. The UI snapshot cache is
+rebuilt on document reload; live state, motion and interaction are still captured
+at save time. `openq4-retained-ui`, `openq4-crc32`, `openq4-file-memory` and
+`openq4-capture-resample` pass, as does the durable-file fault suite
+`openq4-ui-document-files`.
+
+The next revision batches scalar/vector fields in a 16 KiB game-module buffer,
+flushing before UI/sound serializers and successful close. The footer includes
+pending bytes, and error unwinding discards the buffer rather than retrying it.
+The wire test also exercises mixed scalars, large direct writes, buffer
+boundaries and partial-write rejection. With the bounded shadow clear included,
+`checkpoint-buffered-fields-vk` peaks at 34.87/33.44/29.89 ms; warm snapshots take
+18.1–18.8 ms (23.5 ms for the first). Immediate load/quit/reopen and failed
+description overwrite pass. These combined frame improvements are not attributed
+solely to serialization: the shadow-clear optimization also reduces GPU work.
+The corresponding `checkpoint-buffered-fields-gl` run passes immediate
+load/quit/reopen and peaks at 81.17/57.48/45.57 ms. Both backend thumbnail headers
+are 320×240 RGBA and the engine-written images were inspected. The disabled-job
+fallback and obstructed description overwrite pass in `checkpoint-fallback-verified`;
+the earlier `checkpoint-final-fallback` report falsely failed its warning matcher,
+which had not yet accepted the synchronous description-write error text.
+
+The subsequent verified-memory validation revision passes immediate load, quit,
+reopen, preview checks and failed-payload overwrite preservation in
+`checkpoint-verified-memory-vk`. Its validation phases are generally 4.3–4.7 ms,
+versus 5.8–6.3 ms in the buffered-field reference; there are slower outliers.
+Sixteen-byte CRC slicing further reduces an isolated 8 MiB checksum median from
+3.602 to 2.899 ms (`crc-slicing{8,16}-bench.log`). The independent bitwise oracle
+also checks 15/16/17-byte chunks and 31/32/33-byte lengths.
+`checkpoint-crc16-vk` passes the lifecycle and failed-description-write cases,
+with ordinary validation phases of 3.6–3.8 ms and outliers up to 5.8 ms.
+Its checkpoint-window maxima are **64.14/31.67/33.89 ms**, so lower validation
+CPU cost has not eliminated the first-save spike or established a better overall
+frame-time floor. Warm serialization remains 19.1–19.5 ms. The native CRC,
+memory-file, scalar/dictionary-wire, resampling, retained-UI and durable-file
+fault suites all pass (`checkpoint-crc16-native.log`).
+`checkpoint-crc16-fallback` also passes immediate load/quit/reopen and failed
+description overwrite with the job scheduler disabled.
+The follow-up `checkpoint-crc16-profile` passes reload and records 250 CPU frames.
+Its three slowest frames are the checkpoint command frames: 40.283/34.123/32.098 ms,
+with 32.644/28.299/26.705 ms in command processing and only 3.1–4.6 ms in drawing.
+This localizes the remaining pause to synchronous save setup/snapshot work;
+the full-frame reference also includes GPU waits in its ordinary drawing phase.
+The profiler's final CSV write remains outside the measured checkpoint windows.
+
+Snapshot allocation now starts at the 16 MiB background-storage bound, avoiding
+repeated buffer growth/copies while serializing typical checkpoints. Larger saves
+retain the bounded synchronous fallback. With the direct MSAA capture revision
+held constant, `checkpoint-copyresolve-reference` serializes in 26.370/22.791/18.332 ms;
+`checkpoint-snapshot-reserve-vk` takes 21.869/16.022/16.726 ms. The reference
+deliberately uses the preceding staged snapshot allocator; its binary hashes are
+retained in `plan.json`. The candidate passes load/quit/reopen and failed-description
+overwrite preservation. Its three checkpoint-window peaks are 69.02/28.33/30.65 ms
+versus 62.40/36.17/32.11 ms in the reference: less warm serialization work does
+not remove the first-save spike or establish a better worst-frame floor.
+`checkpoint-snapshot-reserve-gl` passes load/quit/reopen on OpenGL, with warm
+serialization of 15.491/14.736 ms and checkpoint-window maxima of
+72.65/53.75/43.95 ms. Both backend runs request 2560×1440 windowed and capture
+2538×1312; neither is a native-fullscreen qualification.
+
+The joined-worker checksum proof removes the second full-payload CRC pass from
+checkpoint completion. `checkpoint-proof-vk-verified` passes immediate load,
+quit/reopen, independent corruption rejection followed by a valid load, and
+failed-payload overwrite preservation. Its ordinary validation phases take
+0.206/0.235/0.280 ms, versus the preceding 3.6–3.8 ms. The three checkpoint-window
+maxima remain 62.05/32.98/28.37 ms; serialization takes 21.900/19.185/15.987 ms.
+This removes validation work but does not remove the live-snapshot stall.
+`checkpoint-proof-vk` preserves an earlier harness failure: a hyphenated script
+name was tokenized into separate words, preventing the final recovery marker.
+The corrected harness uses an underscore; the damaged save was rejected in both
+runs. Savegame v3/v4 and corruption contracts pass.
+`checkpoint-proof-gl-fallback` also passes load/quit/reopen and independent
+corruption rejection on OpenGL with workers disabled, exercising the full CRC
+validation fallback. It is a windowed lifecycle test, not a performance qualification.
+
+Compiled-script checksum caching now removes another repeated main-thread pass.
+Both game modules invalidate the save-only cache for instruction edits, statement
+allocation, definition allocation/renumbering, reset and teardown. Successful
+compilation and restart warm it before gameplay; interpreter reads are const.
+Load validation retains the original independent checksum calculation, and no
+saved bytes or checksum algorithm change. `com_saveGameProfile 2` compares the
+cached value against a fresh calculation and reports that diagnostic cost.
+
+`checkpoint-script-oracle-vk` passes five cache/reference comparisons, immediate
+load/quit/reopen and damaged-payload rejection. The avoided reference calculation
+costs 2.922–3.833 ms in its four pre-reload saves (5.867 ms after reload), over
+84,495 instructions. `checkpoint-script-mutations-vk` additionally passes two
+console compilations containing branch/loop fixups and constant folding: the
+instruction counts grow to 84,503 and 84,512, then return to 84,495 after loading
+the untouched checkpoint. Every cached value matches the fresh checksum. These
+oracle runs deliberately rehash and are not performance qualifications.
+
+With the oracle disabled, `checkpoint-script-cache-vk` passes immediate
+load/quit/reopen and failed-payload overwrite preservation. The globals phase
+falls to 0.500/0.533/0.525 ms; total serialization is 18.362/14.465/15.766 ms.
+Checkpoint-window maxima are still **60.50/27.57/28.71 ms**. This is a targeted
+CPU saving, not stall removal or proof of an improved strict frame-time floor.
+The windowed test requests 2560×1440 and captures 2538×1312. Both native script
+restore fixtures and the v3/v4/corruption contracts pass.
+The windowed `checkpoint-script-mp` smoke also completes with two autonomous bots
+moving, firing and scoring on `mp/q4dm1`, exercising the rebuilt MP interpreter.
+Its existing missing-AAS/non-precache asset warnings remain; this does not qualify
+all bot navigation or eliminate those warnings.
+
+Checkpoint preview persistence now also runs on the bounded job system. After
+the renderer closes its 320×240 TGA, a worker reads only that fixed-size image,
+checks its format, durably replaces the staged file and compares its readback
+byte for byte. Completion joins both the payload and preview jobs before the
+unchanged payload-last transaction. The main thread keeps the preview header
+check but avoids a second sync when the worker verified persistence. Disabled,
+unavailable or failed jobs retain synchronous validation/sync. Renderer preview
+polling now reports failed TGA writes instead of reporting success.
+
+With the current shadow union enabled, `checkpoint-preview-reference-vk` and
+`checkpoint-preview-worker-vk` compare rotating, maximum-quality windows with
+the same 2560×1440 request and 2538×1312 drawable. Main-thread preview completion
+falls from **1.270/1.247/1.160 ms** to **0.304/0.291/0.323 ms**. The worker takes
+11.8–12.1 ms outside the game thread for these first three saves. Window maxima
+are **26.02/28.68/31.28 ms** before and **25.23/24.45/27.36 ms** after; this single
+pair is evidence of the removed sync, not a reliable worst-frame improvement.
+Live-state serialization still takes **15.293/11.854/13.533 ms** in the candidate.
+Both retain CPU phase CSVs; their final file flush occurs outside the measured
+checkpoint windows.
+
+The candidate passes immediate load/quit/reopen, independent corrupt-save
+rejection and obstructed preview staging with both committed slots unchanged.
+`checkpoint-preview-worker-gl` also passes load/quit/reopen and obstructed
+description staging at 640×480 with maximum quality. Native production-worker
+fault injection rejects failed sync, failed/mismatched readback, truncated images,
+wrong dimensions and alternate image formats; capture orientation and save
+corruption/wire contracts pass. `checkpoint-preview-fallback-vk` passes immediate
+load/quit/reopen and blocked-payload preservation at 640×480 with workers disabled;
+no preview jobs run in that mode. None of these functional probes qualifies the
+native fullscreen frame-time floor.
+
+The staged build's subsequent strict fullscreen rerun,
+`qualification-preview-vk/qualification.json`, records 1,349 frames over
+27.006 seconds: **49.951809 FPS** mean (20.019295 ms), **26.15 ms p99** and
+**33.04 ms maximum**. Native resolution, maximum-quality, HUD, effects and
+rotation checks pass; every performance gate still fails. This ordinary rotating
+run does not save checkpoints, so its lower maximum is not attributed to preview
+storage changes.
+
+A fixed-size scalar inlining experiment was rejected and reverted. The paired
+windowed profiles `checkpoint-inline-{reference,candidate}-vk` both pass
+load/quit/reopen, independent corruption rejection and failed-payload overwrite
+preservation. Warm serialization means are **12.108 versus 12.134 ms**; checkpoint
+windows peak at 52.97/26.30/23.88 ms before and 56.44/27.73/24.35 ms after. These
+observations do not show useful improvement. The original buffered serializer
+is restored. Additional native wire tests are retained: signed extremes,
+floating-point infinities/NaN/subnormal bit patterns, partial buffer tails and
+failed boundary flushes pass for both SP and MP production writers.
+
+`checkpoint-lifecycle-{vk,gl}` pass immediate load, immediate quit and reopening
+the last checkpoint in another process. `checkpoint-fallback-vk` repeats this
+with jobs disabled and verifies that an obstructed overwrite leaves both saved
+payloads and their sidecars byte-identical. All saved payload checksums validate,
+and engine-written thumbnails were inspected. The saved bytes remain compatible
+with the current bounded v4 reader.
+The latest Vulkan run also obstructs description staging after payload storage;
+both previously committed slots and sidecars remain byte-identical. The OpenGL
+run repeats payload obstruction. A fresh-profile failure found during development
+(`checkpoint-description-vk`) was fixed by creating the save directory before
+dispatching the storage job; `checkpoint-final-vk` verifies the first save succeeds.
+
+`com_saveGameProfile 3` now optionally aggregates non-null dictionary-write time,
+count and serialized bytes in both game modules. It latches once per writer;
+normal saves perform no timing calls or offset queries for this instrumentation.
+The native production-writer oracle verifies unchanged bytes, exact accounting
+and disabled/enabled clock behavior for SP and MP, including empty/null
+dictionaries, buffer boundaries and maximum valid counts. The checkpoint harness
+exposes `--profile-dictionaries` and records these diagnostic samples separately.
+
+`checkpoint-dictionaries-vk/report.json` passes immediate load, immediate quit,
+reopen, independent corrupt-save rejection and obstructed-payload preservation.
+At a 2538×1312 windowed drawable with maximum quality, its first three dictionary
+totals are **3.479/2.823/2.991 ms**, covering about **3.94 MB** across
+1,769–1,772 dictionaries. Total serialization is **22.650/16.107/16.703 ms** and
+checkpoint-window maxima are **61.06/28.82/29.94 ms**. Per-class and dictionary
+clock overhead is included, so these are attribution data rather than a new
+performance qualification. The measured warm dictionary cost makes reuse of
+unchanged serialized dictionaries a concrete next investigation. Save
+corruption/v3 contracts and native wire-format tests pass.
+
+Two validation-by-scanning cache prototypes were rejected. Comparing all keys
+and values against stored bytes regressed mean warm serialization from
+**12.993 to 13.9604 ms** over five alternating pairs. Retaining immutable value
+strings and comparing their identities, while still comparing key bytes,
+regressed **12.5658 to 13.8858 ms**. Their oracle runs pass byte comparisons,
+load/quit/reopen, corrupt-save rejection and failed-payload preservation. The
+first collector failed on trailing whitespace in an echo marker; its ten
+completed samples were recovered from the unchanged log, with the missing
+collector exit status explicitly recorded. Evidence is in
+`checkpoint-dictionary-cache-{oracle,pairs}-vk` and
+`checkpoint-dictionary-pins-{oracle,pairs}-vk`. Neither implementation remains.
+
+A third prototype observed dictionary mutations instead of scanning strings.
+Every content mutation, source destruction, cache eviction or replacement
+detaches the registration in both directions. Copies receive independent
+identities; address reuse cannot prove a hit. It retains no pooled strings,
+caps each serialized record at 64 KiB and the cache at 16 MiB including its
+fixed table, and clears at map/module shutdown. That initial prototype kept
+**`g_saveDictionaryCache 0`** as the default; mode 1 reuses bytes and mode 2 compares every hit
+with the original writer. Mode 0 bypasses a populated cache until map shutdown;
+it does not allocate one. The dictionary layout requires matching game ABI 57
+and renderer ABI 27 modules, without changing save-file bytes.
+
+Production-mutator native tests cover replacement, insertion, deletion, copy,
+defaults, assignment, transfer, source destruction/reconstruction and observer
+replacement/destruction. SP/MP writer tests cover byte parity, failed writes,
+buffer tails, bounded eviction and invalid records. The live oracle
+`checkpoint-dictionary-observer-oracle-vk` verifies all **4,614 hits** against
+fresh serialization, keeps about **5.9 MB**, and passes lifecycle, corrupt-load
+and failed-overwrite checks. Save corruption/v3 and module API contracts pass.
+`checkpoint-dictionary-observer-fallback-gl` also passes at 640×480 with maximum
+quality, fresh-byte verification and jobs disabled, including load/quit/reopen
+and obstructed-description preservation. Its renderer and resolution make it a
+functional fallback check, not native frame-rate qualification.
+
+The five-pair normal and reversed-order probes
+`checkpoint-dictionary-observer-{pairs,reverse}-vk` both pass collection and
+reload checks. Across ten samples per mode, mean serialization falls from
+**14.7989 to 12.8492 ms** (13.17%) and the median from **13.4855 to 11.9275 ms**
+(11.55%). No outliers are removed: serialization peaks at **28.613/22.978 ms**,
+and checkpoint windows at **40.59/46.88 ms**, respectively. These windowed
+maximum-quality runs use a 2538×1312 drawable. They do not establish an improved
+worst-frame floor. Ten fresh-session runs in
+`checkpoint-dictionary-observer-cold-vk` all pass save/reload and independent
+CRC checks, but first-save mean serialization regresses **21.9358→25.6528 ms**
+(16.94%) and median **18.494→22.260 ms**. Each mode has five samples, interleaved
+in both orders, with no outliers removed. That prototype was not enabled. Its
+immediate population is replaced by the deferred path below.
+
+The rebuilt default path (`g_saveDictionaryCache 0`) is requalified in
+`qualification-dictionary-observer-vk/qualification.json`: **1,432 frames over
+27.016 seconds, 53.005345 FPS mean (18.866022 ms), 24.90 ms p99 and 31.81 ms
+maximum**. Native fullscreen 2560×1440, maximum quality, rotation, HUD and actual
+post-effect checks pass; every performance gate fails. The engine-written
+capture was inspected. This supersedes the previous default-build measurement
+without attributing its small timing difference to the disabled prototype.
+
+Deferred population now registers misses without allocating their payloads in
+the save writer. Later game frames use the same encoder to fill only dictionaries
+whose content/lifetime observation remains valid. Mutated or destroyed sources
+are discarded before dereferencing them. The first population pass after a save
+does no work; subsequent calls inspect at most 128 slots, encode at most 24
+records and stop after 128 KiB of attempted payload or a 0.25 ms deadline. Limits
+are checked between records, so one bounded record may overrun them (64 KiB plus
+one encoder chunk). Map/module shutdown detaches all observers. Native tests
+cover source destruction, mutation, repeated misses, deadline/byte bounds,
+oversized records and both production writers against independent wire bytes.
+
+`checkpoint-dictionary-deferred-oracle-vk` passes all **4,774** fresh-byte
+comparisons, load/quit/reopen, corrupt-save rejection and failed-payload
+preservation. Initial population spreads over 74 game frames; its largest
+observed batch is **0.566 ms**. The five-pair normal and reversed runs
+`checkpoint-dictionary-deferred-{pairs,reverse}-vk` retain every sample: combined
+warm serialization mean is **13.5596→11.4689 ms** (15.42%) and median
+**12.811→10.4655 ms** (18.31%). Checkpoint-window maxima are **35.32/28.95 ms**;
+this is not a strict frame-time qualification. Both writable filesystem paths
+are now isolated in each pair run; the older pair harness had inherited the
+oracle's developer path while isolating saves/logs. New plans record runtime
+hashes before launch.
+
+All ten fresh-session runs in `checkpoint-dictionary-deferred-cold-vk` pass
+reload/CRC checks. First-save means **16.3564/16.1674 ms** and medians
+**16.220/15.978 ms** show no measured first-save penalty; their small difference
+is not credited as a speedup. With these checks, deferred reuse is enabled by
+default (`g_saveDictionaryCache 1`), with bypass 0 and verification 2 retained.
+The staged default run `checkpoint-dictionary-deferred-default-vk` passes
+lifecycle, corrupt-load and blocked-preview preservation. Its warm dictionary
+totals are **1.837/1.646/1.546 ms**, and its largest population batch is
+**0.251 ms**. Detailed profiling includes clock/class overhead. The original
+worker storage and independent load-time integrity checks remain in force.
+
+The staged OpenGL synchronous fallback `checkpoint-dictionary-deferred-fallback-gl`
+passes **4,895** fresh-byte comparisons, load/quit/reopen and blocked-description
+preservation at 640×480, with a largest population batch of **0.236 ms**.
+`checkpoint-dictionary-deferred-previous-vk` loads an unchanged checkpoint from
+before the dictionary observer ABI change and captures the restored game.
+
+The dictionary-cache default was qualified by `qualification-dictionary-deferred-vk`:
+**1,418 frames over 27.021 seconds, 52.477896 FPS mean (19.055642 ms), 25.90 ms
+p99 and 35.98 ms maximum**. Native fullscreen 2560×1440, maximum quality,
+rotation, HUD and actual post-effect checks pass; all performance gates fail.
+The engine-written capture was inspected. These checkpoint changes do not
+address the GPU rendering cost; the strict frame-time goal remains open.
+
+An opt-in experiment transfers the completed checkpoint snapshot to the storage
+job (`com_saveGameCopyOnWorker 1`, default **0**) instead of allocating and copying its entire
+payload on the game thread. The worker only reads immutable bytes; its job list
+joins before the source is destroyed. Rejected submissions return the same
+snapshot to the existing synchronous fallback. `openq4-checkpoint-storage`
+extracts the production handoff/worker and covers deferred/immediate execution,
+failed list creation/add/submit, source lifetime, exact bytes/trailer, and
+payload/description write/readback failures. The native preview/dictionary
+suites also pass. `checkpoint-snapshot-worker-vk` passes load/quit/reopen,
+independent corrupt-load rejection and blocked-payload preservation.
+
+The OpenGL synchronous fallback `checkpoint-snapshot-worker-fallback-gl` also
+passes lifecycle and blocked-preview preservation. The normal/reversed five-pair
+runs `checkpoint-snapshot-worker-{pairs,reverse}-vk` retain every sample. Combined
+handoff mean falls **1.9377 to 0.1900 ms**, but total checkpoint CPU work rises
+**26.0365 to 28.8637 ms** (medians **22.0680/23.3145 ms**). Mean checkpoint-window
+p99 is **27.05/33.235 ms**; maxima are **44.20/70.86 ms**. A candidate commit
+outlier takes **19.602 ms**, while the reverse run also has setup/serialization
+outliers before handoff. The local copy improvement does not establish a total
+frame-time improvement. **Worker-side copying remains disabled by default**;
+these samples do not satisfy REN-07's regression gate. The bounded dictionary
+cache remains enabled independently. Further work must address both live-state
+snapshot cost and game-thread transaction setup/commit work.
+
+The rebuilt/staged default with dictionary reuse enabled and worker-side copying
+disabled is qualified in `qualification-snapshot-reference-vk`: **1,444 frames
+over 27.014 seconds, 53.452840 FPS mean (18.708080 ms), 25.05 ms p99 and
+37.14 ms maximum**. Native fullscreen 2560x1440, maximum quality, rotation,
+HUD/effects and runtime identity checks pass; all pacing gates fail. Warning
+counters are zero and the engine-written capture is inspected. This is the
+previous default-build qualification, without attributing run-to-run variation
+to the disabled copy experiment.
+
+The legacy-GUI probe `checkpoint-ui-identities-vk/ui-identities.json` finds
+**69 GUI writes for 26 instances per snapshot**. The 43 repeated writes account
+for **2.18–2.38 ms** and 470,618 repeated bytes in three diagnostic saves.
+Although the retained HUD is visible, these checkpoint GUI payloads are legacy
+`.gui` state. The earlier `checkpoint-ui-validation-pairs-vk` comparison did not
+exercise retained `Q4UI` snapshots at all; its timing difference is invalid as
+optimization evidence. That Motion-validation candidate was reverted, with its
+patch and the invalidation reason retained beside the report.
+
+An opt-in, per-snapshot legacy-GUI cache (`g_saveUserInterfaceCache`, default
+**0**) reuses only complete memory-backed `.gui` payloads. It caps entries at
+256, each record at 1 MiB and all payloads at 8 MiB; closing or abandoning the
+snapshot releases them. Game Save methods must invalidate an instance before
+changing it; both player save-notification paths do so. Retained `.q4ui` state
+and file-backed outputs use the original writer. Native tests extract both
+production game writers and verify independent wire bytes, unique flags,
+mutation invalidation, snapshot lifetime, limits, failed fresh/cached writes,
+and stale-record rejection. The Vulkan lifecycle oracle checks **215 hits**
+against fresh bytes, with at most **370,836 resident payload bytes**. The
+OpenGL synchronous-job fallback adds **215** matched hits (371,106 bytes at
+most), passes load/quit/reopen, and preserves both committed slots when the
+staged description is blocked (`checkpoint-gui-cache-fallback-gl`).
+
+`checkpoint-gui-cache-{pairs,reverse}-vk` retains ten alternating pairs across
+both orders. Combined mean serialization falls **13.6593→9.9167 ms** (27.40%;
+medians **11.7125→9.8505 ms**), but total checkpoint CPU work rises
+**26.2428→27.2290 ms** and mean window p99 rises **28.109→31.554 ms**. The largest
+window is **59.02/72.49 ms**, and a candidate commit reaches **24.675 ms**.
+These results fail promotion: the cache stays disabled, with no end-to-end gain
+claimed. `checkpoint-gui-cache-comparison.json` records that decision explicitly.
+
+Optional level-3 save profiling now splits the commit phase into file
+transaction, preview cleanup, sound and notification work. The three saves in
+`checkpoint-commit-attribution-vk` spend **1.312/1.343/4.964 ms** in file commit,
+**0.344–0.452 ms** in notification, and **0.001 ms** in sound unmuting. This
+attributes ordinary commit cost to file operations, without claiming to have
+reproduced the 24.675 ms outlier. Moving the transaction off the game thread
+must preserve payload-last publication, rollback, recovery and load/quit joins.
+
+An experimental `com_saveGameCommitOnWorker` switch (default **0**) moves the
+three-file checkpoint publication onto one bounded job. Exact paths are resolved
+on the game thread; the worker never accesses the VFS, game or UI. Description
+and preview publish before the payload. Rollback moves published components
+back to temporary names before restoring backups, retaining the existing
+recovery evidence if any step fails. Loading, quitting and save-menu reads join
+both storage and publication; the saved notification follows successful commit.
+The ordinary save and disabled-job paths remain synchronous.
+
+The production transaction, recovery routine, operation guard and pending-save
+poll are compiled into `openq4-checkpoint-commit`. Fault injection covers every
+namespace operation with all eight original-sidecar combinations, including
+recovery from every intermediate mutation. Native Unicode paths, scheduler
+rejection, job lifetime, reentrant menu polling and two-stage joins also pass.
+`checkpoint-commit-worker-vk` passes lifecycle, corruption rejection and blocked
+payload preservation. `checkpoint-commit-rollback-vk` then denies rename of only
+the isolated profile's previews: the real transaction rolls back, all six final
+files retain their SHA-256 hashes, no transaction files remain, and the old
+checkpoint reloads. `checkpoint-commit-fallback-gl` passes load/quit/reopen and
+blocked-description preservation with jobs disabled; 215 GUI-cache oracle hits
+also match fresh bytes in that fallback.
+
+The normal/reversed `checkpoint-commit-{pairs,reverse}-vk` runs do **not** justify
+promotion. Across ten samples per mode, mean game-thread commit work falls
+**5.1779→1.7021 ms**, but serialization rises **20.4742→29.9986 ms**, total work
+**36.1266→42.4517 ms**, and mean window p99 **38.500→49.276 ms**. The serialization
+difference occurs before that save queues its commit job; its cause is not
+established. All samples remain part of the evidence.
+
+A separate 20-save `checkpoint-commit-transitions-vk` run balances each
+previous/current setting combination five times. Serialization is nearly equal
+(**12.9510/12.9148 ms**); mean commit work falls **5.4165→1.8559 ms** and total
+work **29.1073→23.5721 ms**. Mean window p99 falls **28.548→27.117 ms**, while its
+median rises **25.500→27.315 ms**; maximum windows are **46.13/32.85 ms**. This
+supports further investigation but does not erase the earlier regressions or
+establish a consistent whole-frame improvement. Worker publication remains
+disabled. Reports and the transition grouping are under `.tmp/airdefense-perf/`.
+
+`checkpoint-combined-transitions-vk` tests GUI reuse and worker publication
+together over another balanced 20-save sequence. Mean serialization falls
+**13.6697→11.7462 ms** and commit work **7.4805→1.8356 ms**, but setup rises
+**6.9329→11.0802 ms**. Total work improves **32.1553→29.2471 ms** while mean
+window p99 regresses **29.223→34.725 ms**; maximum windows are **46.90/65.33 ms**.
+The worst candidate window includes **32.694 ms** of setup before serialization
+or its worker dispatch. The combination is not promoted, and all outliers are
+retained. Optional level-3 profiling now splits setup into health/eligibility,
+free-space, path/guard, interrupted-save recovery, temporary cleanup and snapshot
+allocation phases to identify that remaining synchronous work.
+
+`checkpoint-setup-attribution-vk` assigns **1.851/4.297/2.707 ms** to recovery,
+with free-space checks and temporary cleanup each below 0.1 ms. Investigation
+also identifies an observer cost: these test launches inherit `developer 1`
+and `logFile 2`, so each explicit recovery read emits an unbuffered debug
+message. The same staged runtime with `developer 0`, still using level-3 save
+profiling, measures recovery at **0.084/0.127/0.170 ms** in
+`checkpoint-setup-nodeveloper-vk`; save integrity and reload pass. The original
+probe also records frame-work CSV data. This is a logging-mode comparison,
+not an engine speedup or reproduction of the 32.694 ms outlier. Earlier save
+phase comparisons remain debug-mode evidence; buffered-logging results must
+be identified separately before any default is promoted.
+
+`checkpoint-combined-buffered-vk` repeats the balanced 20-save comparison with
+verified `developer 0` and `logFile 1`. Total CPU work falls **22.0763→20.2443 ms**
+and serialization **15.0282→12.9398 ms**. However, mean window p99 rises
+**23.930→24.398 ms**, and maximum windows are **33.66/39.84 ms**. The p99 median
+improves **23.595→21.045 ms**, but these mixed results still fail promotion.
+Both GUI reuse and background publication remain disabled.
+
+A narrower change removes duplicate developer-only tracing from explicit file
+reads; the existing `fs_debug` trace remains available. This avoids logging each
+routine recovery existence probe. `checkpoint-read-trace-vk`, with the original
+`developer 1` / `logFile 2` launch and level-3 save profiling, measures recovery
+at **0.113/0.087/0.137 ms** in its first three saves, with **0.186/0.207 ms** in
+its immediate load/quit cases. Lifecycle, corruption rejection and blocked
+preview preservation pass. This change is enabled; it removes demonstrated
+logging overhead without changing file operations. Checkpoint windows still
+peak at **40.64/27.19/34.97 ms**, so no complete stall-removal claim is made.
+
+The latest default qualification, with GUI reuse, worker-side snapshot copying
+and worker publication disabled, is `qualification-checkpoint-commit-vk`:
+**1,453 frames over 27.068 seconds, 53.680435 FPS mean (18.628761 ms), 27.65 ms
+p99 and 80.06 ms maximum**. Native fullscreen 2560×1440, maximum quality,
+completed rotation, HUD/effects and runtime identity checks pass; all pacing
+gates fail. Recorded warning counters are zero and the engine-written capture
+is inspected. The 80.06 ms outlier is retained without attributing its cause;
+this run contains no saves and does not measure the logging fix. The earlier
+`qualification-gui-reference-vk` result (53.75 FPS, 32.86 ms maximum) remains
+historical evidence and is not substituted for this latest result.
+
+**The stall is reduced, not fully removed.** Live-state serialization still
+takes roughly 10–12 ms in typical warm rotating Vulkan samples, with longer
+outliers retained in the comparisons above. CPU phase profiling also exposes a first
+draw spike; the first motion-blur draw occurred after that checkpoint in the
+stationary probe. These remain investigation targets, and neither REN-07 nor
+the strict 150 FPS goal is closed.
+
+Unrelated warning observed in startup/loading UI: the wordmark halo reports
+coverage 1.0001655 outside the normalized range. It appears before checkpoint
+measurement; the logs above retain the warning for UI follow-up.
+
+### Projected shadow pipeline counters, 27 October 2026
+
+`r_vkGpuPipelineStatistics 1`, set before renderer startup, optionally adds
+pipeline counters to `r_vkGpuPhaseProfile`. The feature defaults to zero and
+is enabled only when supported by the device. Query allocation/reset occurs
+only during a bounded phase capture. Results retire with the existing frame
+fence and never request `VK_QUERY_RESULT_WAIT_BIT`; video restart retires both
+query pools. Unsupported or disabled counters have explicit validity zero.
+The ordering and interpretation follow the [Vulkan query specification](https://docs.vulkan.org/spec/latest/chapters/queries.html):
+invocations are implementation-relative work counts, not unique visible pixels.
+
+`r_vkGpuProjectedStatisticsScope 0` measures the fresh projected-atlas span.
+Scopes 1–4 select LOCAL cascades 0–3, and 5–8 select GLOBAL cascades 0–3, for
+the first matching light. Scoped files use `gpu-phases-scopeN.csv` and record
+the admitted light-array index and whether its projection has constant W. Changing
+scope discards pending samples from the old request. These scoped counters
+must not be interpreted as totals over all lights or cached-map composition.
+
+The native maximum-quality rotation in `max-phases-pipeline-vk` records 1,024
+valid samples with no Vulkan validation messages. Fresh projected maps average
+**4.509 ms**, **72,225 input triangles** and **143,463,762 fragment invocations**
+per frame. A separate stationary diagnostic, `max-phases-pipeline-scopes-vk`,
+freezes simulation and audio-driven camera shake and records 128 samples per
+scope. All eight select perspective light-array slot 0 (render light 320 in
+the later fit trace):
+
+| Cascade | LOCAL fragment invocations | GLOBAL fragment invocations |
+| --- | ---: | ---: |
+| 0 | 37,486,987 | 19,068,865 |
+| 1 | 33,425,502 | 7,730,755 |
+| 2 | 26,789,180 | 2,530,004 |
+| 3 | 22,767,297 | 287,081 |
+
+The scoped values are identical across each stationary sample set. They locate
+fragment work, but neither diagnostic qualifies frame rate. Windowed
+`shadow-resize-pipeline-phases-{on,off}-vk` exercises a video restart between
+64-sample captures: enabled counters remain valid; disabled counters remain
+invalid/zero; both runs have no validation messages. Production query-guard
+tests, native GPU timing and shadow compatibility contracts pass.
+
+An opaque-only caster specialization was tested and removed. It preserves
+cutout shaders and leaves point casters unchanged. In four frozen views,
+two candidate images match the reference exactly; the other differences also
+occur in unchanged controls. No validation errors occur. Three alternating
+maximum-quality rotations in `max-opaque-pairs-vk` nevertheless average
+**18.642750→18.755759 ms**, a **0.606% regression**. Candidate p99 values and
+maximum frame times are worse in every pair. These arithmetic means use the
+full-window timing marker, not the HUD's smoothed `present` value. The rejected
+patch, image comparisons and all samples remain in the evidence directory.
+
+The restored renderer keeps only the optional counters from this investigation.
+The latest strict qualification remains `qualification-checkpoint-commit-vk`
+above; the 150 FPS floor and checkpoint-stall removal are still open.
+
+### Quality workload and deferred shadow scrolling, 28 October 2026
+
+The user changed subsequent tests to **Quality**, the preset immediately below
+Ultra. Native 2560 x 1440 fullscreen, rotating `game/airdefense1`, the Remastered
+HUD and the strict 150 FPS floor remain required. Quality's 144 FPS cap is
+disabled for measurement. Its 4x MSAA, SMAA High, 2048/1024 shadow sizes,
+4096 atlas, no cascades, 20 SSAO samples and disabled motion blur remain intact.
+Ultra still selects maximum supported quality. Both fullscreen qualification
+and checkpoint harnesses now default to Quality and record the selected profile;
+the fullscreen negative controls cover both workloads and reject mismatched
+readbacks. Historical Ultra results are not reclassified as Quality evidence.
+
+`qualification-quality-initial-vk/qualification.json` records **3,083 frames in
+27.009 seconds**, **114.145 FPS / 8.760785 ms mean**, **13.80 ms p99** and a
+**24.08 ms maximum**. Workload checks pass; every performance gate fails. This
+run used the corrected scroll prototype with its feature disabled, before its
+removal below. It does not measure checkpoint saving.
+
+The unfinished Vulkan circular shadow-reuse experiment is removed from the
+active source after this scope change. Its exact-grid replay found 1,919 of
+2,332 rotating cascade transitions eligible, with 99.63% average retained area;
+the planner checked 7,227,860 texels against full redraws. It needed an enlarged
+uniform block and power-of-two allocation stride, plus wrapped receiver reads.
+An initial shader misinterpreted endpoint rectangles as origin/extent; its
+completed timing comparison therefore cannot support a performance claim.
+After correcting that error, `max-scroll-views-address-vk` matches all four
+candidate/reference RGB captures exactly with nonzero offsets confirmed during
+capture and no Vulkan validation messages. The corrected timing runs were
+interrupted by the pause and subsequent workload change. Accumulated scrolling
+and lifecycle qualification remain incomplete.
+
+The patch and source hashes remain in
+`.tmp/airdefense-perf/projected-scroll-experiment/`; no scroll CVar, shader branch,
+grid metadata or unused test/helper remains in the active renderer. Existing
+optional pipeline counters and previously accepted optimizations remain.
+The strict frame floor and checkpoint-stall removal are still open.

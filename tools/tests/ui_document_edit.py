@@ -11,7 +11,7 @@ def main():
  repository=args.repository.resolve();out=Path(tempfile.mkdtemp(prefix='document-edit-',dir=ROOT/'.tmp'));core=ROOT/'src/ui/retained';jsonroot=wrap_source('jsoncpp',repository)
  tessroot=wrap_source('libtess2',repository)
  env={**os.environ,'TEMP':str(out),'TMP':str(out),'TMPDIR':str(out)}
- sources=[core/(name+'.cpp') for name in ['Document','DocumentEdit','State','Vector','Motion','Presentation']]+[jsonroot/'src/lib_json'/name for name in ['json_reader.cpp','json_value.cpp','json_writer.cpp']]+[ROOT/'tools/tests/native/UiDocumentEditTest.cpp']
+ sources=[core/(name+'.cpp') for name in ['Document','DocumentEdit','State','Vector','Motion','Presentation','ModelScene']]+[jsonroot/'src/lib_json'/name for name in ['json_reader.cpp','json_value.cpp','json_writer.cpp']]+[ROOT/'tools/tests/native/UiDocumentEditTest.cpp']
  sources+=sorted((tessroot/'Source').glob('*.c'))
  bound=sources+[Path(__file__).resolve()]+list(core.glob('*.h'))+list((jsonroot/'include').rglob('*.h'))+list((jsonroot/'src/lib_json').glob('*.h'));bound+=list((tessroot/'Include').glob('*.h'))+list((tessroot/'Source').glob('*.h'));before={str(p):sha(p) for p in bound}
  flags=[args.compiler,'/nologo','/std:c++20','/EHsc','/MTd','/utf-8','/W3','/I'+str(core),'/I'+str(jsonroot/'include')] if args.msvc else [args.compiler,'-std=c++20','-I',str(core),'-I',str(jsonroot/'include')]

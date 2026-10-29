@@ -12,7 +12,9 @@
     "session_menu": "src/framework/Session_menu.cpp",
     "common": "src/framework/Common.cpp",
     "default_cfg": "content/baseoq4/pak0/default.cfg",
-    "openq4_defaults_cfg": "content/baseoq4/pak0/openq4_defaults.cfg"
+    "openq4_defaults_cfg": "content/baseoq4/pak0/openq4_defaults.cfg",
+    "system_retained": "content/baseoq4/pak0/guis/menu/settings/system.q4ui",
+    "settings_service": "src/ui/SettingsService.cpp"
   },
   "settings": [
     {
@@ -1600,6 +1602,72 @@
       "accessibility": "Slider with paired edit field; disabled when Ambient Light is off."
     },
     {
+      "id": "system.rendering_backend",
+      "pane": "System",
+      "section": "Performance",
+      "path": "Settings > System > Performance > Rendering Backend",
+      "source": "system_retained",
+      "container": "settings_backend",
+      "widgets": [
+        "settings_backend"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_230141",
+      "target_type": "cvar",
+      "target": "r_renderApi",
+      "default": "best",
+      "adapter": {
+        "source": "settings_service",
+        "command": "settings.system.backend"
+      },
+      "restart_required": true,
+      "accessibility": "Localized backend choice; Apply persists the preference and a separate main-menu restart activates it."
+    },
+    {
+      "id": "system.rendering_device",
+      "pane": "System",
+      "section": "Performance",
+      "path": "Settings > System > Performance > Rendering Device",
+      "source": "system_retained",
+      "container": "settings_gpu",
+      "widgets": [
+        "settings_gpu"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_230142",
+      "target_type": "cvar",
+      "target": "r_renderDevice",
+      "default": "auto",
+      "adapter": {
+        "source": "settings_service",
+        "command": "settings.system.renderDevice"
+      },
+      "restart_required": true,
+      "accessibility": "Automatic high-performance choice plus detected Vulkan device names; disabled incompatible entries, stable UUID persistence, and active-versus-pending feedback."
+    },
+    {
+      "id": "system.rendering_restart",
+      "pane": "System",
+      "section": "Performance",
+      "path": "Settings > System > Performance > Restart Renderer",
+      "source": "system_retained",
+      "container": "settings_restart_renderer",
+      "widgets": [
+        "settings_restart_renderer"
+      ],
+      "widget_type": "button",
+      "label_key": "#str_230153",
+      "target_type": "gui_state",
+      "target": "restartRenderer",
+      "default": "N/A",
+      "adapter": {
+        "source": "settings_service",
+        "command": "settings.system.restartRenderer"
+      },
+      "restart_required": false,
+      "accessibility": "Available only for a clean applied selection at the main menu; checked configuration persistence precedes owner teardown and module replacement."
+    },
+    {
       "id": "system.performance_preset",
       "pane": "System",
       "section": "Performance",
@@ -1617,6 +1685,7 @@
         "lowpower",
         "performance",
         "balanced",
+        "enhanced",
         "quality",
         "ultra"
       ],

@@ -4,6 +4,7 @@
 #include "SystemSettingsHost.h"
 #include "../../framework/PerformancePreset.h"
 #include "../../framework/CVarDefaults.h"
+#include "../../renderer/RendererDeviceCatalog.h"
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -119,6 +120,8 @@ bool Writable(const SystemSettingDescriptor& item, idCVar& variable, std::string
 	return true;
 }
 bool EditorValue(const SystemSettingDescriptor& item, const StateValue& value, std::string& error) {
+	if (item.key=="r_renderDevice" && !RenderDevicePreferenceValid(std::get<std::string>(value).c_str()))
+		return Fail(error,item.key,"expected auto or a stable GPU UUID");
 	if (item.type == 0) {
 		const double number = std::get<double>(value);
 		if (number < item.minimum || number > item.maximum) return Fail(error, item.key, "outside the settings range");
@@ -277,7 +280,7 @@ bool ValidateCandidate(const StateValues* original, const StateValues& current,
 
 const std::vector<SystemSettingDescriptor>& SystemSettingsHost::Catalog() {
 	static const std::vector<SystemSettingDescriptor> catalog = {
-		String("com_performancePreset", {"minimum","lowpower","performance","balanced","quality","ultra"}, "#str_229976", SystemSettingPresetExpansion),
+		String("com_performancePreset", {"minimum","lowpower","performance","balanced","enhanced","quality","ultra"}, "#str_229976", SystemSettingPresetExpansion),
 		Boolean("r_bloom", "#str_41082"), Boolean("r_borderless", "#str_229909", SystemSettingDisplayRestart),
 		Number("r_brightness", .5, 2, "#str_200148", SystemSettingImmediate, {}, false), Boolean("r_crt", "#str_41090"),
 		Number("r_customHeight", 240, 16384, "#str_229949", SystemSettingDisplayRestart),
@@ -292,6 +295,8 @@ const std::vector<SystemSettingDescriptor>& SystemSettingsHost::Catalog() {
 		Number("r_multiScreen", 0, 1, "#str_229915", SystemSettingDisplayRestart, {0,1}),
 		Number("r_postAA", 0, 4, "#str_41094"),
 		String("r_renderer", {"best","arb2"}, "#str_41103", SystemSettingRendererResources),
+		String("r_renderApi", {"best","gl","gl-module","gles","vulkan"}, "#str_230141", SystemSettingEngineRestart),
+		String("r_renderDevice", {}, "#str_230142", SystemSettingEngineRestart),
 		Number("r_screen", -1, 1024, "#str_229912", SystemSettingDisplayRestart),
 		Number("r_screenFraction", 10, 200, "#str_41091", SystemSettingImmediate, {10,25,50,75,85,100,125,150,200}),
 		Boolean("r_shadows", "#str_200160"), Boolean("r_skipBump", "#str_200162"),
@@ -310,12 +315,22 @@ const std::vector<SystemSettingDescriptor>& SystemSettingsHost::Catalog() {
 		Boolean("image_downSizeSpecular", "", SystemSettingImageReload),
 		Number("image_downSizeSpecularLimit", 0, 32768, "", SystemSettingImageReload),
 		Boolean("image_ignoreHighQuality", "", SystemSettingImageReload),
+		Number("image_picmip", 0, 16, "", SystemSettingImageReload),
 		Number("image_usePrecompressedTextures", 0, 2, "", SystemSettingImageReload),
 		Boolean("image_writeGeneratedImages", "", SystemSettingNextMap), Boolean("r_motionBlur"),
 		String("r_rendererBenchmarkPreset", {"low","baseline","modern","high-end"}, "", SystemSettingRendererResources),
 		Number("r_rendererUploadFrameBuffers", 3, 8, "", SystemSettingRendererResources),
 		Number("r_rendererUploadMegs", 1, 128, "", SystemSettingRendererResources),
 		Number("r_shadowMapMaxUpdatesPerView", 0, 1024), Number("r_shadowMapSize", 128, 4096), Boolean("r_useShadowMap"),
+		Number("r_shadowMapPointSize", 128, 2048),
+		Number("r_shadowMapFilterTaps", 1, 13, "", SystemSettingImmediate, {1,5,9,13}),
+		Number("r_shadowMapPointFilterTaps", 1, 13, "", SystemSettingImmediate, {1,5,9,13}),
+		Number("r_shadowMapFilterMode", 0, 2), Number("r_shadowMapPointFilterMode", 0, 1),
+		Number("r_shadowMapAtlasSize", 2048, 16384), Boolean("r_shadowMapPointLights"), Boolean("r_hdrSceneTarget"),
+		Number("r_ssaoSamples", 4, 32), Number("r_bloomMipCount", 1, 5), Number("r_motionBlurSamples", 1, 16),
+		Boolean("r_shadowMapCSM"), Number("r_shadowMapCascadeCount", 1, 4), Boolean("r_shadowMapProjectedCSM"),
+		Boolean("r_shadowMapCascadeStabilize"), Boolean("r_motionBlurObjectVectors"),
+		Boolean("r_shadowMapHashedAlpha"), Boolean("r_shadowMapTranslucentReceivers"),
 		Number("s_maxEmitterChannels", 1, 48, "", SystemSettingAudioRestart),
 		Number("s_maxSoundsPerShader", 0, 32, "", SystemSettingNextMap),
 		Number("s_numberOfSpeakers", 0, 6, "", SystemSettingAudioRestart, {0,2,6}),
@@ -339,7 +354,7 @@ SystemApplyClass SystemSettingsHost::ApplyClassOf(const StateValues& before, con
 	for (const auto& item:Catalog()) {
 		if (!Changed(before,target,item.key)) continue;
 		changed=true;
-		if (item.effects==SystemSettingImmediate) continue;
+		if (item.effects==SystemSettingImmediate || item.effects==SystemSettingEngineRestart) continue;
 		if (item.effects==SystemSettingDisplayRestart) display=true;
 		else if (item.key=="r_renderer") renderer=true;
 		else if (item.key=="r_lightGridPreload") deferred=true;
@@ -352,7 +367,7 @@ SystemApplyClass SystemSettingsHost::ApplyClassOf(const StateValues& before, con
 		deferred ? SystemApplyClass::Deferred : SystemApplyClass::Immediate;
 }
 bool SystemSettingsHost::RequiresDeviceWork(const StateValues& before, const StateValues& target) {
-	return ChangedEffects(before,target) != 0;
+	return (ChangedEffects(before,target) & ~SystemSettingEngineRestart) != 0;
 }
 unsigned SystemSettingsHost::ChangedEffects(const StateValues& before, const StateValues& target) {
 	unsigned result=0;
@@ -372,15 +387,13 @@ int SystemSettingsHost::LegacyModeForSize(int width, int height) {
 		if (LegacyModes[mode][0]==width && LegacyModes[mode][1]==height) return mode;
 	return -1;
 }
-bool SystemSettingsHost::BuildPreset(const std::string& name,StateValues& patch,std::string& error) {
- const auto* preset=openq4::FindPerformancePreset(name);
- if(!preset)return Fail(error,"com_performancePreset","unknown performance profile");
+static bool BuildPerformancePresetPatch(const openq4::PerformancePreset& preset,StateValues& patch,std::string& error) {
  openq4::PerformancePresetAssignments assignments;
- if(!openq4::ExpandPerformancePreset(*preset,assignments,error))return false;
+ if(!openq4::ExpandPerformancePreset(preset,assignments,error))return false;
  StateValues candidate;
  for(const auto& assignment:assignments){
-  const auto field=Schema().find(assignment.key);
-  if(field==Schema().end())return Fail(error,assignment.key,"profile target is not in the settings catalog");
+  const auto field=SystemSettingsHost::Schema().find(assignment.key);
+  if(field==SystemSettingsHost::Schema().end())return Fail(error,assignment.key,"profile target is not in the settings catalog");
   StateValue value;
   if(const auto number=std::get_if<int>(&assignment.value)){
    if(field->second==0)value=double(*number);
@@ -395,12 +408,18 @@ bool SystemSettingsHost::BuildPreset(const std::string& name,StateValues& patch,
  if(candidate.size()!=openq4::PerformancePresetTargetCount)return Fail(error,"com_performancePreset","profile footprint is incomplete");
  patch.swap(candidate);error.clear();return true;
 }
+bool SystemSettingsHost::BuildPreset(const std::string& name,StateValues& patch,std::string& error) {
+ const auto* preset=openq4::FindPerformancePreset(name);
+ if(!preset)return Fail(error,"com_performancePreset","unknown performance profile");
+ return BuildPerformancePresetPatch(*preset,patch,error);
+}
 bool SystemSettingsHost::BuildDetectedPreset(StateValues& patch,std::string& error) {
  openq4::PerformancePresetSignals signals;
  if(!Common_CapturePerformancePresetSignals(signals,error))return false;
  const auto detection=openq4::DetectPerformancePreset(signals);
- if(!detection.preset)return Fail(error,"com_performancePreset","detected profile is unavailable");
- return BuildPreset(detection.preset->name,patch,error);
+ openq4::PerformancePreset resolved;
+ if(!openq4::ResolveDetectedPerformancePreset(detection,resolved))return Fail(error,"com_performancePreset","detected profile is unavailable");
+ return BuildPerformancePresetPatch(resolved,patch,error);
 }
 bool SystemSettingsHost::Read(StateValues& values, std::string& error) {
 	StateValues candidate;
@@ -457,7 +476,7 @@ bool SystemSettingsHost::Write(const StateValues& changes, std::string& error) {
 	// Validate: rollback must still be able to restore a custom baseline.
 	for (const auto& [key, value] : changes) {
 		const auto* item = Descriptor(key);
-		if (!item) return Fail(error, key, key == "r_renderApi" ? "renderer API changes require an engine restart" : "unknown SYSTEM setting");
+		if (!item) return Fail(error, key, "unknown SYSTEM setting");
 		idCVar* variable = Registered(*item, error);
 		if (!variable || !RegisteredValue(*item, *variable, value, error)) return false;
 		StateValue previous;

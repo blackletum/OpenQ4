@@ -111,6 +111,10 @@ static bool VK_CVarGetBool( const char *name ) {
 	return vk_services->CVar_GetBool( name );
 }
 
+static const char *VK_CVarGetString(const char *name) {
+	return vk_services && vk_services->CVar_GetString ? vk_services->CVar_GetString(name) : "auto";
+}
+
 static int VK_CVarGetInteger( const char *name ) {
 	if ( vk_services == NULL || vk_services->CVar_GetInteger == NULL ) {
 		return -1;
@@ -349,7 +353,8 @@ static void VK_Bringup_ReportDevice( const vkDeviceProbeInfo_t &info, VkResult q
 VK_Bringup_RunProbeInternal
 ====================
 */
-static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int summaryLength, bool holdInstance ) {
+static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int summaryLength, bool holdInstance,
+		renderDeviceCatalog_t *catalog = NULL ) {
 	VkResult result;
 
 	if ( outSummary != NULL && summaryLength > 0 ) {
@@ -493,8 +498,8 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 	// scope with explicit teardown at the bottom; every failure jumps there
 	do {
 		// 4. Query complete lists through the same admission library as the
-		// renderer. Quiet activation stops at its first suitable candidate;
-		// verbose diagnostics rank suitable candidates, never an invalid GPU.
+		// renderer. Quiet activation and verbose diagnostics both prefer the
+		// highest-ranked suitable GPU, independent of enumeration order.
 		vkDeviceSelectionApi_t probeApi = {};
 		probeApi.enumeratePhysicalDevices = vkEnumeratePhysicalDevices;
 		probeApi.getProperties = vkGetPhysicalDeviceProperties;
@@ -502,11 +507,17 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 		probeApi.enumerateExtensions = vkEnumerateDeviceExtensionProperties;
 		probeApi.getQueueFamilies = vkGetPhysicalDeviceQueueFamilyProperties;
 		probeApi.getMemoryProperties = vkGetPhysicalDeviceMemoryProperties;
+		probeApi.getProperties2 = vkGetPhysicalDeviceProperties2;
+		if (catalog) {
+			probePassed = hasSurfaceExtension && hasPlatformSurfaceExtension &&
+				VK_QueryDeviceCatalog(probeApi,instance,*catalog)==VK_SUCCESS;
+			break;
+		}
 		const int overrideIndex = VK_CVarGetInteger( "r_vkDevice" );
 		vkDeviceProbeInfo_t selected = {};
 		vkBringupProbeReport_t report = { verbose, outSummary, summaryLength };
 		result = VK_SelectProbeDevice( probeApi, instance, overrideIndex, verbose, selected,
-				VK_Bringup_ReportDevice, &report );
+				VK_Bringup_ReportDevice, &report, VK_CVarGetString("r_renderDevice") );
 		if ( result != VK_SUCCESS ) {
 			VK_Printf( "Vulkan bring-up: no suitable device for r_vkDevice %d (%s)\n", overrideIndex, VK_ResultName( result ) );
 			if ( outSummary != NULL && summaryLength > 0 && outSummary[ 0 ] == '\0' ) {
@@ -518,6 +529,10 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 			VK_Printf( "Vulkan device selection: r_vkDevice override -> %u\n", selected.index );
 		}
 		VK_Printf( "Vulkan selected device: %s (%s)\n", selected.props.deviceName, VK_DeviceTypeName( selected.props.deviceType ) );
+		// Startup's real device path owns the ranked, bounded adapter retries.
+		// A throwaway logical device here must not veto those retries. The
+		// explicit diagnostic probe below still exercises allocations and sync.
+		if (holdInstance) { probePassed = true; break; }
 
 		// 5. logical device with the renderer's required feature set
 		float queuePriority = 1.0f;
@@ -755,6 +770,10 @@ VK_Bringup_RunProbe
 */
 bool VK_Bringup_RunProbe( bool verbose ) {
 	return VK_Bringup_RunProbeInternal( verbose, NULL, 0, false );
+}
+
+bool VK_Bringup_QueryCatalog(renderDeviceCatalog_t* catalog) {
+	return catalog && VK_Bringup_RunProbeInternal(false,NULL,0,false,catalog);
 }
 
 /*

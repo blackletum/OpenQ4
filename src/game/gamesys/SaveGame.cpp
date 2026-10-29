@@ -6,6 +6,26 @@
 
 #include "framework/BuildVersion.h"
 #include "framework/SaveGameReleases.h"
+#include "framework/SaveDictionaryCache.h"
+#include "framework/SaveUserInterfaceCache.h"
+#include <memory>
+
+static idCVar g_saveDictionaryCache( "g_saveDictionaryCache", "1", CVAR_GAME | CVAR_INTEGER,
+	"reuse unchanged serialized dictionaries: 0 bypass, 1 cache, 2 verify every hit against the original writer", 0, 2 );
+static idCVar g_saveUserInterfaceCache( "g_saveUserInterfaceCache", "0", CVAR_GAME | CVAR_INTEGER,
+	"reuse shared legacy GUI payloads within one snapshot: 0 bypass, 1 cache, 2 verify every hit", 0, 2 );
+using saveDictionaryCache_t = SaveDictionaryCache<idDict>;
+static std::unique_ptr<saveDictionaryCache_t> saveDictionaryCache;
+static unsigned dictionaryPopulationBatches, dictionaryPopulationRecords, dictionaryPopulationDiscarded;
+static double dictionaryPopulationTicks, dictionaryPopulationMaxTicks;
+
+
+void idSaveGame::ClearDictionaryCache() {
+	saveDictionaryCache.reset();
+	dictionaryPopulationBatches = dictionaryPopulationRecords = dictionaryPopulationDiscarded = 0;
+	dictionaryPopulationTicks = dictionaryPopulationMaxTicks = 0.0;
+}
+
 #include "NoGameTypeInfo.h"
 
 // The generated stamp hashes every save-relevant game source, so it changes
@@ -56,6 +76,21 @@ file be unloadable in some way (for example, due to script changes).
 // jscott: sanity length check for strings
 #define MAX_PRINT_MSG		4096
 // RAVEN END
+
+void idSaveGame::PopulateDictionaryCache() {
+	if ( g_saveDictionaryCache.GetInteger() == 0 || !saveDictionaryCache || !saveDictionaryCache->Pending() ) return;
+	const double start = idLib::sys->GetClockTicks();
+	const double deadline = start + idLib::sys->ClockTicksPerSecond() * 0.00025;
+	const auto work = saveDictionaryCache->Populate( MAX_PRINT_MSG,
+		[&]() { return idLib::sys->GetClockTicks() < deadline; } );
+	if ( work.inspected == 0 ) return;
+	const double elapsed = idLib::sys->GetClockTicks() - start;
+	++dictionaryPopulationBatches;
+	dictionaryPopulationRecords += (unsigned)work.records;
+	dictionaryPopulationDiscarded += (unsigned)work.discarded;
+	dictionaryPopulationTicks += elapsed;
+	if ( elapsed > dictionaryPopulationMaxTicks ) dictionaryPopulationMaxTicks = elapsed;
+}
 
 const char *OpenQ4SaveGameWireABI( void ) {
 #if defined( _WIN32 )
@@ -218,6 +253,18 @@ idSaveGame::idSaveGame()
 idSaveGame::idSaveGame( idFile *savefile ) {
 
 	file = savefile;
+	userInterfaceCacheMode = g_saveUserInterfaceCache.GetInteger();
+	if ( userInterfaceCacheMode > 0 ) userInterfaceCache.reset( new SaveUserInterfaceCache );
+	writeBufferUsed = 0;
+	profileDictionaries = cvarSystem->GetCVarInteger( "com_saveGameProfile" ) >= 3;
+	dictionaryProfileTicks = 0.0;
+	dictionaryProfileCount = dictionaryProfileBytes = 0;
+	dictionaryCacheMode = g_saveDictionaryCache.GetInteger();
+	dictionaryCacheHits = dictionaryCacheMisses = dictionaryCacheVerified = 0;
+	if ( dictionaryCacheMode > 0 && !saveDictionaryCache ) {
+		saveDictionaryCache.reset( new saveDictionaryCache_t );
+	}
+
 	openQ4SaveGameNextSyncId = 0;
 	openQ4SaveGameSyncMarkersEnabled = false;
 
@@ -260,6 +307,10 @@ idSaveGame::Close
 ================
 */
 void idSaveGame::Close( void ) {
+	const bool profileSave = cvarSystem->GetCVarBool( "com_saveGameProfile" );
+	const bool profileClasses = cvarSystem->GetCVarInteger( "com_saveGameProfile" ) >= 2;
+	const auto saveClock = [profileSave]() { return profileSave ? idLib::sys->GetClockTicks() : 0.0; };
+	const double profileStart = saveClock();
 	int i;
 	if ( objects.Num() == 0 ) {
 		return;
@@ -267,21 +318,78 @@ void idSaveGame::Close( void ) {
 	const int numObjects = objects.Num() - 1;
 
 	WriteSoundCommands();
+	const double profileSound = saveClock();
 
 	// read trace models
 	idClipModel::SaveTraceModels( this );
+	const double profileClip = saveClock();
+	struct classProfile_t {
+		const idTypeInfo *type;
+		double ticks;
+		int count, bytes;
+	};
+	idList<classProfile_t> classProfiles;
 
 	for( i = 1; i < objects.Num(); i++ ) {
+		const double objectStart = profileClasses ? saveClock() : 0.0;
+		const int objectOffset = profileClasses ? file->Tell() + writeBufferUsed : 0;
 // RAVEN BEGIN
 		WriteSyncId();
 // RAVEN END
 		CallSave_r( objects[ i ]->GetType(), objects[ i ] );
+		if ( profileClasses ) {
+			const double objectTicks = saveClock() - objectStart;
+			const idTypeInfo *type = objects[i]->GetType();
+			int p = 0;
+			for ( ; p < classProfiles.Num(); ++p ) if ( classProfiles[p].type == type ) break;
+			if ( p == classProfiles.Num() ) classProfiles.Append( { type, 0.0, 0, 0 } );
+			classProfiles[p].ticks += objectTicks;
+			classProfiles[p].count++;
+			classProfiles[p].bytes += file->Tell() + writeBufferUsed - objectOffset;
+		}
 	}
 
 	WriteSaveGameFooter( numObjects );
+	FlushWriteBuffer();
+	const double profileObjects = saveClock();
+	if ( profileDictionaries ) {
+		common->Printf( "Save dictionary profile: %.3f ms count=%d bytes=%d\n",
+			dictionaryProfileTicks * 1000.0 / idLib::sys->ClockTicksPerSecond(),
+			dictionaryProfileCount, dictionaryProfileBytes );
+	}
+
+	if ( dictionaryCacheMode > 0 && cvarSystem->GetCVarBool( "com_saveGameProfile" ) ) {
+		common->Printf( "Save dictionary cache: hits=%d misses=%d verified=%d entries=%u bytes=%u pending=%u\n",
+			dictionaryCacheHits, dictionaryCacheMisses, dictionaryCacheVerified,
+			(unsigned)saveDictionaryCache->Count(), (unsigned)saveDictionaryCache->ResidentBytes(), (unsigned)saveDictionaryCache->Pending() );
+		common->Printf( "Save dictionary population: batches=%u records=%u discarded=%u total_ms=%.3f max_ms=%.3f\n",
+			dictionaryPopulationBatches, dictionaryPopulationRecords, dictionaryPopulationDiscarded,
+			dictionaryPopulationTicks * 1000.0 / idLib::sys->ClockTicksPerSecond(),
+			dictionaryPopulationMaxTicks * 1000.0 / idLib::sys->ClockTicksPerSecond() );
+		dictionaryPopulationBatches = dictionaryPopulationRecords = dictionaryPopulationDiscarded = 0;
+		dictionaryPopulationTicks = dictionaryPopulationMaxTicks = 0.0;
+	}
+
+	if ( userInterfaceCache && cvarSystem->GetCVarBool( "com_saveGameProfile" ) ) {
+		common->Printf( "Save GUI cache: hits=%u misses=%u verified=%u bytes=%u\n",
+			userInterfaceCache->hits, userInterfaceCache->misses, userInterfaceCache->verified,
+			(unsigned)userInterfaceCache->ResidentBytes() );
+	}
+	userInterfaceCache.reset();
 
 	objects.Clear();
 	objectHash.Clear();
+	if ( profileSave ) {
+		const double scale = 1000.0 / idLib::sys->ClockTicksPerSecond();
+		common->Printf( "Save object profile: sound=%.3f clip=%.3f objects=%.3f ms count=%d\n",
+			( profileSound - profileStart ) * scale, ( profileClip - profileSound ) * scale,
+			( profileObjects - profileClip ) * scale, numObjects );
+		for ( int p = 0; p < classProfiles.Num(); ++p ) {
+			const classProfile_t &entry = classProfiles[p];
+			if ( entry.ticks * scale >= 0.25 ) common->Printf( "Save class profile: %s %.3f ms count=%d bytes=%d\n",
+				entry.type->classname, entry.ticks * scale, entry.count, entry.bytes );
+		}
+	}
 
 #ifdef ID_DEBUG_MEMORY
 // RAVEN BEGIN
@@ -370,18 +478,25 @@ void idSaveGame::WriteSyncId( void ) {
 idSaveGame::Write
 ================
 */
+void idSaveGame::FlushWriteBuffer() {
+	if ( writeBufferUsed == 0 ) return;
+	const int offset = file->Tell();
+	WriteChecked( file->Write( writeBuffer, writeBufferUsed ), writeBufferUsed, "buffered data", offset );
+	writeBufferUsed = 0;
+}
+
 void idSaveGame::Write( const void *buffer, int len ) {
-	if ( len < 0 ) {
-		common->Error( "idSaveGame::Write: invalid negative write length %d", len );
-	}
-	if ( len == 0 ) {
+	if ( len < 0 ) common->Error( "idSaveGame::Write: invalid negative write length %d", len );
+	if ( len == 0 ) return;
+	if ( buffer == NULL ) common->Error( "idSaveGame::Write: null source for %d byte write", len );
+	if ( len > static_cast<int>( sizeof( writeBuffer ) ) - writeBufferUsed ) FlushWriteBuffer();
+	if ( len >= static_cast<int>( sizeof( writeBuffer ) ) ) {
+		const int offset = file->Tell();
+		WriteChecked( file->Write( buffer, len ), len, "raw data", offset );
 		return;
 	}
-	if ( buffer == NULL ) {
-		common->Error( "idSaveGame::Write: null source for %d byte write", len );
-	}
-	const int offset = file->Tell();
-	WriteChecked( file->Write( buffer, len ), len, "raw data", offset );
+	memcpy( writeBuffer + writeBufferUsed, buffer, len );
+	writeBufferUsed += len;
 }
 
 /*
@@ -390,8 +505,8 @@ idSaveGame::WriteInt
 ================
 */
 void idSaveGame::WriteInt( const int value ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteInt( value ), static_cast<int>( sizeof( value ) ), "int", offset );
+	const int encoded = LittleLong( value );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -400,8 +515,8 @@ idSaveGame::WriteJoint
 ================
 */
 void idSaveGame::WriteJoint( const jointHandle_t value ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteInt( value ), static_cast<int>( sizeof( int ) ), "joint", offset );
+	const int encoded = LittleLong( value );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -410,8 +525,8 @@ idSaveGame::WriteShort
 ================
 */
 void idSaveGame::WriteShort( const short value ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteShort( value ), static_cast<int>( sizeof( value ) ), "short", offset );
+	const short encoded = LittleShort( value );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -420,8 +535,8 @@ idSaveGame::WriteByte
 ================
 */
 void idSaveGame::WriteByte( const byte value ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteUnsignedChar( value ), static_cast<int>( sizeof( value ) ), "byte", offset );
+	const byte encoded = value;
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -430,8 +545,8 @@ idSaveGame::WriteSignedChar
 ================
 */
 void idSaveGame::WriteSignedChar( const signed char value ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteChar( value ), static_cast<int>( sizeof( value ) ), "signed char", offset );
+	const signed char encoded = value;
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -440,8 +555,8 @@ idSaveGame::WriteFloat
 ================
 */
 void idSaveGame::WriteFloat( const float value ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteFloat( value ), static_cast<int>( sizeof( value ) ), "float", offset );
+	const float encoded = LittleFloat( value );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -450,8 +565,8 @@ idSaveGame::WriteBool
 ================
 */
 void idSaveGame::WriteBool( const bool value ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteBool( value ), static_cast<int>( sizeof( byte ) ), "bool", offset );
+	const byte encoded = value ? 1 : 0;
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -478,8 +593,7 @@ void idSaveGame::WriteString( const char *string ) {
 
 	WriteInt( len );
 	if ( len > 0 ) {
-		const int offset = file->Tell();
-		WriteChecked( file->Write( string, len ), len, "string", offset );
+		Write( string, len );
 	}
 }
 
@@ -489,8 +603,9 @@ idSaveGame::WriteVec2
 ================
 */
 void idSaveGame::WriteVec2( const idVec2 &vec ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteVec2( vec ), static_cast<int>( sizeof( vec ) ), "vec2", offset );
+	idVec2 encoded = vec;
+	LittleRevBytes( &encoded, sizeof( float ), sizeof( encoded ) / sizeof( float ) );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -499,8 +614,9 @@ idSaveGame::WriteVec3
 ================
 */
 void idSaveGame::WriteVec3( const idVec3 &vec ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteVec3( vec ), static_cast<int>( sizeof( vec ) ), "vec3", offset );
+	idVec3 encoded = vec;
+	LittleRevBytes( &encoded, sizeof( float ), sizeof( encoded ) / sizeof( float ) );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -509,8 +625,9 @@ idSaveGame::WriteVec4
 ================
 */
 void idSaveGame::WriteVec4( const idVec4 &vec ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteVec4( vec ), static_cast<int>( sizeof( vec ) ), "vec4", offset );
+	idVec4 encoded = vec;
+	LittleRevBytes( &encoded, sizeof( float ), sizeof( encoded ) / sizeof( float ) );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -519,8 +636,9 @@ idSaveGame::WriteVec5
 ================
 */
 void idSaveGame::WriteVec5( const idVec5 &vec ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteVec5( vec ), static_cast<int>( sizeof( vec ) ), "vec5", offset );
+	idVec5 encoded = vec;
+	LittleRevBytes( &encoded, sizeof( float ), sizeof( encoded ) / sizeof( float ) );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -529,8 +647,9 @@ idSaveGame::WriteVec6
 ================
 */
 void idSaveGame::WriteVec6( const idVec6 &vec ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteVec6( vec ), static_cast<int>( sizeof( vec ) ), "vec6", offset );
+	idVec6 encoded = vec;
+	LittleRevBytes( &encoded, sizeof( float ), sizeof( encoded ) / sizeof( float ) );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -568,8 +687,9 @@ idSaveGame::WriteMat3
 ================
 */
 void idSaveGame::WriteMat3( const idMat3 &mat ) {
-	const int offset = file->Tell();
-	WriteChecked( file->WriteMat3( mat ), static_cast<int>( sizeof( mat ) ), "mat3", offset );
+	idMat3 encoded = mat;
+	LittleRevBytes( &encoded, sizeof( float ), sizeof( encoded ) / sizeof( float ) );
+	Write( &encoded, sizeof( encoded ) );
 }
 
 /*
@@ -620,28 +740,54 @@ idSaveGame::WriteDict
 ================
 */
 void idSaveGame::WriteDict( const idDict *dict ) {
-	int num;
-	int i;
-	const idKeyValue *kv;
-
-// RAVEN BEGIN
 	WriteSyncId();
-// RAVEN END
-
 	if ( !dict ) {
 		WriteInt( -1 );
-	} else {
-		num = dict->GetNumKeyVals();
-		if ( num > MAX_SAVEGAME_DICT_ENTRIES ) {
-			common->Error( "idSaveGame::WriteDict: invalid key/value count %d (max %d)",
-				num, MAX_SAVEGAME_DICT_ENTRIES );
+		return;
+	}
+	const double profileStart = profileDictionaries ? idLib::sys->GetClockTicks() : 0.0;
+	const int profileOffset = profileDictionaries ? file->Tell() + writeBufferUsed : 0;
+	const int num = dict->GetNumKeyVals();
+	if ( num < 0 || num > MAX_SAVEGAME_DICT_ENTRIES ) {
+		common->Error( "idSaveGame::WriteDict: invalid key/value count %d (max %d)", num, MAX_SAVEGAME_DICT_ENTRIES );
+	}
+	WriteInt( num );
+	const std::vector<byte> *cached = dictionaryCacheMode > 0 && num > 0
+		? saveDictionaryCache->Find( *dict ) : nullptr;
+	if ( dictionaryCacheMode > 0 && num > 0 ) {
+		if ( cached ) ++dictionaryCacheHits; else ++dictionaryCacheMisses;
+	}
+	if ( cached && dictionaryCacheMode == 1 ) {
+		Write( cached->data(), (int)cached->size() );
+		if ( profileDictionaries ) {
+			dictionaryProfileTicks += idLib::sys->GetClockTicks() - profileStart;
+			dictionaryProfileCount++;
+			dictionaryProfileBytes += file->Tell() + writeBufferUsed - profileOffset;
 		}
-		WriteInt( num );
-		for( i = 0; i < num; i++ ) {
-			kv = dict->GetKeyVal( i );
-			WriteString( kv->GetKey() );
-			WriteString( kv->GetValue() );
-		}
+		return;
+	}
+	// Only verification hits capture bytes here. Cache misses defer all
+	// encoding/allocation for their cache copy to bounded later game frames.
+	SaveDictionaryRecord record( cached != nullptr );
+	size_t invalidLength = 0;
+	if ( !EncodeSaveDictionaryPayload( *dict, MAX_PRINT_MSG,
+		[&]( const byte *encoded, size_t used ) {
+			record.Append( encoded, used );
+			Write( encoded, (int)used );
+			return true;
+		}, invalidLength ) ) {
+		common->Error( "idSaveGame::WriteDict invalid string length (%zu)", invalidLength );
+	}
+	if ( cached ) {
+		if ( !record.Valid() || *cached != record.Bytes() ) common->Error( "Save dictionary cache differs from the original writer" );
+		++dictionaryCacheVerified;
+	} else if ( dictionaryCacheMode > 0 && num > 0 ) {
+		saveDictionaryCache->Queue( *dict );
+	}
+	if ( profileDictionaries ) {
+		dictionaryProfileTicks += idLib::sys->GetClockTicks() - profileStart;
+		dictionaryProfileCount++;
+		dictionaryProfileBytes += file->Tell() + writeBufferUsed - profileOffset;
 	}
 }
 
@@ -750,22 +896,50 @@ void idSaveGame::WriteModel( const idRenderModel *model ) {
 idSaveGame::WriteUserInterface
 ================
 */
+void idSaveGame::InvalidateUserInterface( const idUserInterface *ui ) {
+	if ( userInterfaceCache ) userInterfaceCache->Invalidate( ui );
+}
+
 void idSaveGame::WriteUserInterface( const idUserInterface *ui, bool unique ) {
-	const char *name;
-
-// RAVEN BEGIN
 	WriteSyncId();
-// RAVEN END
-
 	if ( !ui ) {
 		WriteString( "" );
-	} else {
-		name = ui->Name();
-		WriteString( name );
-		WriteBool( unique );
-		if ( ui->WriteToSaveGame( file ) == false ) {
-			gameLocal.Error( "idSaveGame::WriteUserInterface: ui failed to write properly\n" );
+		return;
+	}
+	const char *name = ui->Name();
+	WriteString( name );
+	WriteBool( unique );
+	FlushWriteBuffer();
+	// Retained documents advance wall-clock motion during serialization. Only
+	// legacy .gui instances have stable payloads between explicit GUI changes.
+	const size_t nameLength = strlen( name );
+	const bool cacheable = userInterfaceCache && nameLength >= 4 &&
+		strcmp( name + nameLength - 4, ".gui" ) == 0 && file->GetDataPtr() != NULL;
+	const auto *cached = cacheable ? userInterfaceCache->Find( ui ) : nullptr;
+	if ( cached && userInterfaceCacheMode == 1 ) {
+		++userInterfaceCache->hits;
+		Write( cached->data(), static_cast<int>( cached->size() ) );
+		FlushWriteBuffer();
+		return;
+	}
+	const int before = cacheable ? file->Tell() : -1;
+	if ( !ui->WriteToSaveGame( file ) ) {
+		gameLocal.Error( "idSaveGame::WriteUserInterface: ui failed to write properly\n" );
+	}
+	if ( !cacheable ) return;
+	const int after = file->Tell();
+	const auto *data = reinterpret_cast<const byte*>( file->GetDataPtr() );
+	if ( !data || before < 0 || after < before || after > file->Length() ) return;
+	const size_t size = static_cast<size_t>( after - before );
+	if ( cached ) {
+		if ( cached->size() != size || memcmp( cached->data(), data + before, size ) != 0 ) {
+			gameLocal.Error( "idSaveGame::WriteUserInterface: cached GUI payload changed for %s\n", name );
 		}
+		++userInterfaceCache->hits;
+		++userInterfaceCache->verified;
+	} else {
+		++userInterfaceCache->misses;
+		userInterfaceCache->Store( ui, data + before, size );
 	}
 }
 
@@ -1219,6 +1393,7 @@ idSaveGame::WriteSoundCommands
 ===================
 */
 void idSaveGame::WriteSoundCommands( void ) {
+	FlushWriteBuffer();
 	soundSystem->WriteToSaveGame( SOUNDWORLD_GAME, file );
 }
 
@@ -1249,7 +1424,7 @@ void idSaveGame::WriteSaveGameFooter( int numObjects ) {
 		return;
 	}
 
-	const int footerOffset = file->Tell();
+	const int footerOffset = file->Tell() + writeBufferUsed;
 	WriteInt( OPENQ4_SAVEGAME_FOOTER_MAGIC );
 	WriteInt( OPENQ4_SAVEGAME_FOOTER_VERSION );
 	WriteInt( footerOffset );

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise production engine display-service methods with counted platform I/O.
 
-Uses the real 55-key SYSTEM host, display request/recovery helpers, journal codec
+Uses the real 76-key SYSTEM host, display request/recovery helpers, journal codec
 and strict JSON/value parser. Native persistence, renderer and placement lease
 are counted doubles: this tests ordering/ownership, not devices or power loss.
 """
@@ -245,7 +245,7 @@ static void StartupCases(){
     // Replay the real service, including byte ownership and final persistence.
     for(bool confirmed:{false,true}){ResetFixture();SystemSettingsHost settings;auto a=PendingForStartup(settings,confirmed);
       auto legacy=Journal();auto schema=SystemSettingsHost::Schema();
-      for(const auto* key:{"ui_retainedScale","ui_retainedTextScale"}){schema.erase(key);legacy.baseline.erase(key);legacy.target.erase(key);}
+      for(auto it=schema.begin();it!=schema.end();) {const auto key=it->first;if(!SettingsEffectCatalogV1().contains(key)){it=schema.erase(it);legacy.baseline.erase(key);legacy.target.erase(key);}else ++it;}
       std::string bytes;Check(schema.size()==53 && EncodeSettingsJournal(legacy,schema,bytes,error),"encode authentic old catalog journal");files[journalFile]=bytes;
       for(const auto& [key,value]:a.patch)localCVarSystem.variables.at(key).value=FormatPresentationValue(StatePresentation(confirmed?a.baseline.at(key):value));
       localCVarSystem.variables.at("ui_retainedScale").value="1.75";localCVarSystem.variables.at("ui_retainedTextScale").value="1.5";

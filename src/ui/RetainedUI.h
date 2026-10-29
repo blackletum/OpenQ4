@@ -51,6 +51,10 @@ double RetainedUI_PresentationTime();
 // command chain. Allows a deferred resource rebuild before the next draw; this
 // is not a GPU fence and does not replace renderer-owned resource retirement.
 void RetainedUI_FrameSubmitted();
+// Release borrowed game animation/model references before module unload or a
+// declaration/model purge; precache live scenes inside the following load.
+void RetainedUI_ClearModelWorlds();
+void RetainedUI_PrecacheModelWorlds();
 // Startup runs before the legacy GUI manager exists. This non-interactive view
 // shares the native renderer host, and is retired when the session takes over.
 bool RetainedUI_DrawInitialization(const char* message);

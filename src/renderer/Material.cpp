@@ -4845,6 +4845,16 @@ idMaterial::SetDefaultText
 ===================
 */
 bool idMaterial::SetDefaultText( void ) {
+	if (idStr::Icmpn(GetName(),"_retainedModel/",15)==0 || idStr::Icmpn(GetName(),"_retainedModelResolve/",22)==0) {
+		const bool resolve = idStr::Icmpn(GetName(),"_retainedModelResolve/",22)==0;
+		const char* slot = GetName() + (resolve ? 22 : 15);
+		if (!*slot) return false;
+		for (const char* p=slot;*p;++p) if (*p<'0' || *p>'9') return false;
+		if (resolve) SetText(va("material %s { sort gui twoSided { blend gl_one, gl_zero glslProgram _retained/modelResolve "
+			"shaderTexture Colour nearest clamp nopicmip _retainedModelColour%s shaderTexture Depth nearest clamp nopicmip _retainedModelDepth%s } }",GetName(),slot,slot));
+		else SetText(va("material %s { sort gui twoSided { blend gl_one, gl_one_minus_src_alpha vertexColor nopicmip linear clamp map _retainedModelImage%s } }",GetName(),slot));
+		return true;
+	}
 	if (idStr::Icmpn(GetName(),"_retainedLinearMask/",20)==0) {
 		const char* slot=GetName()+20;
 		if (!*slot) return false;

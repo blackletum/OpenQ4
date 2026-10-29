@@ -23,7 +23,7 @@ from remastered_hud_groups import (boss_bar, dev_readouts, hit_indicator, intera
                                    pickup_lines, powerups, transmission, weapon_strip)
 from remastered_hud_lint import lint
 from remastered_hud_mp import mp_document
-from remastered_hud_status import full, status_bar
+from remastered_hud_status import air_gauge, full, status_bar
 from remastered_hud_objectives import objectives_document
 from remastered_hud_scoreboard import scoreboard_document
 from remastered_hud_vehicle import airdef_document, ride_gauge, vehicle_document
@@ -41,6 +41,33 @@ def center_box(ident: str, children: list) -> dict:
     return ui.group(ident, {"position": ui.keyword("absolute"), "left": ui.length(50, "%"), "top": ui.length(50, "%"),
                             "margin-left": ui.length(-480), "margin-top": ui.length(-360), "width": ui.length(960),
                             "height": ui.length(720), "display": ui.keyword("block")}, children)
+
+
+def classic_air_document(*, strogg: bool) -> dict:
+    doc = HudDocument("openq4.hud.air." + ("strogg" if strogg else "marine"))
+    layout_state(doc)
+    doc.number("player_health", 0)
+    doc.boolean("oq4.hidden")
+    doc.boolean("oq4.ride")
+    gauge = air_gauge(doc, strogg, classic=True)
+    doc.on("hideHud", {"op": "setState", "values": {"oq4.hidden": True}})
+    doc.on("showHud", {"op": "setState", "values": {"oq4.hidden": False}})
+    for event in ("enterFlatbed", "enterTram"):
+        doc.on(event, {"op": "setState", "values": {"oq4.ride": True}})
+    for event in ("exitFlatbed", "exitTram"):
+        doc.on(event, {"op": "setState", "values": {"oq4.ride": False}})
+    doc.on("hudJoin")
+    doc.on("onInit")
+    joins = join_events(doc, [("desktop::hidden", "hideHud"),
+                             ("p_tram::visible", "enterTram") if strogg else ("p_flatbed::visible", "enterFlatbed")])
+    # The stock 4:3 canvas, centered horizontally and attached to the bottom
+    # in tall views. This essential instrument does not adopt Remastered scale.
+    canvas = ui.group("air-classic-canvas", {"position": ui.keyword("absolute"),
+        "left": ui.length(50, "%"), "top": ui.length(100, "%"),
+        "margin-left": ui.length(-480), "margin-top": ui.length(-720),
+        "width": ui.length(960), "height": ui.length(720)}, [gauge])
+    return doc.build(full("air-classic-root", [canvas]), {"canvas": {"height": 720, "minWidth": 960},
+        "extensions": {"openq4": {"joinEvents": joins, "reference": "ui-visual-design.md 14.3"}}})
 
 
 def on_foot_document(*, strogg: bool, awakening: bool) -> dict:
@@ -96,6 +123,8 @@ def on_foot_document(*, strogg: bool, awakening: bool) -> dict:
 
 
 DOCUMENTS = {
+    "air_marine.q4ui": lambda: classic_air_document(strogg=False),
+    "air_strogg.q4ui": lambda: classic_air_document(strogg=True),
     "remastered_marine.q4ui": lambda: on_foot_document(strogg=False, awakening=False),
     "remastered_strogg.q4ui": lambda: on_foot_document(strogg=True, awakening=False),
     "remastered_marine_awakening.q4ui": lambda: on_foot_document(strogg=False, awakening=True),

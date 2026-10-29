@@ -36,6 +36,8 @@ public:
 	~idRemasteredHud();
 	// The Remastered document for a stock source, or null when it has none.
 	static const char* DocumentFor(const char* source);
+	// A small vector instrument drawn after Classic, without replacing it.
+	static const char* AirDocumentFor(const char* source);
 	// The layout setting and the retained gate both select Remastered.
 	static bool Enabled();
 	bool Draw(const idUserInterfaceLocal& legacy, int time);

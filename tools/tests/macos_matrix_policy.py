@@ -129,15 +129,17 @@ def validate_workflow_matrix_scope() -> None:
     for token in ("macos-universal2", "macOS universal2"):
         reject(push, token, "push verification macOS matrix")
 
+    # Pull requests validate only the published arm64 slice. Intel builds one
+    # bridge on pushes to main; the manual candidate lane assembles universal2.
     require(commit, "macos-arm64:", "commit validation macOS arm64 job")
-    require(commit, "macos-x64:", "commit validation macOS Intel job")
-    require(commit, "macos-universal2:", "commit validation macOS universal2 assembly job")
-    require(commit, "Pre-publication gate", "commit validation universal2 evidence boundary")
-    require(commit, "runs-on: macos-15-intel", "commit validation macOS Intel runner")
-    require(commit, "commit-macos-x64-${{ matrix.artifact_suffix }}-payload", "commit validation Intel payload")
+    for token in ("macos-x64:", "macos-universal2:", "runs-on: macos-15-intel", "commit-macos-x64-"):
+        reject(commit, token, "commit validation macOS matrix")
     require(push, "macos-15", "push verification hosted macOS runner")
     require(push, "macOS Intel x64 OpenGL Push Verification", "push verification Intel OpenGL job")
-    require(push, "macOS Intel x64 Metal Push Verification", "push verification Intel Metal job")
+    reject(push, "macOS Intel x64 Metal Push Verification", "push verification Intel matrix")
+    candidate = read(".github/workflows/macos-universal2-candidate.yml")
+    require(candidate, "workflow_dispatch:", "manual universal2 candidate lane")
+    require(candidate, '"runner": "macos-15-intel"', "manual universal2 candidate Intel thin build")
 
 
 def validate_evidence_contract() -> None:

@@ -1226,6 +1226,55 @@ def test_scene_views(base: Path) -> None:
             raise AssertionError("scene evidence must not be injectable through user commands")
 
 
+def test_fullscreen_pacing(base: Path) -> None:
+    """Pacing uses its own display; an average cannot hide a frame over budget."""
+    harness = load_benchmark()
+    save = base / "fullscreen"
+    log = save / "baseoq4/logs/case.log"
+    shot = save / "baseoq4/screenshots/case.tga"
+    log.parent.mkdir(parents=True)
+    write_tga(shot, 2560, 1440)
+    text = (
+        "Selected renderer tier: TopGL46\n"
+        "MODE: -1, 2560 x 1440 fullscreen policy=exclusive hz:N/A\n"
+        "Frame pacing snapshot (SP): bound=frame-work, samples=2000, "
+        "present=4.00 ms (250.0 Hz), p50=4.00 ms, p95=5.00 ms, "
+        "p99=6.00 ms, max=8.00 ms\n"
+        "Frame timing window (SP): samples=2000, span_ms=10000, mean_ms=5.000000\n"
+    )
+    log.write_text(text, encoding="utf-8")
+    stdout, stderr = save / "out.txt", save / "err.txt"
+    stdout.write_text("", encoding="utf-8")
+    stderr.write_text("", encoding="utf-8")
+    spec = harness.RunSpec("sp-airdefense1", "SP", "game/airdefense1", "game/airdefense1",
+                           "pacing test", "spawn-static", "auto", "0", "0", "fullscreen", "default", "best", "gl")
+    def evaluate(limit: float, budget: bool = False):
+        return harness.evaluate_role_result(
+            spec, "sp", 0, False, 12, save, "case.log", stdout, stderr,
+            "screenshots/case.tga", None, 2, 24, False,
+            require_benchmark=budget, min_pacing_hz=150,
+            display_width=2560, display_height=1440, max_frame_ms=limit,
+        )
+    assert evaluate(0)["status"] == "pass"
+    assert float(evaluate(0)["summary"]["pacingHz"]) == 200
+    # A fast last view must not hide a slow full rotation.
+    log.write_text(text.replace("mean_ms=5.000000", "mean_ms=8.000000"), encoding="utf-8")
+    assert any("pacingHz=" in item for item in evaluate(0)["missing"])
+    log.write_text(text, encoding="utf-8")
+    assert evaluate(8)["status"] == "pass"
+    slow = evaluate(6.66)
+    assert slow["status"] == "fail" and any("pacingMax=" in item for item in slow["missing"])
+    # The CPU/GPU budget contract remains windowed 1280x720.
+    assert any("display evidence:" in item for item in evaluate(0, True)["missing"])
+    log.write_text(text.replace(", max=8.00 ms", ""), encoding="utf-8")
+    assert "frame pacing maximum" in evaluate(6.66)["missing"]
+    log.write_text(text.replace("fullscreen", "windowed"), encoding="utf-8")
+    assert any("display evidence:" in item for item in evaluate(0)["missing"])
+    log.write_text(text, encoding="utf-8")
+    write_tga(shot, 1280, 720)
+    assert any("engine screenshot" in item for item in evaluate(0)["missing"])
+
+
 def main() -> None:
     test_contract_and_marker()
     harness = load_benchmark()
@@ -1241,6 +1290,7 @@ def main() -> None:
         test_schema_rejection(base)
         test_benchmark_replay(base)
         test_scene_views(base)
+        test_fullscreen_pacing(base)
     print("renderer_budget_contract: ok")
 
 

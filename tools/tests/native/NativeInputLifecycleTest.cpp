@@ -1,6 +1,7 @@
 // Generated includes contain complete production methods. Counted foreign
 // dependencies observe ordering; no engine/native/GUI/window is activated.
 #include "src/framework/NativeInputPublications.h"
+#include "src/framework/CVarAssignmentCapture.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>

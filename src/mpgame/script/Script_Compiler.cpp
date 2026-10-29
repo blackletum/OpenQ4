@@ -962,7 +962,7 @@ idVarDef *idCompiler::EmitFunctionParms( int op, idVarDef *func, int startarg, i
 		EmitOpcode( op, object, VirtualFunctionConstant( func ) );
 
 		// need arg size seperate since script object may be NULL
-		statement_t &statement = gameLocal.program.GetStatement( gameLocal.program.NumStatements() - 1 );
+		statement_t &statement = gameLocal.program.GetMutableStatement( gameLocal.program.NumStatements() - 1 );
 		statement.c = SizeConstant( func->value.functionPtr->parmTotal );
 	} else {
 		EmitOpcode( op, func, SizeConstant( size ) );
@@ -1017,7 +1017,7 @@ idVarDef *idCompiler::EmitFunctionParms( int op, idVarDef *func, int startarg, i
 
 	// allocate result space
 	// try to reuse result defs as much as possible
-	statement_t &statement = gameLocal.program.GetStatement( gameLocal.program.NumStatements() - 1 );
+	statement_t &statement = gameLocal.program.GetMutableStatement( gameLocal.program.NumStatements() - 1 );
 	idVarDef *resultDef = gameLocal.program.FindFreeResultDef( returnType, RESULT_STRING, scope, statement.a, statement.b );
 	// set user count back to 0, a result def needs to be used twice before it can be reused
 	resultDef->numUsers = 0;
@@ -1504,7 +1504,7 @@ idVarDef *idCompiler::GetExpression( int priority ) {
 		if ( op->rightAssociative ) {
 			// if last statement is an indirect, change it to an address of
 			if ( gameLocal.program.NumStatements() > 0 ) {
-				statement_t &statement = gameLocal.program.GetStatement( gameLocal.program.NumStatements() - 1 );
+				statement_t &statement = gameLocal.program.GetMutableStatement( gameLocal.program.NumStatements() - 1 );
 				if ( ( statement.op >= OP_INDIRECT_F ) && ( statement.op < OP_ADDRESS ) ) {
 					statement.op = OP_ADDRESS;
 					type_pointer.SetPointerType( e->TypeDef() );
@@ -1626,7 +1626,7 @@ idVarDef *idCompiler::GetExpression( int priority ) {
 				// statement.b points to type_pointer, which is just a temporary that gets its type reassigned, so we store the real type in statement.c
 				// so that we can do a type check during run time since we don't know what type the script object is at compile time because it
 				// comes from an entity
-				statement_t &statement = gameLocal.program.GetStatement( gameLocal.program.NumStatements() - 1 );
+				statement_t &statement = gameLocal.program.GetMutableStatement( gameLocal.program.NumStatements() - 1 );
 				statement.c = type_pointer.PointerType()->def;
 			}
 
@@ -1650,7 +1650,7 @@ void idCompiler::PatchLoop( int start, int continuePos ) {
 	int			i;
 	statement_t	*pos;
 
-	pos = &gameLocal.program.GetStatement( start );
+	pos = &gameLocal.program.GetMutableStatement( start );
 	for( i = start; i < gameLocal.program.NumStatements(); i++, pos++ ) {
 		if ( pos->op == OP_BREAK ) {
 			pos->op = OP_GOTO;
@@ -1745,7 +1745,7 @@ void idCompiler::ParseWhileStatement( void ) {
         EmitOpcode( OP_IFNOT, e, 0 );
 		ParseStatement();
 		EmitOpcode( OP_GOTO, JumpTo( patch2 ), 0 );
-		gameLocal.program.GetStatement( patch1 ).b = JumpFrom( patch1 );
+		gameLocal.program.GetMutableStatement( patch1 ).b = JumpFrom( patch1 );
 	}
 
 	// fixup breaks and continues
@@ -1843,7 +1843,7 @@ void idCompiler::ParseForStatement( void ) {
 		EmitOpcode( OP_GOTO, JumpTo( patch4 ), 0 );
 
 		// fixup patch3
-		gameLocal.program.GetStatement( patch3 ).b = JumpFrom( patch3 );
+		gameLocal.program.GetMutableStatement( patch3 ).b = JumpFrom( patch3 );
 	}
 
 	ParseStatement();
@@ -1852,7 +1852,7 @@ void idCompiler::ParseForStatement( void ) {
 	EmitOpcode( OP_GOTO, JumpTo( patch2 ), 0 );
 
 	// fixup patch1
-	gameLocal.program.GetStatement( patch1 ).b = JumpFrom( patch1 );
+	gameLocal.program.GetMutableStatement( patch1 ).b = JumpFrom( patch1 );
 
 	// fixup breaks and continues
 	PatchLoop( start, patch2 );
@@ -1910,11 +1910,11 @@ void idCompiler::ParseIfStatement( void ) {
 	if ( CheckToken( "else" ) ) {
 		patch2 = gameLocal.program.NumStatements();
 		EmitOpcode( OP_GOTO, 0, 0 );
-		gameLocal.program.GetStatement( patch1 ).b = JumpFrom( patch1 );
+		gameLocal.program.GetMutableStatement( patch1 ).b = JumpFrom( patch1 );
 		ParseStatement();
-		gameLocal.program.GetStatement( patch2 ).a = JumpFrom( patch2 );
+		gameLocal.program.GetMutableStatement( patch2 ).a = JumpFrom( patch2 );
 	} else {
-		gameLocal.program.GetStatement( patch1 ).b = JumpFrom( patch1 );
+		gameLocal.program.GetMutableStatement( patch1 ).b = JumpFrom( patch1 );
 	}
 }
 
@@ -2225,7 +2225,7 @@ void idCompiler::ParseFunctionDef( idTypeDef *returnType, const char *name ) {
 
 		if ( destructorFunc ) {
 			// change all returns to point to the call to the destructor
-			pos = &gameLocal.program.GetStatement( func->firstStatement );
+			pos = &gameLocal.program.GetMutableStatement( func->firstStatement );
 			for( i = func->firstStatement; i < gameLocal.program.NumStatements(); i++, pos++ ) {
 				if ( pos->op == OP_RETURN ) {
 					pos->op = OP_GOTO;
@@ -2244,7 +2244,7 @@ void idCompiler::ParseFunctionDef( idTypeDef *returnType, const char *name ) {
 // Disabled code since it caused a function to fall through to the next function when last statement is in the form "if ( x ) { return; }"
 #if 0
 	// don't bother adding a return opcode if the "return" statement was used.
-	if ( ( func->firstStatement == gameLocal.program.NumStatements() ) || ( gameLocal.program.GetStatement( gameLocal.program.NumStatements() - 1 ).op != OP_RETURN ) ) {
+	if ( ( func->firstStatement == gameLocal.program.NumStatements() ) || ( gameLocal.program.GetMutableStatement( gameLocal.program.NumStatements() - 1 ).op != OP_RETURN ) ) {
 		// emit an end of statements opcode
 		EmitOpcode( OP_RETURN, 0, 0 );
 	}

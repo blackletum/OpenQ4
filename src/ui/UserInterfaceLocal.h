@@ -137,6 +137,8 @@ private:
 	idRetainedHud*				retainedHud; // transient presentation, never part of saved GUI framing
 	bool                        DrawRetainedHud();
 	idRemasteredHud*			remastered; // transient Remastered layout peer, never saved
+	idRemasteredHud*            essentialHud = nullptr; // transient Classic air overlay; never saved
+	void                        DrawEssentialHud( int drawTime );
 	bool                        DrawRemasteredHud( int drawTime );
 	// The match summary's exit prompt key last published (-1 none yet); -2
 	// for every other GUI.

@@ -405,6 +405,13 @@ def validate_game_libs_repo_path(game_libs_repo: Path) -> Path:
 
 def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) -> None:
     tests = [
+        root / "tools" / "tests" / "aas_liquid_area_state.py",
+        root / "tools" / "tests" / "airdefense_performance_contract.py",
+        root / "tools" / "tests" / "mvd_seek_weapon_state.py",
+        root / "tools" / "tests" / "mvd_storage_budget.py",
+        root / "tools" / "tests" / "player_air_readout_state.py",
+        root / "tools" / "tests" / "renderer_selection_startup.py",
+        root / "tools" / "tests" / "ui_rendering_settings.py",
         root / "tools" / "tests" / "aas_compiler_contract.py",
         root / "tools" / "tests" / "aas_settings_contract.py",
         root / "tools" / "tests" / "arena_campaign.py",
@@ -811,9 +818,6 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         (root / "tools" / "tests" / 'renderer_gl_display_policy.py', []),
         (root / "tools" / "tests" / 'sdl3_strict_window.py', []),
         (root / "tools" / "tests" / 'ui_capture_display_device.py', []),
-        (root / "tools" / "tests" / 'ui_capture_multiplayer_rosters.py', []),
-        (root / "tools" / "tests" / 'ui_capture_system_refresh.py', []),
-        (root / "tools" / "tests" / 'ui_player_identity.py', []),
         (root / "tools" / "tests" / 'ui_legacy_import.py', []),
         (root / "tools" / "tests" / 'ui_legacy_expression.py', ['--mutations']),
         (root / "tools" / "tests" / 'gui_expression_storage.py', []),

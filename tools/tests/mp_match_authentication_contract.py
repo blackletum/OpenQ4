@@ -8,8 +8,8 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
+from game_regression_suite import RegressionTemporaryDirectory
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -486,7 +486,7 @@ def locate_msvc() -> tuple[Path, str] | None:
 def executable_contract() -> None:
     temp_root = ROOT / ".tmp"
     temp_root.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="match-auth-", dir=temp_root) as temp:
+    with RegressionTemporaryDirectory(prefix="match-auth-", dir=temp_root) as temp:
         temp_dir = Path(temp)
         harness = temp_dir / "match_authentication_contract.cpp"
         executable = temp_dir / "match_authentication_contract.exe"

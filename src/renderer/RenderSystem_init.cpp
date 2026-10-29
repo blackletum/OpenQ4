@@ -416,7 +416,7 @@ idCVar r_shadowMapPCSSMaxRadius( "r_shadowMapPCSSMaxRadius", "8.0", CVAR_RENDERE
 idCVar r_shadowMapPointHighPrecision( "r_shadowMapPointHighPrecision", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "store point-light shadow depth in an fp16 color cubemap instead of packed RGBA8 depth. The packed path quantizes finer (1.5e-5 vs 4.9e-4 near the far envelope) at half the memory, and the default hardware-compare path samples the depth cubemap directly, so this only affects the manual fallback. OpenGL only: the Vulkan backend always stores native depth, which quantizes finer than either colour format" );
 idCVar r_shadowMapPointLights( "r_shadowMapPointLights", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "shadow-map point lights when r_useShadowMap is enabled; disabled falls back to stencil shadows for point lights. Point lights are the dominant light class in Quake 4 content, so disabling this makes r_useShadowMap nearly a no-op" );
 idCVar r_shadowMapPointSize( "r_shadowMapPointSize", "512", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "point-light cube face resolution; separate from r_shadowMapSize because a cube costs six faces of color+depth storage per cached light", 128, 2048, idCmdSystem::ArgCompletion_Integer<128,2048> );
-idCVar r_shadowMapAtlasSize( "r_shadowMapAtlasSize", "4096", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "edge size of the shared projected-light shadow atlas; cached lights occupy r_shadowMapSize-sized cells inside it (CSM lights use a 2x2 cell block)", 2048, 8192, idCmdSystem::ArgCompletion_Integer<2048,8192> );
+idCVar r_shadowMapAtlasSize( "r_shadowMapAtlasSize", "4096", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "edge size of the shared projected-light shadow atlas; cached lights occupy r_shadowMapSize-sized cells inside it (CSM lights use a 2x2 cell block)", 2048, 16384, idCmdSystem::ArgCompletion_Integer<2048,16384> );
 idCVar r_shadowMapPointDepthCompare( "r_shadowMapPointDepthCompare", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use hardware comparison sampling for point-light depth cubemaps when GLSL 1.30 support is available" );
 idCVar r_shadowMapStableAlphaHash( "r_shadowMapStableAlphaHash", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "seed shadow-map hashed alpha from stable world coordinates instead of screen-space fragments" );
 idCVar r_shadowMapMaxUpdatesPerView( "r_shadowMapMaxUpdatesPerView", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "maximum shadow-map passes rendered per backend view, 0 = unlimited", 0, 1024, idCmdSystem::ArgCompletion_Integer<0,1024> );
@@ -725,7 +725,10 @@ idCVar r_resolutionScaleMode( "r_resolutionScaleMode", "1", CVAR_RENDERER | CVAR
 idCVar r_resolutionScaleSharpness( "r_resolutionScaleSharpness", "0.4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "sharpening amount for high-quality resolution scaling", 0.0f, 1.5f );
 idCVar r_demonstrateBug( "r_demonstrateBug", "0", CVAR_RENDERER | CVAR_BOOL, "used during development to show IHV's their problems" );
 idCVar r_usePortals( "r_usePortals", "1", CVAR_RENDERER | CVAR_BOOL, " 1 = use portals to perform area culling, otherwise draw everything" );
-idCVar r_portalsDistanceCull( "r_portalsDistanceCull", "1", CVAR_RENDERER | CVAR_BOOL, "enable distance-cull checks using portal fade cull ranges" );
+// Retail defaults to 1: a portal farther than its authored fade range stops the view flood, so
+// windows and doorways tagged with a fade (mcc_1's medical bay window, 200 units) turn opaque.
+// The cull only saved 2005-era fill rate, so openQ4 keeps every portal open unless asked.
+idCVar r_portalsDistanceCull( "r_portalsDistanceCull", "0", CVAR_RENDERER | CVAR_BOOL, "1 = stop drawing areas behind portals beyond their authored fade distance, as retail Quake 4 did" );
 idCVar r_singleLight( "r_singleLight", "-1", CVAR_RENDERER | CVAR_INTEGER, "suppress all but one light" );
 idCVar r_singleEntity( "r_singleEntity", "-1", CVAR_RENDERER | CVAR_INTEGER, "suppress all but one entity" );
 idCVar r_singleSurface( "r_singleSurface", "-1", CVAR_RENDERER | CVAR_INTEGER, "suppress all but one surface on each entity" );
@@ -1526,10 +1529,14 @@ static bool R_CheckPortableExtensions( bool legacyPolicy, char *error, int error
 		// compile the #version 130 post shaders (SMAA); record the ceiling so
 		// those paths can gate and report instead of failing at compile time.
 		const char *glslVersionString = (const char *)glGetString( GL_SHADING_LANGUAGE_VERSION );
+		const bool glslES = glslVersionString != NULL && idStr::Icmpn( glslVersionString, "OpenGL ES GLSL ES ", 18 ) == 0;
+		const char *numericVersion = glslES ? glslVersionString + 18 : glslVersionString;
 		int glslMajor = 0;
 		int glslMinor = 0;
-		if ( glslVersionString != NULL && sscanf( glslVersionString, "%d.%d", &glslMajor, &glslMinor ) == 2 ) {
-			glConfig.GLSL130Available = ( glslMajor > 1 ) || ( glslMajor == 1 && glslMinor >= 30 );
+		if ( numericVersion != NULL && sscanf( numericVersion, "%d.%d", &glslMajor, &glslMinor ) == 2 ) {
+			// GLES 3.x runs the translated post shaders; ES 1.00 cannot. Its
+			// standard text prefix must not make a modern mobile GPU look legacy.
+			glConfig.GLSL130Available = glslES ? glslMajor >= 3 : ( glslMajor > 1 ) || ( glslMajor == 1 && glslMinor >= 30 );
 		}
 		common->Printf( "...using GL_ARB shader objects + GLSL (version %s)\n", glslVersionString != NULL ? glslVersionString : "unknown" );
 	} else if ( r_inhibitFragmentProgram.GetBool() ) {
@@ -2156,6 +2163,17 @@ static bool R_InitOpenGLInternal( bool legacyPolicy, bool forceWindow, char *err
 	// recheck all the extensions (FIXME: this might be dangerous)
 	if ( legacyPolicy ) glConfig.isInitialized = true;
 	if ( !R_CheckPortableExtensions( legacyPolicy, error, errorSize ) ) return false;
+	// Query only the active context. OS adapter enumeration can describe a
+	// different GPU on a hybrid laptop; shared/free memory is not dedicated VRAM.
+	glConfig.gpuClass = RendererClassifyGLDevice( glConfig.renderer_string );
+	glConfig.dedicatedVideoMemoryMB = 0;
+	if ( glConfig.gpuClass == RendererGpuClass::Discrete &&
+			R_CheckExtension( "GL_NVX_gpu_memory_info" ) ) {
+		GLint dedicatedKB = 0;
+		glGetIntegerv( 0x9047 /* GL_GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX */, &dedicatedKB );
+		if ( dedicatedKB > 0 && dedicatedKB / 1024 <= 256 * 1024 )
+			glConfig.dedicatedVideoMemoryMB = dedicatedKB / 1024;
+	}
 	glConfig.isInitialized = true;
 	R_GLDebugOutput_Init();
 
@@ -6556,6 +6574,7 @@ idRenderSystemLocal::ShutdownOpenGL
 ========================
 */
 void idRenderSystemLocal::ShutdownOpenGL( void ) {
+	CancelSavePreview();
 	r_recoverableRendererRestore = false;
 	if ( !glConfig.isInitialized ) {
 		R_ClearActiveRenderTextures();

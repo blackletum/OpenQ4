@@ -66,6 +66,11 @@ manifest's bitmap exceptions and separate `behavior` and `artwork` claims.
 Artwork claims must cite a rendered image: source text alone cannot establish
 artwork.
 
+The record itself must already exist at `HEAD` with the registered bytes;
+an untracked record or an edited working copy cannot grant acceptance. Commit
+reviewed records before auditing the acceptance transition. Evidence paths may
+not contain control characters, including Git batch-protocol line breaks.
+
 ## Dependencies, gates and final acceptance
 
 Dependencies resolve through recorded supersessions to the requirements that
@@ -91,6 +96,9 @@ not in the audited history. A transition refuses stale records, including those
 of dependencies accepted earlier.
 
 The checkpoint audit applies the same rule to everything accepted before it.
+It also rechecks every recorded binary, log and image, including those of
+verified dependencies. A replaced executable or missing capture invalidates
+the acceptance even when its source files have not changed.
 When a change makes an acceptance stale, the increment must either record a new
 acceptance or withdraw the old one:
 
@@ -116,7 +124,7 @@ The baseline is the commit the transition starts from, and the register's
 ## Validation
 
 `tools/tests/ui_requirement_acceptance.py` runs the production transition and
-checkpoint audits against disposable Git repositories. Its 19 tests cover a
+checkpoint audits against disposable Git repositories. Its 24 tests cover a
 complete acceptance, supersession resolution, a gate's bounded milestone scope,
 resource acceptance and a final gate with every requirement and resource. They
 also cover the failures the roadmap lists:
@@ -131,6 +139,10 @@ also cover the failures the roadmap lists:
   a rendered image, an unreviewed family or bitmap exception, and an unbound
   replacement;
 - broad or implicit claims, self-review and incomplete records.
+- uncommitted or modified records and control characters in evidence paths;
+- logs offered as artwork, nonimage files with image names, and PNG/TGA
+  screenshot evidence;
+- changed or missing binaries, logs and images after earlier acceptance.
 
 The checkpoint and revision audits still refuse acceptance. A stale acceptance
 blocks a checkpoint until it is withdrawn, and a withdrawal must keep its
@@ -147,3 +159,9 @@ item and reviewed by someone other than its author. Retail assets are not tracke
 files, so a record binds them through the manifest's resource identity rather
 than by hash. An inventory revision that changes an accepted resource's sources
 is not yet reconciled with this route.
+
+The image check recognizes PNG, TGA and JPEG headers; it does not decode the
+pixels or judge their visual content. Review still needs the actual rendered
+output and the exact scope the record claims. The 28 October review found and
+repaired the committed-record, artwork-kind and earlier-artifact checks above;
+no product requirement, gate or migration resource was accepted by that review.

@@ -701,6 +701,16 @@ void idGameLocal::ServerWriteInitialReliableMessages( int clientNum ) {
 		networkSystem->ServerSendReliableMessage( clientNum, outMsg );
 	}
 
+	// The owner already has a freshly initialized full reservoir; each
+	// existing remote player supplies its authoritative HUD baseline after
+	// the spawn messages, using the same optional event as live updates.
+	for ( i = 0; i < MAX_CLIENTS; ++i ) {
+		if ( i == clientNum || !entities[i] || !entities[i]->IsType( idPlayer::GetClassType() ) ) { continue; }
+		outMsg.Init( msgBuf, sizeof( msgBuf ) );
+		static_cast<idPlayer *>( entities[i] )->WriteAirReadoutMessage( outMsg, true );
+		networkSystem->ServerSendReliableMessage( clientNum, outMsg );
+	}
+
 	// update portals for opened doors
 	int numPortals = gameRenderWorld->NumPortals();
 	outMsg.Init( msgBuf, sizeof( msgBuf ) );
@@ -1176,6 +1186,25 @@ idGameLocal::ServerWriteServerDemoSnapshot
 ===============
 */
 void idGameLocal::ServerWriteServerDemoSnapshot( int sequence, idBitMsg &msg, int lastSnapshotFrame, bool fullWorldInstances ) {
+	// Bootstrap every POV even when recording starts between air updates.
+	// ReadNetworkInfo has already spawned the recorded player identities before
+	// this first snapshot's queued events are consumed.
+	if ( sequence == 1 ) {
+		for ( int i = 0; i < MAX_CLIENTS; ++i ) {
+			if ( !entities[i] || !entities[i]->IsType( idPlayer::GetClassType() ) ) { continue; }
+			byte bytes[32]; idBitMsg air;
+			air.Init( bytes, sizeof( bytes ) );
+			static_cast<idPlayer *>( entities[i] )->WriteAirReadoutMessage( air, false );
+			byte routeBytes[2]; idBitMsg route;
+			route.Init( routeBytes, sizeof( routeBytes ) );
+			route.WriteByte( GAME_UNRELIABLE_RECORD_CLIENTNUM );
+			route.WriteChar( -1 );
+			if ( !unreliableMessages[MAX_CLIENTS].AddConcat( route.GetData(), route.GetSize(),
+					air.GetData(), air.GetSize(), false ) ) {
+				Warning( "MVD initial air readout batch is full" );
+			}
+		}
+	}
 	bool ret = ApplySnapshot( clientSnapshots[ MAX_CLIENTS ], clientEntityStates[ MAX_CLIENTS ], clientPVS[ MAX_CLIENTS ], sequence - 1 );
 	ret = ret;	// shut the warning
 	assert( ret || sequence == 1 );	// past the first snapshot of the server demo stream, there's always exactly one to clear

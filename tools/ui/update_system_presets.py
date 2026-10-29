@@ -8,11 +8,14 @@ never duplicates those values or applies a profile on popup highlight.
 import argparse
 import copy
 import json
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import system_rendering_controls
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = Path('content/baseoq4/pak0/guis/menu/settings/system.q4ui')
-PROFILES = ('minimum', 'lowpower', 'performance', 'balanced', 'quality', 'ultra')
+PROFILES = ('minimum', 'lowpower', 'performance', 'balanced', 'enhanced', 'quality', 'ultra')
 
 
 def nodes(root):
@@ -109,6 +112,7 @@ def compose(document):
         result['bindings'].append({'id': target + '.enabled', 'node': target, 'property': 'enabled', 'value': allowed()})
         result['timelines'] = [t for t in result['timelines'] if not t['id'].startswith(target + '.')]
         result['timelines'] += [renamed(t, original, target) for t in list(result['timelines']) if t['id'].startswith(original + '.')]
+    result = system_rendering_controls.compose(result, (nodes, renamed, typed, length, number, keyword, allowed))
     # Numeric-pair composition owns the final feedback/binding entries. Keep
     # that order stable so both independent generators remain idempotent.
     for key in ('bindings', 'timelines'):

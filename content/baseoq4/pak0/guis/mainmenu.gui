@@ -768,6 +768,35 @@ windowDef Desktop
 		namedevent "p_anims::backReset0" ;
 	}
 
+	// openQ4: the retained SETTINGS page opens the settings screen on a panel
+	// (the session sets desktop::dest to 4, 21, 22 or 36) from the page state
+	// it holds: the main page out of sight and the bands docked. The screen's
+	// Back then returns to the page (gui::settingsFromRetained, settingsOpen).
+	onNamedEvent openSettingsPage {
+		set "p_main::visible" "0" ;
+		transition "topbar::rect" "$d_topbar::rect" "$d_topbar::rect" "0" ;
+		transition "btmbar::rect" "$d_btmbar::rect" "$d_btmbar::rect" "0" ;
+		resettime "anim_settingsIn" "0" ;
+		namedevent "p_anims::backReset0" ;
+	}
+
+	// openQ4: Back on the retained SETTINGS page after the settings screen:
+	// this menu goes home as that screen's Back does, and the retained home
+	// follows it from the page dock.
+	onNamedEvent leaveSettingsPage {
+		set "desktop::curr" "9" ;
+		set "desktop::active" "1" ;
+		set "desktop::dest" "0" ;
+		resettime "anim_settingsOut" "0" ;
+	}
+
+	// openQ4: the settings screen's Back when the SETTINGS page cannot take
+	// it back: home, as the screen's own Back goes.
+	onNamedEvent openSettingsHome {
+		resettime "anim_mainIn" "0" ;
+		namedevent "p_anims::mainReset0" ;
+	}
+
 	// openQ4: Back on the retained Multiplayer page after a stock Multiplayer
 	// page: this menu goes home as its Multiplayer page does (desktop::dest 0),
 	// and the retained home follows it from the page dock.
@@ -14649,8 +14678,14 @@ windowDef Desktop
 			onTime +500 {
 				set "p_settings::visible" "0" ;
 				
-				resettime "anim_mainIn" "0" ;
-				namedevent "p_anims::mainReset0" ;
+				// openQ4: back to the retained SETTINGS page that opened it.
+				if ( "gui::settingsFromRetained" == 1 ) {
+					set "cmd" "settingsOpen" ;
+					namedevent "p_anims::backReset0" ;
+				} else {
+					resettime "anim_mainIn" "0" ;
+					namedevent "p_anims::mainReset0" ;
+				}
 			}
 
 		}

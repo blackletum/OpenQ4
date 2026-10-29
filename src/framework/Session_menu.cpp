@@ -41,6 +41,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "../ui/RetainedUI.h"
 #include "../ui/UserInterfaceManaged.h"
 #include "../ui/UserInterfaceRetained.h"
+#ifndef ID_DEDICATED
+#include "../ui/retained/PlayerSetupRequest.h"
+#endif
 #include "../sound/snd_local.h"
 
 #if defined( USE_SDL3 )
@@ -363,6 +366,22 @@ static const char *const RETAINED_CONTROLS_BINDINGS[] = {
 	"emote cheer", "emote taunt", "emote grab_a", "_voicechat"
 };
 static const int RETAINED_CONTROLS_ROWS = sizeof( RETAINED_CONTROLS_BINDINGS ) / sizeof( RETAINED_CONTROLS_BINDINGS[0] );
+// The retained SETTINGS page (tools/ui/retained_settings_page.py): its
+// sections, each with its verb and the stock settings screen's panel
+// (desktop::dest) that stands in where its page cannot open; the screen
+// takes over after the page leaves, as the Multiplayer page's stock pages do.
+typedef struct {
+	const char *	verb;
+	const char *	section;
+	int				dest;
+} retainedSettingsSection_t;
+static const retainedSettingsSection_t RETAINED_SETTINGS_SECTIONS[] = {
+	{ "settingsControls",	"controls",	4 },
+	{ "settingsGame",		"game",		21 },
+	{ "settingsDisplay",	"display",	22 },
+	{ "settingsAudio",		"audio",	36 },
+};
+static const int RETAINED_SETTINGS_SECTION_COUNT = sizeof( RETAINED_SETTINGS_SECTIONS ) / sizeof( RETAINED_SETTINGS_SECTIONS[0] );
 
 // "mpMatchRuleValue <value>": a whole number from 0 to the largest value a
 // Match Control rule takes, in at most five digits.
@@ -1704,9 +1723,8 @@ static void MainMenuAppendModelChoice( idStr &buildValues, idStr &buildNames, co
 	buildNames += ( displayName && displayName[0] ) ? displayName : declName;
 }
 
-static void MainMenuBuildModelList( const bool isTeamGame, const int menuModelTeam, idStr &buildValues, idStr &buildNames ) {
-	buildValues.Clear();
-	buildNames.Clear();
+static void MainMenuBuildModelChoices( const bool isTeamGame, const int menuModelTeam, idStrList &values, idStrList &names ) {
+	values.Clear(); names.Clear();
 
 	// Only declName and description are read out of these, but parsing a
 	// playerModel decl precaches its model, head, skin and sounds as a side
@@ -1732,8 +1750,16 @@ static void MainMenuBuildModelList( const bool isTeamGame, const int menuModelTe
 		}
 
 		const char *localizedName = playerModel->description.Length() ? common->GetLocalizedString( playerModel->description.c_str() ) : "";
-		MainMenuAppendModelChoice( buildValues, buildNames, declName, localizedName );
+		values.Append( declName );
+		names.Append( localizedName && localizedName[0] ? localizedName : declName );
 	}
+}
+
+static void MainMenuBuildModelList( const bool isTeamGame, const int menuModelTeam, idStr &buildValues, idStr &buildNames ) {
+	idStrList values, names;
+	MainMenuBuildModelChoices( isTeamGame, menuModelTeam, values, names );
+	buildValues.Clear(); buildNames.Clear();
+	for ( int i = 0; i < values.Num(); ++i ) MainMenuAppendModelChoice( buildValues, buildNames, values[i].c_str(), names[i].c_str() );
 }
 
 static void SetMainMenuMPModelVars( idUserInterface *gui ) {
@@ -1795,6 +1821,11 @@ static void SetMainMenuMPModelVars( idUserInterface *gui ) {
 		DeclPlayerModel_CacheMediaForDecl(
 			static_cast<const rvDeclPlayerModel *>( declManager->FindType( DECL_PLAYER_MODEL, selectedDecl.c_str(), false ) ) );
 	}
+	// Both stock and retained renderDef previews use these animation classes.
+	// Reference them with the selected player's media, including inside the
+	// normal level-load precache window, before a later preview needs them.
+	declManager->FindType( DECL_ENTITYDEF, "player_ui_anims", false );
+	declManager->FindType( DECL_ENTITYDEF, "weapon_blaster_gui", false );
 
 	if ( !selectedModelName.Length() && def ) {
 		selectedModelName = def->dict.GetString( "model" );
@@ -1812,6 +1843,132 @@ static void SetMainMenuMPModelVars( idUserInterface *gui ) {
 	// Stage editable user fields while this menu is active.
 	cvarSystem->SetCVarString( "gui_ui_name", cvarSystem->GetCVarString( "ui_name" ) );
 	cvarSystem->SetCVarString( "gui_ui_clan", cvarSystem->GetCVarString( "ui_clan" ) );
+}
+
+// Player Setup is an editor inside the Multiplayer page, not a child route.
+// The session owns the complete catalog; a bounded choice page does not cap it.
+bool idSessionLocal::PublishRetainedPlayerSetup( idUserInterface *gui, bool rebuild ) {
+#ifndef ID_DEDICATED
+	using namespace openq4::ui;
+	if ( !gui || !guiMainMenu || !gameEdit ) return false;
+	const idStr cvar = MainMenuModelCVarName( MainMenuResolveModelTeam() );
+	const idStr language = cvarSystem->GetCVarString( "sys_lang" );
+	const idStr current = cvarSystem->GetCVarString( cvar.c_str() );
+	const int declarations = declManager->GetNumDecls( DECL_PLAYER_MODEL );
+	const bool contextChanged = retainedSetupCvar != cvar || retainedSetupLanguage != language || retainedSetupDeclCount != declarations;
+	const bool selectedChanged = retainedSetupValue != current;
+	if ( rebuild || contextChanged || selectedChanged || !gui->State().GetString("setup.body")[0] ) {
+		if ( (rebuild || contextChanged) && retainedSetupCatalog >= 0x7fffffffu ) return false;
+		SetMainMenuMPModelVars( guiMainMenu );
+		MainMenuBuildModelChoices( MainMenuIsTeamGame(), MainMenuResolveModelTeam(), retainedSetupModels, retainedSetupNames );
+		retainedSetupCvar = cvar; retainedSetupLanguage = language; retainedSetupDeclCount = declarations;
+		retainedSetupValue = cvarSystem->GetCVarString( cvar.c_str() );
+		if ( rebuild || contextChanged ) ++retainedSetupCatalog;
+		const int selected = retainedSetupModels.FindIndex( retainedSetupValue );
+		retainedSetupFirst = selected >= 0 ? selected / int(PlayerSetupModelRows) * int(PlayerSetupModelRows) : 0;
+		gui->SetStateString( "setup.body", guiMainMenu->State().GetString("player_model_name") );
+		gui->SetStateString( "setup.head", guiMainMenu->State().GetString("player_head_model_name") );
+		gui->SetStateString( "setup.skin", guiMainMenu->State().GetString("player_skin_name") );
+		gui->SetStateString( "setup.head_skin", guiMainMenu->State().GetString("player_head_skin_name") );
+		gui->SetStateString( "setup.model_name", selected >= 0 ? Session_RetainedPlayerText(retainedSetupNames[selected].c_str(),256,1).c_str() : "" );
+	}
+	if ( !gui->State().GetString("setup.body")[0] ) return false;
+	// An epoch changes before replacing a page or catalog. Deferred choices
+	// retain their old epoch and cannot name another model through a reused row.
+	if ( gui->State().GetInt("setup.catalog") != int(retainedSetupCatalog) ) {
+		const int count = Min( int(PlayerSetupModelRows), Max(0,retainedSetupModels.Num()-retainedSetupFirst) );
+		for ( unsigned int row = 0; row < PlayerSetupModelRows; ++row ) {
+			const int index = retainedSetupFirst + int(row);
+			gui->SetStateString( va("setup.model.%u.name",row), int(row) < count ? Session_RetainedPlayerText(retainedSetupNames[index].c_str(),256,1).c_str() : "" );
+		}
+		gui->SetStateInt( "setup.model_count", count );
+		gui->SetStateInt( "setup.catalog", int(retainedSetupCatalog) );
+		gui->SetStateBool( "setup.previous", retainedSetupFirst > 0 );
+		gui->SetStateBool( "setup.next", retainedSetupFirst + count < retainedSetupModels.Num() );
+	}
+	const int selected = retainedSetupModels.FindIndex( retainedSetupValue );
+	gui->SetStateInt( "setup.model_row", selected >= retainedSetupFirst && selected < retainedSetupFirst + int(PlayerSetupModelRows) ? selected-retainedSetupFirst : -1 );
+	for ( const char *field : {"name","clan"} ) {
+		const char *value = cvarSystem->GetCVarString( va("ui_%s",field) );
+		gui->SetStateString( va("setup.%s",field), value );
+		gui->SetStateString( va("setup.observed_%s",field), value );
+	}
+	gui->SetStateString( "setup.observed_model", retainedSetupValue.c_str() );
+	const char *tint = cvarSystem->GetCVarString("ui_hitscanTint");
+	gui->SetStateString( "setup.observed_rail", tint );
+	float hue=0,saturation=0,brightness=0;
+	int rail = -1;
+	if ( sscanf(tint,"%f %f %f",&hue,&saturation,&brightness)==3 && saturation==1 && brightness==1 ) {
+		static const int hues[7] = {0,30,60,120,180,240,330};
+		for ( int i = 0; i < 7; ++i ) if ( fabs(hue-hues[i]) < .001f ) rail=i;
+	}
+	gui->SetStateInt( "setup.rail", rail );
+	gui->SetStateFloat( "setup.rotation", retainedSetupRotation );
+	gui->StateChanged( common->GetPresentationTime() );
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool idSessionLocal::OpenRetainedPlayerSetup( idUserInterface *gui ) {
+#ifndef ID_DEDICATED
+	retainedSetupRotation = 200;
+	if ( !PublishRetainedPlayerSetup(gui,true) ) return false;
+	gui->SetStateString("setup.notice","");
+	gui->HandleNamedEvent("setupOpen");
+	PumpApplicationActions(gui);
+	return true;
+#else
+	return false;
+#endif
+}
+
+void idSessionLocal::HandleRetainedPlayerSetupRequest( idUserInterface *gui, const char *payload ) {
+#ifndef ID_DEDICATED
+	using namespace openq4::ui;
+	if ( gui != guiActive || gui != guiRetainedMpPage || !gui->State().GetBool("setup.open") ) return;
+	PlayerSetupRequest request; std::string error;
+	if ( !DecodePlayerSetupRequest(payload,request,error) ) { common->Warning("retained UI: %s",error.c_str()); return; }
+	const auto notice = [&](const char *key) { gui->SetStateString("setup.notice",common->GetLocalizedString(key)); gui->StateChanged(common->GetPresentationTime()); };
+	if ( !PublishRetainedPlayerSetup(gui) || request.catalog != retainedSetupCatalog ) { notice("#str_231548"); return; }
+	const char *cvar = nullptr;
+	idStr wanted;
+	switch (request.field) {
+		case PlayerSetupField::Name: cvar="ui_name"; wanted=std::get<std::string>(request.value).c_str(); break;
+		case PlayerSetupField::Clan: cvar="ui_clan"; wanted=std::get<std::string>(request.value).c_str(); break;
+		case PlayerSetupField::Model: {
+			const long long index = static_cast<long long>(retainedSetupFirst) + int(std::get<double>(request.value));
+			if ( index < 0 || index >= retainedSetupModels.Num() ) { notice("#str_231548"); return; }
+			idStr model,head,skin,description,team;
+			wanted=retainedSetupModels[int(index)];
+			if ( !MainMenuExtractPlayerModelInfo(wanted.c_str(),model,head,skin,description,team) ||
+				!MainMenuModelAllowedForTeam(team,MainMenuIsTeamGame(),MainMenuResolveModelTeam()) ) { notice("#str_231548"); return; }
+			cvar=retainedSetupCvar.c_str(); break;
+		}
+		case PlayerSetupField::Rail: {
+			static const int hues[7] = {0,30,60,120,180,240,330};
+			cvar="ui_hitscanTint"; wanted=va("%d 1 1",hues[int(std::get<double>(request.value))]); break;
+		}
+		case PlayerSetupField::Page: {
+			const bool next=std::get<double>(request.value)>0;
+			if ( retainedSetupCatalog >= 0x7fffffffu || (next ? retainedSetupFirst + int(PlayerSetupModelRows) >= retainedSetupModels.Num() : retainedSetupFirst==0) ) return;
+			retainedSetupFirst += next ? int(PlayerSetupModelRows) : -int(PlayerSetupModelRows);
+			++retainedSetupCatalog; break;
+		}
+		case PlayerSetupField::Rotation: retainedSetupRotation=float(std::get<double>(request.value)); break;
+	}
+	if ( cvar ) {
+		if ( request.expected != cvarSystem->GetCVarString(cvar) ) { notice("#str_231548"); return; }
+		cvarSystem->SetCVarString(cvar,wanted.c_str());
+		if ( wanted != cvarSystem->GetCVarString(cvar) ) { notice("#str_231549"); return; }
+		if ( request.field==PlayerSetupField::Name || request.field==PlayerSetupField::Clan )
+			cvarSystem->SetCVarString(request.field==PlayerSetupField::Name ? "gui_ui_name" : "gui_ui_clan",wanted.c_str());
+	}
+	gui->SetStateString("setup.notice","");
+	PublishRetainedPlayerSetup(gui);
+	if ( cvarSystem->GetCVarBool("ui_retainedTrace") ) common->Printf("RETAINED_PLAYER_SETUP applied=1 field=%d catalog=%u\n",int(request.field),retainedSetupCatalog);
+#endif
 }
 
 /*
@@ -2125,7 +2282,7 @@ bool idSessionLocal::OpenSystemSettings() {
 #else
 	if ( !Session_RetainedSystemEnabled() || systemGuiTransition || guiTest != NULL || RetainedUI_IsOpen() ) return false;
 	if ( guiSystem != NULL ) return guiActive == guiSystem;
-	if ( guiMainMenu == NULL || guiActive != guiMainMenu || guiMsgRestore != NULL ) return false;
+	if ( guiMainMenu == NULL || !RetainedSettingsParent() || guiMsgRestore != NULL ) return false;
 	// Load and validate its application contract before deactivating the
 	// parent. A page that is missing or invalid leaves the stock SYSTEM page
 	// in use for the rest of the session.
@@ -2219,7 +2376,7 @@ bool idSessionLocal::OpenRetainedAudio() {
 #ifdef ID_DEDICATED
 	return false;
 #else
-	if ( !RetainedAudioAvailable() || guiMainMenu == NULL || guiActive != guiMainMenu || guiMsgRestore != NULL || guiTest != NULL ) {
+	if ( !RetainedAudioAvailable() || guiMainMenu == NULL || !RetainedSettingsParent() || guiMsgRestore != NULL || guiTest != NULL ) {
 		return false;
 	}
 	if ( guiRetainedAudio != NULL && UI_RetainedViewFailed( guiRetainedAudio ) ) {
@@ -2440,7 +2597,7 @@ bool idSessionLocal::OpenRetainedGame() {
 #ifdef ID_DEDICATED
 	return false;
 #else
-	if ( !RetainedGameAvailable() || guiMainMenu == NULL || guiActive != guiMainMenu || guiMsgRestore != NULL || guiTest != NULL ) {
+	if ( !RetainedGameAvailable() || guiMainMenu == NULL || !RetainedSettingsParent() || guiMsgRestore != NULL || guiTest != NULL ) {
 		return false;
 	}
 	if ( guiRetainedGame != NULL && UI_RetainedViewFailed( guiRetainedGame ) ) {
@@ -2688,7 +2845,7 @@ bool idSessionLocal::OpenRetainedControls() {
 #ifdef ID_DEDICATED
 	return false;
 #else
-	if ( !RetainedControlsAvailable() || guiMainMenu == NULL || guiActive != guiMainMenu || guiMsgRestore != NULL || guiTest != NULL ) {
+	if ( !RetainedControlsAvailable() || guiMainMenu == NULL || !RetainedSettingsParent() || guiMsgRestore != NULL || guiTest != NULL ) {
 		return false;
 	}
 	if ( guiRetainedControls != NULL && UI_RetainedViewFailed( guiRetainedControls ) ) {
@@ -3224,6 +3381,7 @@ static bool Session_MenuIsCompatibleSaveGameVersion( const int version ) {
 // client's persistent player info. Whether this build loads the save; with
 // `player`, the first client's persistent info.
 static bool Session_MenuReadSaveGameHeader( const idStr &slotName, idDict *player ) {
+	if ( !sessLocal.FinishPendingSave( true ) ) return false;
 	if ( !Session_MenuIsSafeSaveSlotName( slotName ) ) {
 		common->Warning( "Ignoring savegame slot with unsafe filename '%s'", slotName.c_str() );
 		return false;
@@ -3291,6 +3449,7 @@ static bool Session_MenuReadSaveDescription( const idStr &slotName, sessionMenuS
 	description.description.Clear();
 	description.screenshot.Clear();
 	description.noOverwrite = false;
+	if ( !sessLocal.FinishPendingSave( true ) ) return false;
 
 	if ( !Session_MenuIsSafeSaveSlotName( slotName ) ) {
 		common->Warning( "Ignoring save description for unsafe slot '%s'", slotName.c_str() );
@@ -3392,6 +3551,7 @@ idSessionLocal::GetSaveGameList
 ===============
 */
 void idSessionLocal::GetSaveGameList( idStrList &fileList, idList<fileTIME_T> &fileTimes ) {
+	if ( !FinishPendingSave( true ) ) { fileList.Clear(); fileTimes.Clear(); return; }
 	int i;
 	idFileList *files;
 	idStrList rawFileList;
@@ -4085,6 +4245,26 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 		// Back from a stock Multiplayer page: the retained Multiplayer page
 		// where it presents, onto the section that opened that page, else the
 		// stock one.
+		// Back from the stock settings screen the SETTINGS page opened: that
+		// page, onto the section, where it presents, else the home.
+		if ( !idStr::Icmp( cmd, "settingsOpen" ) ) {
+#ifndef ID_DEDICATED
+			const int left = retainedSettingsLeft;
+			retainedSettingsLeft = 0;
+			const char *section = NULL;
+			for ( int i = 0; i < RETAINED_SETTINGS_SECTION_COUNT; i++ ) {
+				if ( RETAINED_SETTINGS_SECTIONS[ i ].dest == left ) {
+					section = RETAINED_SETTINGS_SECTIONS[ i ].section;
+				}
+			}
+			if ( !OpenRetainedSettingsPage( section ) && guiMainMenu != NULL ) {
+				guiMainMenu->SetStateBool( "settingsFromRetained", false );
+				guiMainMenu->HandleNamedEvent( "openSettingsHome" );
+			}
+#endif
+			return;
+		}
+
 		if ( !idStr::Icmp( cmd, "multiplayerOpen" ) ) {
 			const int left = retainedMpPageLeft;
 			retainedMpPageLeft = 0;
@@ -4746,26 +4926,25 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				vcmd = args.Argv( icmd++ );
 			}
 
-			int oldSpec = com_machineSpec.GetInteger();
-
+			const char *presetCommand = NULL;
 			if ( idStr::Icmp( vcmd, "low" ) == 0 ) {
-				com_machineSpec.SetInteger( 0 );
+				presetCommand = "applyPerformancePreset lowpower\n";
 			} else if ( idStr::Icmp( vcmd, "medium" ) == 0 ) {
-				com_machineSpec.SetInteger( 1 );
+				presetCommand = "applyPerformancePreset performance\n";
 			} else  if ( idStr::Icmp( vcmd, "high" ) == 0 ) {
-				com_machineSpec.SetInteger( 2 );
+				presetCommand = "applyPerformancePreset balanced\n";
 			} else  if ( idStr::Icmp( vcmd, "ultra" ) == 0 ) {
-				com_machineSpec.SetInteger( 3 );
+				presetCommand = "applyPerformancePreset ultra\n";
 			} else if ( idStr::Icmp( vcmd, "recommended" ) == 0 ) {
-				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "setMachineSpec\n" );
+				presetCommand = "autoDetectPerformancePreset\n";
 			}
 
-			if ( oldSpec != com_machineSpec.GetInteger() ) {
+			// Reapply even when the coarse stock spec is unchanged: Balanced and
+			// Enhanced share spec 2, and a display change can alter automatic scale.
+			if ( presetCommand != NULL ) {
+				cmdSystem->BufferCommandText( CMD_EXEC_NOW, presetCommand );
 				guiActive->SetStateInt( "com_machineSpec", com_machineSpec.GetInteger() );
-				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "execMachineSpec\n" );
-				SetMainMenuVideoGuiVars( guiActive );
-				SyncMainMenuAspectVisibility( guiActive );
-				guiActive->StateChanged( common->GetPresentationTime() );
+				RefreshMainMenuPerformancePresetGuiVars( guiActive );
 			}
 
 			if ( idStr::Icmp( vcmd, "restart" )  == 0) {
@@ -5654,6 +5833,7 @@ void idSessionLocal::GuiFrameEvents() {
 	UpdateRetainedPage();
 	UpdateRetainedMultiplayerPage();
 	UpdateRetainedJoinGame();
+	UpdateRetainedSettingsPage();
 	UpdateRetainedNotices();
 	UpdateBrowserTooltip();
 	PrecacheRetainedLevelshots( false );
@@ -6239,6 +6419,10 @@ static const char *const RETAINED_CREDITS_GUI = "guis/menu/credits.q4ui";
 // as the stock Multiplayer page leaves, 500 ms after the choice.
 static const char *const RETAINED_MPPAGE_GUI = "guis/menu/multiplayer.q4ui";
 static const int RETAINED_MPPAGE_LEAVE_MSEC = 500;
+// The retained SETTINGS page (tools/ui/retained_settings_page.py); its
+// sections are RETAINED_SETTINGS_SECTIONS.
+static const char *const RETAINED_SETTINGSPAGE_GUI = "guis/menu/settings.q4ui";
+static const int RETAINED_SETTINGSPAGE_LEAVE_MSEC = 500;
 // Multiplayer's Create Server sub-page. Its map list holds this many maps at a
 // time (MAP_ROWS in tools/ui/retained_create_server.py), and its game types
 // are the stock choice's, in its order (mp_create_val4's values).
@@ -6480,6 +6664,7 @@ static idStr Session_RetainedSaveShot( const idStr &slot, const sessionMenuSaveD
 	if ( described && description.screenshot.Length() > 0 ) {
 		return UI_RetainedImageSource( description.screenshot.c_str() ) ? description.screenshot : idStr( fallback );
 	}
+	if ( !sessLocal.FinishPendingSave( true ) ) return fallback;
 	const idStr preview = va( "savegames/%s.tga", slot.c_str() );
 	if ( UI_RetainedImageSource( preview.c_str() ) && fileSystem->ReadFile( preview.c_str(), NULL, NULL ) > 0 ) {
 		UI_RetainedReloadImage( preview.c_str() );
@@ -7192,6 +7377,13 @@ void idSessionLocal::HandleRetainedSessionRequest( idUserInterface *gui, const c
 		}
 		return;
 	}
+	if ( gui != NULL && request != NULL && gui == guiRetainedSettingsPage ) {
+		// The SETTINGS page's verbs, while it presents.
+		if ( gui == guiActive ) {
+			HandleRetainedSettingsPageRequest( gui, request );
+		}
+		return;
+	}
 	if ( gui != NULL && request != NULL && gui == guiRetainedCreate ) {
 		// The Create Server sub-page's verbs, while it presents.
 		if ( gui == guiActive ) {
@@ -7316,8 +7508,8 @@ void idSessionLocal::HandleRetainedSessionRequest( idUserInterface *gui, const c
 	// LOAD GAME, SAVE GAME, RESTART LEVEL and DEMOS open their retained pages
 	// where those can present; else the stock pages below.
 	if ( ( !idStr::Icmp( request, "loadGame" ) || !idStr::Icmp( request, "saveGame" ) || !idStr::Icmp( request, "restartLevel" ) ||
-			!idStr::Icmp( request, "demos" ) || !idStr::Icmp( request, "credits" ) || !idStr::Icmp( request, "multiplayer" ) ) &&
-			BeginRetainedPage( request ) ) {
+			!idStr::Icmp( request, "demos" ) || !idStr::Icmp( request, "credits" ) || !idStr::Icmp( request, "multiplayer" ) ||
+			!idStr::Icmp( request, "settings" ) ) && BeginRetainedPage( request ) ) {
 		return;
 	}
 	for ( int i = 0; i < static_cast<int>( sizeof( RETAINED_HANDOFFS ) / sizeof( RETAINED_HANDOFFS[0] ) ); ++i ) {
@@ -7366,9 +7558,10 @@ bool idSessionLocal::BeginRetainedPage( const char *request ) {
 #ifndef ID_DEDICATED
 	const bool saving = !idStr::Icmp( request, "saveGame" ), restarting = !idStr::Icmp( request, "restartLevel" );
 	const bool demos = !idStr::Icmp( request, "demos" ), credits = !idStr::Icmp( request, "credits" );
-	const bool multiplayer = !idStr::Icmp( request, "multiplayer" );
-	const bool strogg = guiRetainedHome != NULL && guiRetainedHome == guiRetainedPauseStrogg;
-	if ( ( !saving && !restarting && !demos && !credits && !multiplayer && idStr::Icmp( request, "loadGame" ) ) || guiRetainedHome == NULL ||
+	const bool multiplayer = !idStr::Icmp( request, "multiplayer" ), settings = !idStr::Icmp( request, "settings" );
+	const bool strogg = !settings && guiRetainedHome != NULL && guiRetainedHome == guiRetainedPauseStrogg;
+	if ( ( !saving && !restarting && !demos && !credits && !multiplayer && !settings && idStr::Icmp( request, "loadGame" ) ) ||
+			guiRetainedHome == NULL ||
 			guiActive != guiMainMenu || ( ( credits || multiplayer ) && mapSpawned ) ||
 			( ( saving || restarting ) && ( !mapSpawned || IsMultiplayer() ) ) ||
 			( demos && ( mapSpawned || IsDemoPlaybackActive() ) ) ) {
@@ -7382,23 +7575,25 @@ bool idSessionLocal::BeginRetainedPage( const char *request ) {
 	// or language change hands the page back to the stock one for good.
 	idUserInterface *&loaded = strogg ? ( saving ? guiRetainedSaveStrogg : restarting ? guiRetainedRestartStrogg : guiRetainedLoadStrogg ) :
 		saving ? guiRetainedSave : restarting ? guiRetainedRestart : demos ? guiRetainedDemos :
-		credits ? guiRetainedCredits : multiplayer ? guiRetainedMpPage : guiRetainedLoad;
+		credits ? guiRetainedCredits : multiplayer ? guiRetainedMpPage : settings ? guiRetainedSettingsPage : guiRetainedLoad;
 	const char *path = strogg ? ( saving ? RETAINED_SAVEGAME_STROGG_GUI : restarting ? RETAINED_RESTART_STROGG_GUI : RETAINED_LOADGAME_STROGG_GUI ) :
 		saving ? RETAINED_SAVEGAME_GUI : restarting ? RETAINED_RESTART_GUI : demos ? RETAINED_DEMOS_GUI :
-		credits ? RETAINED_CREDITS_GUI : multiplayer ? RETAINED_MPPAGE_GUI : RETAINED_LOADGAME_GUI;
+		credits ? RETAINED_CREDITS_GUI : multiplayer ? RETAINED_MPPAGE_GUI : settings ? RETAINED_SETTINGSPAGE_GUI : RETAINED_LOADGAME_GUI;
 	if ( loaded != NULL && UI_RetainedViewFailed( loaded ) ) {
 		common->Warning( "retained UI: '%s' stopped drawing; the stock screen presents instead", path );
 		retainedStock.AddUnique( path );
 		loaded = NULL;
 		return false;
 	}
-	// The Multiplayer page also needs the legacy menu's routes to its pages.
-	idUserInterface *page = multiplayer ? RetainedMultiplayerPage() : loaded != NULL ? loaded : FindRetainedGui( path, true, false );
+	// The Multiplayer and SETTINGS pages also need the legacy menu's routes to
+	// their stock pages.
+	idUserInterface *page = multiplayer ? RetainedMultiplayerPage() : settings ? RetainedSettingsPage() :
+		loaded != NULL ? loaded : FindRetainedGui( path, true, false );
 	if ( page == NULL ) {
 		return false;
 	}
 	loaded = page;
-	if ( saving || ( !restarting && !credits && !multiplayer && !demos ) ) {
+	if ( saving || ( !restarting && !credits && !multiplayer && !settings && !demos ) ) {
 		page->SetStateInt( "browser.sort", 0 );
 		page->SetStateInt( "browser.filter", 0 );
 	}
@@ -7423,6 +7618,13 @@ bool idSessionLocal::BeginRetainedPage( const char *request ) {
 		page->SetStateBool( "from_join", false );
 		page->SetStateBool( "from_setup", false );
 		page->StateChanged( common->GetPresentationTime() );
+	} else if ( settings ) {
+		// From the home the page starts on CONTROLS.
+		retainedSettingsDest = 0;
+		for ( int i = 0; i < RETAINED_SETTINGS_SECTION_COUNT; i++ ) {
+			page->SetStateBool( va( "from_%s", RETAINED_SETTINGS_SECTIONS[ i ].section ), false );
+		}
+		page->StateChanged( common->GetPresentationTime() );
 	} else if ( demos ) {
 		// Each arrival shows every demo, the newest selected.
 		retainedDemoFilter = 0;
@@ -7444,7 +7646,8 @@ bool idSessionLocal::BeginRetainedPage( const char *request ) {
 
 bool idSessionLocal::RetainedPageActive() const {
 	return guiActive != NULL && ( IsRetainedLoadPage( guiActive ) || IsRetainedSavePage( guiActive ) || IsRetainedRestartPage( guiActive ) ||
-		guiActive == guiRetainedDemos || guiActive == guiRetainedCredits || guiActive == guiRetainedMpPage );
+		guiActive == guiRetainedDemos || guiActive == guiRetainedCredits || guiActive == guiRetainedMpPage ||
+		( guiRetainedSettingsPage != NULL && guiActive == guiRetainedSettingsPage ) );
 }
 
 // The hand-off's end: the page presents over the home that handed off, which
@@ -8168,6 +8371,21 @@ void idSessionLocal::HandleRetainedMultiplayerPageRequest( idUserInterface *gui,
 	if ( retainedMpPageDest != 0 || retainedSubpageFrom != NULL || guiMainMenu == NULL ) {
 		return;
 	}
+	if ( !idStr::Icmpn(request,openq4::ui::PlayerSetupRequestPrefix,sizeof(openq4::ui::PlayerSetupRequestPrefix)-1) ) {
+		HandleRetainedPlayerSetupRequest(gui,request+sizeof(openq4::ui::PlayerSetupRequestPrefix)-1);
+		return;
+	}
+	if ( !idStr::Icmp(request,"playerSetupClose") ) {
+		if ( gui->State().GetBool("setup.open") ) {
+			gui->HandleNamedEvent("setupClose");
+			PumpApplicationActions(gui);
+		}
+		return;
+	}
+	if ( !idStr::Icmp(request,"multiplayerSetup") && OpenRetainedPlayerSetup(gui) ) {
+		HandleMainMenuCommands("play main_menu_selection");
+		return;
+	}
 	if ( !idStr::Icmp( request, "multiplayerCreate" ) && RetainedCreateServerPage() != NULL ) {
 		BeginRetainedSubpage( gui, true, RETAINED_SUBPAGE_CREATE_SERVER );
 		return;
@@ -8216,6 +8434,203 @@ void idSessionLocal::HandleRetainedMultiplayerPageRequest( idUserInterface *gui,
 
 /*
 ===============
+idSessionLocal::RetainedSettingsParent
+
+The settings pages open over the main menu's settings screen or the retained
+SETTINGS page, and return to it.
+===============
+*/
+bool idSessionLocal::RetainedSettingsParent() const {
+	return guiActive != NULL && ( guiActive == guiMainMenu || ( guiRetainedSettingsPage != NULL && guiActive == guiRetainedSettingsPage ) );
+}
+
+/*
+===============
+idSessionLocal::RetainedSettingsPage
+
+The retained SETTINGS page, loaded when first wanted; NULL with the retained
+screens off, over a main menu without the routes to its settings screen (a
+mod's own), or when the page is not installed, cannot load or stopped
+drawing.
+===============
+*/
+idUserInterface *idSessionLocal::RetainedSettingsPage() {
+#ifndef ID_DEDICATED
+	// A view that stopped drawing hands the page back for good.
+	if ( guiRetainedSettingsPage != NULL && UI_RetainedViewFailed( guiRetainedSettingsPage ) ) {
+		common->Warning( "retained UI: '%s' stopped drawing; the stock screen presents instead", RETAINED_SETTINGSPAGE_GUI );
+		retainedStock.AddUnique( RETAINED_SETTINGSPAGE_GUI );
+		guiRetainedSettingsPage = NULL;
+	}
+	if ( !Session_RetainedScreensEnabled() || guiMainMenu == NULL ) {
+		return NULL;
+	}
+	// Quietly, as a home screen over a main menu without its routes.
+	if ( !UI_LegacyNamedEventExists( guiMainMenu, "openSettingsPage" ) ) {
+		if ( retainedStock.FindIndex( RETAINED_SETTINGSPAGE_GUI ) < 0 ) {
+			common->DPrintf( "retained UI: the main menu has no route to its settings screen, so it presents its own instead of '%s'\n",
+				RETAINED_SETTINGSPAGE_GUI );
+			retainedStock.Append( RETAINED_SETTINGSPAGE_GUI );
+		}
+		return NULL;
+	}
+	if ( guiRetainedSettingsPage == NULL ) {
+		guiRetainedSettingsPage = FindRetainedGui( RETAINED_SETTINGSPAGE_GUI, true, false );
+	}
+	return guiRetainedSettingsPage;
+#else
+	return NULL;
+#endif
+}
+
+/*
+===============
+idSessionLocal::OpenRetainedSettingsPage
+
+Back from the stock settings screen the SETTINGS page presents again, onto
+the section that opened it. False when it cannot present.
+===============
+*/
+bool idSessionLocal::OpenRetainedSettingsPage( const char *section ) {
+#ifndef ID_DEDICATED
+	idUserInterface *page = RetainedSettingsPage();
+	if ( page == NULL ) {
+		return false;
+	}
+	retainedSettingsDest = 0;
+	retainedPageHome = NULL;
+	guiMainMenu->SetStateBool( "settingsFromRetained", false );
+	// The activation reads them.
+	for ( int i = 0; i < RETAINED_SETTINGS_SECTION_COUNT; i++ ) {
+		page->SetStateBool( va( "from_%s", RETAINED_SETTINGS_SECTIONS[ i ].section ),
+			section != NULL && !idStr::Icmp( section, RETAINED_SETTINGS_SECTIONS[ i ].section ) );
+	}
+	page->StateChanged( common->GetPresentationTime() );
+	SetGUI( page, NULL );
+	return true;
+#else
+	return false;
+#endif
+}
+
+/*
+===============
+idSessionLocal::HandleRetainedSettingsPageRequest
+
+The SETTINGS page's verbs. CONTROLS, GAME OPTIONS and AUDIO open their
+retained pages, and DISPLAY the retained SYSTEM page where it is on, each
+returning here onto its section; where one cannot, the stock settings screen
+opens on that panel once the page has left (UpdateRetainedSettingsPage).
+LOAD DEFAULTS' YES restores the defaults as the stock dialog's did. BACK
+returns the home, from the page dock as from the stock screen. A panel under
+way takes no further request.
+===============
+*/
+void idSessionLocal::HandleRetainedSettingsPageRequest( idUserInterface *gui, const char *request ) {
+#ifndef ID_DEDICATED
+	if ( retainedSettingsDest != 0 || guiMainMenu == NULL ) {
+		return;
+	}
+	if ( !idStr::Icmp( request, "settingsBack" ) ) {
+		if ( MainMenuWindowStateEqualsInt( guiMainMenu, "desktop::curr", 0 ) &&
+				MainMenuWindowStateEqualsInt( guiMainMenu, "desktop::active", 0 ) ) {
+			// The legacy menu never left home: the home comes back as from any
+			// retained page.
+			ReturnRetainedPage();
+			return;
+		}
+		// After the stock settings screen the legacy menu goes home as that
+		// screen's own Back does, and the retained home follows it.
+		HandleMainMenuCommands( "play main_menu_selection" );
+		UI_RunTimeEvents( guiMainMenu, common->GetPresentationTime() );
+		guiMainMenu->SetPresentationValue( "desktop::curr", "9" );
+		guiMainMenu->SetPresentationValue( "desktop::active", "1" );
+		guiMainMenu->SetStateBool( "settingsFromRetained", false );
+		retainedPageHome = NULL;
+		SetGUI( guiMainMenu, NULL );
+		guiMainMenu->HandleNamedEvent( "leaveSettingsPage" );
+		UpdateRetainedHome();
+		return;
+	}
+	if ( !idStr::Icmp( request, "settingsDefaults" ) ) {
+		// The stock dialog's YES: every setting and binding to its default,
+		// and the sound system restarted.
+		HandleMainMenuCommands( "exec cvar_restart ; play main_menu_selection ; resetdefaults ; exec s_restart" );
+		return;
+	}
+	const retainedSettingsSection_t *chosen = NULL;
+	for ( int i = 0; i < RETAINED_SETTINGS_SECTION_COUNT; i++ ) {
+		if ( !idStr::Icmp( request, RETAINED_SETTINGS_SECTIONS[ i ].verb ) ) {
+			chosen = &RETAINED_SETTINGS_SECTIONS[ i ];
+		}
+	}
+	if ( chosen == NULL ) {
+		return;
+	}
+	// The section the page returns onto.
+	for ( int i = 0; i < RETAINED_SETTINGS_SECTION_COUNT; i++ ) {
+		gui->SetStateBool( va( "from_%s", RETAINED_SETTINGS_SECTIONS[ i ].section ), &RETAINED_SETTINGS_SECTIONS[ i ] == chosen );
+	}
+	gui->StateChanged( common->GetPresentationTime() );
+	HandleMainMenuCommands( "play main_menu_selection" );
+	const bool opened = chosen->dest == 4 ? OpenRetainedControls() : chosen->dest == 21 ? OpenRetainedGame() :
+		chosen->dest == 36 ? OpenRetainedAudio() : RetainedSystemAvailable() && OpenSystemSettings();
+	if ( opened ) {
+		return;
+	}
+	gui->HandleNamedEvent( "depart" );
+	PumpApplicationActions( gui );
+	retainedSettingsDest = chosen->dest;
+	retainedSettingsAt = common->GetPresentationTime() + RETAINED_SETTINGSPAGE_LEAVE_MSEC;
+#endif
+}
+
+/*
+===============
+idSessionLocal::UpdateRetainedSettingsPage
+
+The stock settings screen takes over when the SETTINGS page has left: the
+legacy menu presents in the page state with the screen arriving on the panel
+(openSettingsPage), and its Back returns here (settingsOpen). Anything else
+taking the screen first abandons it.
+===============
+*/
+void idSessionLocal::UpdateRetainedSettingsPage() {
+#ifndef ID_DEDICATED
+	if ( retainedSettingsDest == 0 ) {
+		return;
+	}
+	if ( guiRetainedSettingsPage == NULL || guiActive != guiRetainedSettingsPage || guiMainMenu == NULL ) {
+		retainedSettingsDest = 0;
+		return;
+	}
+	if ( common->GetPresentationTime() < retainedSettingsAt ) {
+		return;
+	}
+	const int dest = retainedSettingsDest;
+	retainedSettingsDest = 0;
+	retainedSettingsLeft = dest;
+	// The legacy menu's timelines stood still while the page presented; they
+	// catch up first. It activates away from home (desktop::curr 9), which
+	// keeps SetGUI from starting its intro; the screen's arrival takes the
+	// panel from desktop::dest.
+	UI_RunTimeEvents( guiMainMenu, common->GetPresentationTime() );
+	guiMainMenu->SetPresentationValue( "desktop::curr", "9" );
+	guiMainMenu->SetPresentationValue( "desktop::active", "1" );
+	guiMainMenu->SetPresentationValue( "desktop::dest", va( "%d", dest ) );
+	guiMainMenu->SetStateBool( "settingsFromRetained", true );
+	retainedPageHome = NULL;
+	SetGUI( guiMainMenu, NULL );
+	guiMainMenu->HandleNamedEvent( "openSettingsPage" );
+	UpdateRetainedHome();
+	if ( cvarSystem->GetCVarBool( "ui_retainedTrace" ) ) {
+		common->Printf( "RETAINED_SETTINGSPAGE stock dest=%d\n", dest );
+	}
+#endif
+}
+
+/*
+===============
 idSessionLocal::UpdateRetainedMultiplayerPage
 
 The stock page takes over when the Multiplayer page has left: the legacy menu
@@ -8225,6 +8640,14 @@ Anything else taking the screen first abandons it.
 */
 void idSessionLocal::UpdateRetainedMultiplayerPage() {
 #ifndef ID_DEDICATED
+	if ( guiRetainedMpPage && guiActive == guiRetainedMpPage && guiRetainedMpPage->State().GetBool("setup.open") ) {
+		if ( UI_RetainedViewFailed(guiRetainedMpPage) || !PublishRetainedPlayerSetup(guiRetainedMpPage) ) {
+			// A native preview that cannot present hands this exact edit flow
+			// to its stock counterpart immediately, rather than leaving a blank.
+			retainedMpPageDest = 18;
+			retainedMpPageAt = common->GetPresentationTime();
+		}
+	}
 	if ( retainedMpPageDest == 0 ) {
 		return;
 	}
@@ -9605,7 +10028,7 @@ void idSessionLocal::PrefetchRetainedScreens() {
 	}
 	const char *const documents[] = {
 		RETAINED_TITLE_GUI, RETAINED_LOADGAME_GUI, RETAINED_CREDITS_GUI, RETAINED_DEMOS_GUI, RETAINED_ARENA_GUI,
-		RETAINED_MPPAGE_GUI, Session_RetainedCreateServerEnabled() ? RETAINED_CREATE_SERVER_GUI : NULL,
+		RETAINED_MPPAGE_GUI, RETAINED_SETTINGSPAGE_GUI, Session_RetainedCreateServerEnabled() ? RETAINED_CREATE_SERVER_GUI : NULL,
 		Session_RetainedJoinGameEnabled() ? RETAINED_JOIN_GAME_GUI : NULL
 	};
 	UI_RetainedPrefetchDocuments( documents, static_cast<int>( sizeof( documents ) / sizeof( documents[0] ) ) );

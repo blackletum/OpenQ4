@@ -84,7 +84,26 @@
 
 #include "VulkanDevice.h"
 #include "VulkanShadowTiming.h"
+#include "VulkanGpuFrameTiming.h"
 #include "vk_ShadowMap.h"
+
+static idCVar r_vkShadowFullAtlasClear( "r_vkShadowFullAtlasClear", "0", CVAR_RENDERER | CVAR_BOOL,
+	"clear unused projected shadow atlas space as a validation reference" );
+static idCVar r_vkShadowOwnershipCopy( "r_vkShadowOwnershipCopy", "1", CVAR_RENDERER | CVAR_BOOL,
+	"seed fresh GLOBAL projected shadow maps with the matching LOCAL depth" );
+
+static idCVar r_vkShadowOwnershipUnion( "r_vkShadowOwnershipUnion", "1", CVAR_RENDERER | CVAR_BOOL,
+	"combine fresh PCSS ownership depths in the receiver instead of copying them" );
+
+static idCVar r_vkShadowStencilAttachmentReference( "r_vkShadowStencilAttachmentReference", "0", CVAR_RENDERER | CVAR_BOOL,
+	"attach and store unused shadow stencil as a validation reference" );
+
+bool VK_ShadowMap_UseStencilAttachment() {
+	// Casters disable stencil tests/writes and all shadow consumers sample only
+	// depth. Keep the packed depth format and combined-aspect layout barriers,
+	// but avoid clearing/loading/storing its unused stencil attachment.
+	return vkCtx.shadowDepthHasStencil && r_vkShadowStencilAttachmentReference.GetBool();
+}
 
 // vk_GuiExecutor.cpp narrow accessors (vkExec stays file-static there)
 bool VK_GuiExecutor_FrameIsOpen( void );
@@ -938,7 +957,7 @@ void VK_ShadowMap_Shutdown( void ) {
 // shadow descriptor sets at both. Failure leaves every light on retained
 // stencil for the view; publishing both receiver families is atomic.
 static int VK_ShadowMap_AtlasSizeValue( void ) {
-	int wantedSize = idMath::ClampInt( 2048, 8192, r_shadowMapAtlasSize.GetInteger() );
+	int wantedSize = idMath::ClampInt( 2048, 16384, r_shadowMapAtlasSize.GetInteger() );
 	const int maxDim = (int)vkCtx.deviceProperties.limits.maxImageDimension2D;
 	if ( maxDim > 0 && wantedSize > maxDim ) {
 		wantedSize = maxDim;
@@ -2813,7 +2832,7 @@ static bool VK_ShadowMap_EstimateUpdateCost( const viewLight_t *vLight,
 		// against yet. Fall back to the configured edge; the scheduling
 		// walk clamps against the real one either way.
 		const int atlasEdge = vkShadow.atlasSize > 0 ? vkShadow.atlasSize
-				: idMath::ClampInt( 2048, 8192,
+				: idMath::ClampInt( 2048, 16384,
 						r_shadowMapAtlasSize.GetInteger() );
 		const int maxTileSize = atlasEdge / atlasDiv;
 		if ( maxTileSize < 128 ) {
@@ -3772,7 +3791,7 @@ static int VK_ShadowMap_DrawPassCasters( vkCasterPassCtx_t &ctx,
 		const vkShadowLightState_t &light,
 		const vkShadowReceiverPass_t receiverPass,
 		const int cascadeIndex,
-		const vkShadowChainSelect_t select ) {
+		const vkShadowChainSelect_t select, const bool localChainsOnly = false ) {
 	const viewLight_t *vLight = light.vLight;
 	if ( vLight == NULL ) {
 		return 0;
@@ -3782,11 +3801,11 @@ static int VK_ShadowMap_DrawPassCasters( vkCasterPassCtx_t &ctx,
 	const bool globalOwnership =
 			receiverPass == VK_SHADOW_RECEIVER_GLOBAL;
 	int drawnCasters = 0;
-	if ( drawStatic ) {
+	if ( drawStatic && !localChainsOnly ) {
 		drawnCasters += VK_ShadowMap_DrawCasterChain( ctx, light,
 				cascadeIndex, vLight->globalShadowMapCasters );
 	}
-	if ( drawDynamic ) {
+	if ( drawDynamic && !localChainsOnly ) {
 		drawnCasters += VK_ShadowMap_DrawCasterChain( ctx, light,
 				cascadeIndex, vLight->globalShadowMapDynamicCasters );
 	}
@@ -4731,12 +4750,76 @@ static void VK_ShadowMap_CopyDepthTile( VkCommandBuffer cmd,
 	memset( &copy, 0, sizeof( copy ) );
 	copy.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2;
 	copy.srcImage = srcImage;
-	copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	copy.srcImageLayout = srcImage == dstImage
+			? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 	copy.dstImage = dstImage;
-	copy.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	copy.dstImageLayout = srcImage == dstImage
+			? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	copy.regionCount = 1;
 	copy.pRegions = &region;
 	vkCmdCopyImage2( cmd, &copy );
+}
+
+// Both maps use the same projected state. Opaque global casters therefore
+// produce the same depth at each tile-relative pixel. Copying that result
+// before drawing the local chains, or taking their minimum at raw-depth
+// sampling time, preserves GLOBAL's depth union. Keep cached/composed
+// passes and alpha coverage on their existing paths.
+static bool VK_ShadowMap_CanReuseLocalDepth( const vkShadowLightState_t &light ) {
+	if ( ( !r_vkShadowOwnershipCopy.GetBool() && !r_vkShadowOwnershipUnion.GetBool() )
+			|| light.pointLight || light.vLight == NULL ) {
+		return false;
+	}
+	const vkShadowPassState_t &src = light.passes[VK_SHADOW_RECEIVER_LOCAL];
+	const vkShadowPassState_t &dst = light.passes[VK_SHADOW_RECEIVER_GLOBAL];
+	if ( !src.valid || !dst.valid || src.cacheHit || dst.cacheHit
+			|| src.cacheUpdate || dst.cacheUpdate || src.composeDynamic || dst.composeDynamic
+			|| src.resourcePass != VK_SHADOW_RECEIVER_LOCAL
+			|| dst.resourcePass != VK_SHADOW_RECEIVER_GLOBAL ) {
+		return false;
+	}
+	const int size = VK_ShadowMap_ProjectedBlockSize( light );
+	if ( src.tileX < 0 || src.tileY < 0 || dst.tileX < 0 || dst.tileY < 0
+			|| src.tileX + size > vkShadow.atlasSize || src.tileY + size > vkShadow.atlasSize
+			|| dst.tileX + size > vkShadow.atlasSize || dst.tileY + size > vkShadow.atlasSize
+			|| ( src.tileX < dst.tileX + size && dst.tileX < src.tileX + size
+				&& src.tileY < dst.tileY + size && dst.tileY < src.tileY + size ) ) {
+		return false;
+	}
+	const drawSurf_t *chains[] = { light.vLight->globalShadowMapCasters,
+		light.vLight->globalShadowMapDynamicCasters };
+	for ( const drawSurf_t *chain : chains ) {
+		for ( const drawSurf_t *surf = chain; surf != NULL; surf = surf->nextOnLight ) {
+			if ( surf->material == NULL || surf->material->Coverage() != MC_OPAQUE ) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+// Called outside dynamic rendering after LOCAL completed. Both disjoint
+// rectangles belong to one subresource, so transfer layouts cannot describe
+// the copy: GENERAL permits simultaneous source and destination access.
+static void VK_ShadowMap_CopyLocalDepth( VkCommandBuffer cmd,
+		const vkShadowLightState_t &light ) {
+	const VkPipelineStageFlags2 depthStages = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+		| VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+	const VkAccessFlags2 depthAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+		| VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	const VkAccessFlags2 transferAccess = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	VK_ShadowMap_ImageBarrier( cmd, vkShadow.atlasImage, 1,
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+		depthStages, depthAccess, VK_PIPELINE_STAGE_2_TRANSFER_BIT, transferAccess );
+	const vkShadowPassState_t &local = light.passes[VK_SHADOW_RECEIVER_LOCAL];
+	const vkShadowPassState_t &global = light.passes[VK_SHADOW_RECEIVER_GLOBAL];
+	VK_ShadowMap_CopyDepthTile( cmd,
+		vkShadow.atlasImage, local.tileX, local.tileY,
+		vkShadow.atlasImage, global.tileX, global.tileY,
+		VK_ShadowMap_ProjectedBlockSize( light ) );
+	VK_ShadowMap_ImageBarrier( cmd, vkShadow.atlasImage, 1,
+		VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		VK_PIPELINE_STAGE_2_TRANSFER_BIT, transferAccess, depthStages, depthAccess );
 }
 
 static void VK_ShadowMap_FinalizeCachePasses(
@@ -5555,6 +5638,12 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		return false;
 	}
 
+	// This nested span separates map production from worldLights (which also
+	// includes receiver shading). The frame profiler owns/reset/retires its
+	// query pair; no extra readback or GPU wait is introduced here.
+	const bool profileMainView = !viewDef->isSubview && viewDef->superView == NULL
+		&& ( viewDef->renderFlags & RF_PORTAL_SKY ) == 0;
+	vkGpuPhaseScope mapTiming( cmd, VK_GPU_PHASE_WORLD_SHADOW_MAPS, profileMainView );
 	VK_Exec_EndMainRendering();
 
 	vkCasterPassCtx_t ctx;
@@ -5587,6 +5676,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 	if ( projectedCount > 0 ) {
 		VkImageLayout atlasLayout = vkShadow.atlasLayout;
 		if ( projectedFreshCount > 0 ) {
+			vkGpuPhaseScope projectedTiming( cmd, VK_GPU_PHASE_SHADOW_PROJECTED, profileMainView );
+			vkGpuProjectedShadowStatisticsScope projectedStatistics( cmd, profileMainView );
 			VK_ShadowGpuTiming_BeginPhase( cmd,
 					VK_SHADOW_TIMING_MAP_RENDER );
 			VK_ShadowMap_ImageBarrier( cmd, vkShadow.atlasImage, 1,
@@ -5606,7 +5697,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 			atlasLayout =
 					VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-			// One depth-only scope over the whole atlas; the clear also
+			// One depth-only scope over the fresh ownership blocks; the clear also
 			// establishes transparent/zero-alpha ownership maps as valid
 			// empty depth instead of spuriously falling back to stencil.
 			VkRenderingAttachmentInfo depth;
@@ -5628,10 +5719,30 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 					(uint32_t)vkShadow.atlasSize;
 			ri.renderArea.extent.height =
 					(uint32_t)vkShadow.atlasSize;
+			if ( !r_vkShadowFullAtlasClear.GetBool() ) {
+				int right = 0, bottom = 0;
+				for ( int i = 0; i < vkShadow.numLights; ++i ) {
+					const vkShadowLightState_t &light = vkShadow.lights[i];
+					if ( !light.valid || light.pointLight ) continue;
+					const int blockSize = VK_ShadowMap_ProjectedBlockSize( light );
+					for ( int p = 0; p < VK_SHADOW_RECEIVER_PASS_COUNT; ++p ) {
+						const vkShadowPassState_t &pass = light.passes[p];
+						if ( !pass.valid || pass.cacheHit || pass.resourcePass != p ) continue;
+						right = Max( right, pass.tileX + blockSize );
+						bottom = Max( bottom, pass.tileY + blockSize );
+					}
+				}
+				// Cache hits are restored after this scope. No receiver samples
+				// unallocated atlas space; every fresh block remains fully cleared.
+				if ( right > 0 && bottom > 0 ) {
+					ri.renderArea.extent.width = (uint32_t)Min( right, vkShadow.atlasSize );
+					ri.renderArea.extent.height = (uint32_t)Min( bottom, vkShadow.atlasSize );
+				}
+			}
 			ri.layerCount = 1;
 			ri.pDepthAttachment = &depth;
 			ri.pStencilAttachment =
-					vkCtx.shadowDepthHasStencil ? &depth : NULL;
+					VK_ShadowMap_UseStencilAttachment() ? &depth : NULL;
 			vkCmdBeginRendering( cmd, &ri );
 
 			vkCmdBindPipeline( cmd,
@@ -5668,6 +5779,38 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 					const vkClassicShadowPassPlan_t *classicPass =
 						classicCommit ? VK_ClassicShadow_FindPassPlan(
 							&light, receiverPass ) : NULL;
+					const bool reusableLocalDepth = !classicCommit
+						&& receiverPass == VK_SHADOW_RECEIVER_GLOBAL
+						&& VK_ShadowMap_CanReuseLocalDepth( light );
+					// PCSS uses NEAREST raw depths. Taking their minimum in the
+					// receiver is exactly the depth-test union, including blocker
+					// search. Hardware-filtered compares cannot use this shortcut.
+					pass.unionLocalDepth = reusableLocalDepth
+						&& r_vkShadowOwnershipUnion.GetBool()
+						&& R_ShadowMapProjectedFilterSettings( light.vLight ).filterMode == 2
+						&& r_shadowMapDebugMode.GetInteger() == 0
+						&& !r_shadowMapDebugOverlay.GetBool()
+						&& !r_shadowMapTranslucentMoments.GetBool();
+					const bool copiedLocalDepth = reusableLocalDepth
+						&& !pass.unionLocalDepth && r_vkShadowOwnershipCopy.GetBool();
+					if ( pass.unionLocalDepth ) {
+						static bool reportedOwnershipUnion = false;
+						if ( !reportedOwnershipUnion ) {
+							reportedOwnershipUnion = true;
+							common->Printf( "Vulkan: projected shadow ownership depth union active\n" );
+						}
+					}
+					if ( copiedLocalDepth ) {
+						vkCmdEndRendering( cmd );
+						VK_ShadowMap_CopyLocalDepth( cmd, light );
+						depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+						vkCmdBeginRendering( cmd, &ri );
+						static bool reportedOwnershipCopy = false;
+						if ( !reportedOwnershipCopy ) {
+							reportedOwnershipCopy = true;
+							common->Printf( "Vulkan: projected shadow ownership depth copy active\n" );
+						}
+					}
 
 					ctx.unsupportedCaster = false;
 					int drawnCasters = 0;
@@ -5709,6 +5852,11 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 						vkCmdSetScissor( cmd, 0, 1,
 								&scissor );
 
+						const idPlane& projectionW = light.projectedState.clipPlanes[cascadeIndex][3];
+						vkGpuProjectedShadowStatisticsScope cascadeStatistics( cmd,
+							profileMainView && vkCtx.pipelineStatisticsEnabled, 1 + passIndex * 4 + cascadeIndex, i,
+							projectionW[0] == 0.0f && projectionW[1] == 0.0f && projectionW[2] == 0.0f && projectionW[3] == 1.0f );
+
 						if ( classicCommit ) {
 							drawnCasters +=
 								VK_ClassicShadow_DrawProjectedPass(
@@ -5723,7 +5871,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 											cascadeIndex,
 											pass.composeDynamic
 												? VK_SHADOW_CHAINS_STATIC_ONLY
-												: VK_SHADOW_CHAINS_ALL );
+												: VK_SHADOW_CHAINS_ALL, copiedLocalDepth || pass.unionLocalDepth );
 						}
 					}
 					// A fully transparent represented perforated chain emits
@@ -5807,6 +5955,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		}
 		// Publication and restore are one phase: both are resident-cache
 		// transfers, and OpenGL reports them together as reuse.
+		vkGpuPhaseScope cacheTiming( cmd, VK_GPU_PHASE_SHADOW_CACHE,
+			profileMainView && ( haveCacheUpdates || haveCacheHits ) );
 		if ( haveCacheUpdates || haveCacheHits ) {
 			VK_ShadowGpuTiming_BeginPhase( cmd,
 					VK_SHADOW_TIMING_CACHE_REUSE );
@@ -5949,6 +6099,8 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 					VK_SHADOW_TIMING_CACHE_REUSE );
 		}
 
+		cacheTiming.End();
+
 		// GL SHADOWMAP_RENDER_COMPOSE_DYNAMIC (draw_arb2.cpp): every cached
 		// tile now holds this light's STATIC depth, whether it was just
 		// published or restored from a resident entry. Re-enter the atlas with
@@ -5958,6 +6110,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 		// land in exactly the projection the static tiles were rendered with.
 		if ( projectedComposeCount > 0
 				&& casterPipeline != VK_NULL_HANDLE ) {
+			vkGpuPhaseScope composeTiming( cmd, VK_GPU_PHASE_SHADOW_COMPOSE, profileMainView );
 			// OpenGL times compose under MAP_RENDER too; the composed=
 			// counter is what separates it in the report.
 			VK_ShadowGpuTiming_BeginPhase( cmd,
@@ -5999,7 +6152,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 			ri.layerCount = 1;
 			ri.pDepthAttachment = &depth;
 			ri.pStencilAttachment =
-					vkCtx.shadowDepthHasStencil ? &depth : NULL;
+					VK_ShadowMap_UseStencilAttachment() ? &depth : NULL;
 			vkCmdBeginRendering( cmd, &ri );
 
 			// The fresh scope may not have run at all (a view of pure cache
@@ -6109,6 +6262,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 	}
 
 	if ( pointFreshCount > 0 ) {
+		vkGpuPhaseScope pointTiming( cmd, VK_GPU_PHASE_SHADOW_POINT, profileMainView );
 		VK_ShadowGpuTiming_BeginPhase( cmd, VK_SHADOW_TIMING_MAP_RENDER );
 		vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pointCasterPipeline );
 		vkCmdSetDepthTestEnable( cmd, VK_TRUE );
@@ -6261,7 +6415,7 @@ bool VK_ShadowMap_RenderAtlas( const viewDef_t *viewDef ) {
 					ri.renderArea.extent.height = (uint32_t)faceSize;
 					ri.layerCount = 1;
 					ri.pDepthAttachment = &depth;
-					ri.pStencilAttachment = vkCtx.shadowDepthHasStencil ? &depth : NULL;
+					ri.pStencilAttachment = VK_ShadowMap_UseStencilAttachment() ? &depth : NULL;
 					vkCmdBeginRendering( cmd, &ri );
 
 					if ( classicCommit ) {

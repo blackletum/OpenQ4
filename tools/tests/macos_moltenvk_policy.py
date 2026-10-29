@@ -157,7 +157,7 @@ def validate_loader_agreement() -> None:
     bringup = read("src/renderer/Vulkan/VulkanBringup.cpp")
     probe = function_body(
         bringup,
-        "static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int summaryLength, bool holdInstance ) {",
+        "static bool VK_Bringup_RunProbeInternal(",
     )
     require(
         probe,

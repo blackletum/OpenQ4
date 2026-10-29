@@ -2,6 +2,9 @@
 #ifndef __SAVEGAME_H__
 #define __SAVEGAME_H__
 
+#include <memory>
+class SaveUserInterfaceCache;
+
 /*
 
 Save game related helper classes.
@@ -24,6 +27,8 @@ const char *OpenQ4SaveGameWireABI( void );
 
 class idSaveGame {
 public:
+	static void ClearDictionaryCache();
+	static void PopulateDictionaryCache();
 	friend	void Cmd_CheckSave_f( const idCmdArgs &args );
 
 							idSaveGame( idFile *savefile );
@@ -96,8 +101,22 @@ public:
 
 	void					WriteBuildNumber( const int value );
 
+	// Call before changing GUI state from a Save method.
+	void InvalidateUserInterface( const idUserInterface *ui );
+
 protected:
 	idFile *				file;
+	std::unique_ptr<SaveUserInterfaceCache> userInterfaceCache;
+	int userInterfaceCacheMode;
+	// Flush before handing the file to UI/sound and on successful Close only.
+	// Error unwinding must never retry serialization or publish a partial buffer.
+	byte					writeBuffer[16384];
+	int						writeBufferUsed;
+	bool					profileDictionaries;
+	double					dictionaryProfileTicks;
+	int						dictionaryProfileCount, dictionaryProfileBytes;
+	int						dictionaryCacheMode, dictionaryCacheHits, dictionaryCacheMisses, dictionaryCacheVerified;
+	void					FlushWriteBuffer();
 
 	idList<const idClass *>	objects;
 	idHashIndex				objectHash;

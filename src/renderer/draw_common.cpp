@@ -745,11 +745,10 @@ bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 	stage->glslProgramLoaded = true;
 	stage->glslProgramGeneration = tr.glContextGeneration;
 
-	char *vertexBuffer = NULL;
-	char *fragmentBuffer = NULL;
+	std::string vertexBuffer, fragmentBuffer;
 	idStr vertexPath;
 	idStr fragmentPath;
-	if ( !R_FindGLSLSourcePair( stage->glslProgramName, vertexPath, fragmentPath, &vertexBuffer, &fragmentBuffer ) ) {
+	if ( !R_FindGLSLSourcePair( stage->glslProgramName, vertexPath, fragmentPath, vertexBuffer, fragmentBuffer ) ) {
 		stage->glslProgramLoaded = true;
 		stage->glslProgramValid = false;
 		common->Warning( "Couldn't find GLSL sources for program '%s'", stage->glslProgramName );
@@ -759,15 +758,12 @@ bool R_ValidateGLSLProgram( newShaderStage_t *stage ) {
 	GLhandleARB vertexShader = glCreateShaderObjectARB( GL_VERTEX_SHADER_ARB );
 	GLhandleARB fragmentShader = glCreateShaderObjectARB( GL_FRAGMENT_SHADER_ARB );
 
-	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer;
-	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer;
+	const GLcharARB *vertexSource = (const GLcharARB *)vertexBuffer.c_str();
+	const GLcharARB *fragmentSource = (const GLcharARB *)fragmentBuffer.c_str();
 	glShaderSourceARB( vertexShader, 1, &vertexSource, NULL );
 	glShaderSourceARB( fragmentShader, 1, &fragmentSource, NULL );
 	glCompileShaderARB( vertexShader );
 	glCompileShaderARB( fragmentShader );
-
-	fileSystem->FreeFile( vertexBuffer );
-	fileSystem->FreeFile( fragmentBuffer );
 
 	GLint status = GL_FALSE;
 	glGetObjectParameterivARB( vertexShader, GL_OBJECT_COMPILE_STATUS_ARB, &status );
@@ -2798,6 +2794,11 @@ static void RB_STD_SSAO( void ) {
 
 	RB_DrawSSAOPass( field ? 2.0f : 0.0f, sceneImage, depthImage, finalDepthImage, NULL,
 		field ? rbSSAOFieldImage : NULL, viewportWidth, viewportHeight, textureWidth, textureHeight );
+	static bool logged = false;
+	if ( !logged ) {
+		logged = true;
+		common->Printf( "OpenGL: first SSAO pass drew\n" );
+	}
 }
 
 /*
@@ -3721,9 +3722,9 @@ static void RB_STD_MotionBlur( void ) {
 	}
 
 	if ( !RB_IsMainMotionBlurView() ) {
-		if ( backEnd.viewDef != NULL && backEnd.viewDef->viewEntitys != NULL ) {
-			RB_ResetMotionBlurHistory();
-		}
+		// A portal sky, mirror or remote camera does not advance or invalidate
+		// the main camera's timeline. History validation handles discontinuities
+		// when the next main view arrives.
 		return;
 	}
 
@@ -3895,6 +3896,12 @@ static void RB_STD_MotionBlur( void ) {
 	// The destination changed after the pre-blur capture. Let any later pass that
 	// samples the current scene take a fresh copy of the blurred image.
 	backEnd.currentRenderCopied = false;
+	static bool logged = false;
+	if ( !logged ) {
+		logged = true;
+		common->Printf( "OpenGL: first motion blur pass drew%s\n",
+			rbMotionVectorImageValid ? " (with object vectors)" : " (camera only)" );
+	}
 }
 
 enum rbBloomExtractUniformIndex_t {
@@ -4642,6 +4649,11 @@ static void RB_STD_Bloom( void ) {
 
 	if ( originalRenderTexture != NULL ) {
 		RB_CaptureCurrentRenderImage( viewportWidth, viewportHeight );
+	}
+	static bool logged = false;
+	if ( !logged ) {
+		logged = true;
+		common->Printf( "OpenGL: first bloom/tone map pass drew\n" );
 	}
 }
 

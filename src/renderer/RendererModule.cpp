@@ -4,6 +4,7 @@
 #include "tr_local.h"
 #include "RenderModuleAPI.h"
 #include "RendererModule.h"
+#include "RendererDeviceCatalog.h"
 #include "../ui/SettingsService.h"
 #include "../framework/RenderDoc.h"
 #include "../framework/CVarCompletionSnapshot.h"
@@ -30,11 +31,15 @@ static const char *r_renderApiArgs[] = { "best", "gl", "vulkan", "gl-module", "g
 #define OPENQ4_DEFAULT_RENDER_API	"gles"
 static const rendererModuleApi_t rm_platformDefaultApi = RENDER_MODULE_API_GLES;
 #else
-#define OPENQ4_DEFAULT_RENDER_API	"gl"
-static const rendererModuleApi_t rm_platformDefaultApi = RENDER_MODULE_API_GL;
+#define OPENQ4_DEFAULT_RENDER_API	"best"
+static const rendererModuleApi_t rm_platformDefaultApi = RENDER_MODULE_API_VULKAN;
 #endif
-idCVar r_renderApi( "r_renderApi", OPENQ4_DEFAULT_RENDER_API, CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (Android: gles, desktop: gl), gles = OpenGL ES 3.0 renderer module, gl = OpenGL renderer (loaded as the renderer-gl module on module-only builds, statically linked elsewhere), vulkan = Vulkan renderer module, supported on Windows and experimental elsewhere (falls back to gl when loading, device probing or startup device preparation fails; a later vid_restart device failure selects gl for the next launch), gl-module = alias that always selects the OpenGL module. Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
+idCVar r_renderApi( "r_renderApi", OPENQ4_DEFAULT_RENDER_API, CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = Vulkan with OpenGL fallback on desktop, OpenGL ES on Android; gl = OpenGL; vulkan = Vulkan module; gl-module = OpenGL module alias; gles = OpenGL ES module. Changes take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
+idCVar r_renderDevice("r_renderDevice","auto",CVAR_RENDERER | CVAR_ARCHIVE,
+	"rendering GPU: auto prefers compatible high-performance hardware; otherwise a Vulkan device UUID (32 lowercase hex digits). Explicit GPU selection requires Vulkan and engine restart; r_vkDevice is a temporary diagnostic override.");
 idCVar r_actualRenderApi( "r_actualRenderApi", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "rendering API actually active after request/fallback selection" );
+idCVar r_bootRenderDevice("r_bootRenderDevice","auto",CVAR_RENDERER | CVAR_ROM,
+	"GPU preference consumed at engine startup; pending saved changes do not affect vid_restart");
 
 // engine-side homes for window/gui cvars referenced by both the platform
 // backend (engine) and the renderer sources (module mirrors them in its
@@ -86,6 +91,18 @@ typedef struct rendererModuleState_s {
 } rendererModuleState_t;
 
 static rendererModuleState_t rm_state;
+static idStr rm_bootDevicePreference;
+static bool rm_selectionReloadPending = false;
+
+static rendererModuleApi_t RM_AutomaticApi(bool vrRequested) {
+#if defined(OPENQ4_OPENXR) && !defined(__ANDROID__)
+	// The implemented PC OpenXR graphics binding requires desktop OpenGL.
+	if (vrRequested) return RENDER_MODULE_API_GL;
+#else
+	(void)vrRequested;
+#endif
+	return rm_platformDefaultApi;
+}
 
 // Deliberately outside rm_state and outside renderer modules: never reset when
 // their interface tables or local presentation counters are discarded.
@@ -763,10 +780,15 @@ void R_RendererModule_Boot( void ) {
 
 	const char *requestedValue = retryStartup ? failedStatus.requestedValue : r_renderApi.GetString();
 	idStr::Copynz( status.requestedValue, requestedValue, sizeof( status.requestedValue ) );
+	rm_bootDevicePreference = r_renderDevice.GetString();
+	r_bootRenderDevice.SetString(rm_bootDevicePreference.c_str());
 
 	rendererModuleApi_t requestedApi;
 	if ( !R_RendererModule_ParseApi( requestedValue, requestedApi ) ) {
-		common->Warning( "r_renderApi '%s' is not a valid rendering API; using 'gl'", requestedValue );
+		common->Warning( "r_renderApi '%s' is not a valid rendering API; using the platform default", requestedValue );
+	}
+	if ( idStr::Icmp(requestedValue,"best")==0 ) {
+		requestedApi = RM_AutomaticApi(cvarSystem->GetCVarBool("vr_enable"));
 	}
 #ifdef ID_DEDICATED
 	// the dedicated server keeps the statically linked front-end until the
@@ -864,7 +886,7 @@ last r_renderApi set/seta out of the config text; command-line +set overrides
 are applied on top by the caller.
 ====================
 */
-static bool RM_PeekConfigRenderApi( char *outValue, int maxLength ) {
+static bool RM_PeekConfigRendererSetting( const char *key, char *outValue, int maxLength ) {
 	char *buffer = NULL;
 	if ( fileSystem->ReadFile( CONFIG_FILE, ( void ** )&buffer, NULL ) < 0 || buffer == NULL ) {
 		return false;
@@ -879,7 +901,7 @@ static bool RM_PeekConfigRenderApi( char *outValue, int maxLength ) {
 			src.SkipRestOfLine();
 			continue;
 		}
-		if ( !src.ReadTokenOnLine( &name ) || name.Icmp( "r_renderApi" ) != 0 ) {
+		if ( !src.ReadTokenOnLine( &name ) || name.Icmp( key ) != 0 ) {
 			src.SkipRestOfLine();
 			continue;
 		}
@@ -892,6 +914,10 @@ static bool RM_PeekConfigRenderApi( char *outValue, int maxLength ) {
 
 	fileSystem->FreeFile( buffer );
 	return found;
+}
+
+static bool RM_PeekConfigRenderApi( char *outValue, int maxLength ) {
+	return RM_PeekConfigRendererSetting( "r_renderApi", outValue, maxLength );
 }
 
 /*
@@ -913,6 +939,21 @@ static void R_RendererModuleSelfTest_f( const idCmdArgs &args ) {
 static void R_RendererVkProbe_f( const idCmdArgs &args ) {
 	const bool verbose = ( args.Argc() < 2 ) || ( idStr::Icmp( args.Argv( 1 ), "quiet" ) != 0 );
 	R_RendererModule_RunVulkanProbe( verbose );
+}
+
+static void R_RendererDevices_f( const idCmdArgs &args ) {
+	(void)args;
+	renderDeviceCatalog_t catalog{};
+	if (!R_RendererModule_QueryRenderingDevices(catalog)) {
+		common->Printf("Rendering devices: Vulkan inventory unavailable\n"); return;
+	}
+	common->Printf("Rendering devices: count=%u active=%s preference=%s\n",catalog.count,
+		catalog.activeId[0]?catalog.activeId:"OS-managed",r_renderDevice.GetString());
+	for (unsigned i=0;i<catalog.count;++i) {
+		const auto& item=catalog.devices[i];
+		common->Printf("Rendering device %u: id=%s usable=%d preferred=%d name=%s\n",i,
+			item.id[0]?item.id:"unavailable",item.usable?1:0,item.preferred?1:0,item.name);
+	}
 }
 
 // implemented in ui/DeviceContext.cpp; declared here rather than through
@@ -1018,6 +1059,7 @@ static void RM_RegisterCommands( void ) {
 	cmdSystem->AddCommand( "rendererDisplayProbe", R_RendererDisplayProbe_f, CMD_FL_RENDERER, "observe or exercise a hidden windowed display: report/save/apply width height [interval 0 or 1] [samples 0/2/4/8/16]/restore/missing-display" );
 	cmdSystem->AddCommand( "rendererModuleSelfTest", R_RendererModuleSelfTest_f, CMD_FL_RENDERER, "run renderer module selection/loading self tests" );
 	cmdSystem->AddCommand( "rendererVkProbe", R_RendererVkProbe_f, CMD_FL_RENDERER, "load the Vulkan renderer module, run its device bring-up probe, and unload it" );
+	cmdSystem->AddCommand( "rendererDevices", R_RendererDevices_f, CMD_FL_RENDERER, "list detected rendering devices, stable IDs and the automatic preference" );
 	cmdSystem->AddCommand( "uiFontParitySelfTest", R_UIFontParitySelfTest_f, CMD_FL_RENDERER, "run GUI font retail parity self tests" );
 }
 
@@ -1034,8 +1076,18 @@ void R_RendererModule_BootEarly( void ) {
 	if ( RM_PeekConfigRenderApi( configValue, sizeof( configValue ) ) ) {
 		r_renderApi.SetString( configValue );
 	}
-	// command-line +set r_renderApi overrides the archived value
+	if ( RM_PeekConfigRendererSetting( "r_renderDevice", configValue, sizeof( configValue ) ) ) {
+		r_renderDevice.SetString( configValue );
+	}
+	if ( RM_PeekConfigRendererSetting( "vr_enable", configValue, sizeof( configValue ) ) ) {
+		cvarSystem->SetCVarString("vr_enable",configValue);
+	}
+	// These preferences must be available to the probe and initial device
+	// admission, before ordinary configuration execution. CLI still wins.
 	common->StartupVariable( "r_renderApi", false );
+	common->StartupVariable( "r_renderDevice", false );
+	common->StartupVariable( "r_vkDevice", false );
+	common->StartupVariable( "vr_enable", false );
 
 	R_RendererModule_Boot();
 }
@@ -1561,6 +1613,68 @@ bool R_RendererModule_RunVulkanProbe( bool verbose ) {
 	return probePassed;
 }
 
+bool R_RendererModule_RenderSelectionPending(const char* api, const char* device) {
+	return idStr::Icmp(api,rm_state.status.requestedValue)!=0 ||
+		idStr::Cmp(device,rm_bootDevicePreference.c_str())!=0;
+}
+
+void R_RendererModule_UseSavedSelectionOnReload() {
+	// A deliberate menu restart supersedes only these original launch choices.
+	// StartupVariable consumes the old +set while applying it, so restore the
+	// just-persisted values before InitGame peeks the configuration again.
+	const idStr api = r_renderApi.GetString();
+	const idStr device = r_renderDevice.GetString();
+	common->StartupVariable( "r_renderApi", true );
+	common->StartupVariable( "r_renderDevice", true );
+	r_renderApi.SetString( api.c_str() );
+	r_renderDevice.SetString( device.c_str() );
+	rm_selectionReloadPending = true;
+}
+
+bool R_RendererModule_FinishSelectionReload() {
+	if (!rm_selectionReloadPending) return true;
+	if (!RM_AllowImageModuleChange()) return false;
+	// ShutdownGame has already retired the session, UI, game, declarations
+	// and renderer objects. Only now can their module code be unloaded.
+	cmdSystem->RemoveFlaggedCommands(CMD_FL_RENDERER);
+	if (!RM_UnloadModule()) return false;
+	RM_ReleaseDisplayVideoPin();
+	RM_AdvanceDisplayEpoch();
+	rm_state.everBooted = false;
+	rm_state.status.disposition = RENDER_MODULE_DISPOSITION_NONE;
+	rm_selectionReloadPending = false;
+	r_actualRenderApi.SetString("UNINITIALIZED");
+	return true;
+}
+
+bool R_RendererModule_QueryRenderingDevices(renderDeviceCatalog_t& output) {
+	output = {};
+	if (!RM_AllowImageModuleChange()) return false;
+	// Calling GetRenderAPI/Shutdown on an already loaded Vulkan module would
+	// destroy its live idlib and dispatch tables. Use its read-only export.
+	if (rm_state.interfacesPublished && rm_state.status.activeApi==RENDER_MODULE_API_VULKAN)
+		return rm_state.moduleExportValid && rm_state.moduleExport.GetRenderingDevices &&
+			rm_state.moduleExport.GetRenderingDevices(&output);
+	char path[1024];
+	if (!RM_ResolveModulePath(RENDER_MODULE_API_VULKAN,path,sizeof(path))) return false;
+	const intptr_t handle = Sys_DLL_Load(path);
+	if (!handle) return false;
+	idCVarCompletionSnapshot completions; completions.Capture();
+	bool ok = false;
+	const auto entry = reinterpret_cast<GetRenderAPI_t>(Sys_DLL_GetProcAddress(handle,RENDER_API_ENTRY_POINT));
+	if (entry) {
+		renderImport_t imports; RM_BuildImport(imports);
+		renderExport_t* exports = entry(&imports);
+		bool diagnosticsOnly=false; const char* reason="";
+		if (RM_ValidateExport(exports,diagnosticsOnly,&reason) && exports->GetRenderingDevices)
+			ok = exports->GetRenderingDevices(&output);
+		if (exports && exports->version==RENDER_API_VERSION && exports->Shutdown) exports->Shutdown();
+	}
+	RM_UnloadModuleBinary(handle,completions);
+	if (!ok) output = {};
+	return ok;
+}
+
 // stand-ins for a module's device self-test, driving RM_ExportDeviceReady
 static bool RM_SelfTestDeviceReady( char *outSummary, int summaryLength ) {
 	idStr::Copynz( outSummary, "self-test device ready", summaryLength );
@@ -1605,12 +1719,12 @@ bool RendererModule_RunSelfTest( void ) {
 			common->Warning( "rendererModuleSelfTest: parse 'vk' alias failed" );
 			numFailures++;
 		}
-		if ( !R_RendererModule_ParseApi( "best", api ) || api != RENDER_MODULE_API_GL ) {
-			common->Warning( "rendererModuleSelfTest: 'best' must resolve to gl until promotion evidence lands" );
+		if ( !R_RendererModule_ParseApi( "best", api ) || api != rm_platformDefaultApi ) {
+			common->Warning( "rendererModuleSelfTest: 'best' must resolve to the platform default" );
 			numFailures++;
 		}
-		if ( R_RendererModule_ParseApi( "glide", api ) || api != RENDER_MODULE_API_GL ) {
-			common->Warning( "rendererModuleSelfTest: invalid api must be rejected and select gl" );
+		if ( R_RendererModule_ParseApi( "glide", api ) || api != rm_platformDefaultApi ) {
+			common->Warning( "rendererModuleSelfTest: invalid api must be rejected and select the platform default" );
 			numFailures++;
 		}
 	}

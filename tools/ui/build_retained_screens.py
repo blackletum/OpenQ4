@@ -56,6 +56,7 @@ OUTPUTS = {
     "audio": PAK0 / "guis" / "menu" / "settings" / "audio.q4ui",
     "game": PAK0 / "guis" / "menu" / "settings" / "game.q4ui",
     "controls": PAK0 / "guis" / "menu" / "settings" / "controls.q4ui",
+    "settings": PAK0 / "guis" / "menu" / "settings.q4ui",
     "mp_escape": PAK0 / "guis" / "menu" / "mp_escape.q4ui",
     "mp_welcome": PAK0 / "guis" / "menu" / "mp_welcome.q4ui",
     "mp_summary": PAK0 / "guis" / "menu" / "mp_summary.q4ui",
@@ -3815,7 +3816,7 @@ def render(document: dict) -> str:
 
 
 NOTICE_DOCUMENTS = ("title", "pause", "singleplayer", "campaigns", "skill", "loadgame", "savegame", "restartlevel", "demos",
-                    "restartmenu", "credits", "arena", "multiplayer", "createserver", "joingame", "arena_pause")
+                    "restartmenu", "credits", "arena", "multiplayer", "createserver", "joingame", "arena_pause", "settings")
 
 
 def main() -> int:
@@ -3840,6 +3841,7 @@ def main() -> int:
     from retained_audio import audio_document
     from retained_game import game_document
     from retained_controls import controls_document
+    from retained_settings_page import settings_page_document
     documents = {"title": title_document(), "pause": pause_document(), "pause_strogg": pause_document(strogg=True),
                  "loading": loading_document(),
                  "singleplayer": campaign_document(False), "campaigns": campaign_document(True),
@@ -3856,7 +3858,8 @@ def main() -> int:
                  "joingame": join_game_document(),
                  "mp_escape": escape_document(), "mp_welcome": welcome_document(), "mp_summary": summary_document(),
                  "arena_pause": arena_pause_document(), "audio": audio_document(),
-                 "game": game_document(), "controls": controls_document()}
+                 "game": game_document(), "controls": controls_document(),
+                 "settings": settings_page_document()}
     # The session's notices (section 13.13) over every retained menu but the
     # loading screen, the Strogg family's pages and the multiplayer cards.
     for name in NOTICE_DOCUMENTS:

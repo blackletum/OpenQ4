@@ -3248,12 +3248,9 @@ def validate_packaging_and_release_contract() -> None:
     require(commit, "runs-on: macos-15", "commit validation macOS job")
     require(commit, "bash tools/validation/validate_pr.sh \\", "commit validation macOS job")
     require(commit, "--fail-on-dirty \\", "commit validation macOS job")
-    arm64_commit_job = commit[
-        commit.index("\n  macos-arm64:") : commit.index("\n  macos-x64:")
-    ]
-    x64_commit_job = commit[
-        commit.index("\n  macos-x64:") : commit.index("\n  macos-universal2:")
-    ]
+    arm64_commit_job = commit[commit.index("\n  macos-arm64:") :]
+    if "\n  macos-x64:" in commit or "\n  macos-universal2:" in commit:
+        raise AssertionError("commit validation must keep Intel and universal2 assembly out of pull requests")
     thin_normalize = "python tools/build/assemble_macos_universal2.py prepare"
     moltenvk_stage = "bash tools/build/prepare_macos_moltenvk.sh --output-dir .install"
     moltenvk_verify = "bash tools/build/prepare_macos_moltenvk.sh --verify-only --output-dir .install"
@@ -3264,13 +3261,6 @@ def validate_packaging_and_release_contract() -> None:
             "--arch arm64",
             "name: Record macOS ARM64 thin-build provenance",
             "ARM64 thin payload",
-        ),
-        (
-            x64_commit_job,
-            "- name: Normalize Intel thin payload",
-            "--arch x64",
-            "name: Record macOS Intel thin-build provenance",
-            "Intel thin payload",
         ),
     ):
         if job.count(normalize_step_name) != 1:

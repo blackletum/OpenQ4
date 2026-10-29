@@ -62,34 +62,34 @@ def validate_engine_corridor() -> None:
     ):
         require(dedicated, token, "macOS dedicated smoke Intel support")
 
-    require(commit, "macos-x64:", "commit validation Intel job")
-    intel_job = commit[commit.index("  macos-x64:") :]
-    for token in (
-        "macOS Intel x64 ${{ matrix.bridge_label }} Commit Validation",
-        "runs-on: macos-15-intel",
-        'MACOSX_DEPLOYMENT_TARGET: "11.0"',
-        '"$(uname -m)" != "x86_64"',
-        "macos_graphics_bridge: opengl",
-        "macos_graphics_bridge: metal",
-        "bash tools/validation/validate_pr.sh",
-        "python tools/tests/macos_dedicated_server_smoke.py",
-        "--arch x64",
-        "commit-macos-x64-${{ matrix.artifact_suffix }}-payload",
-        "commit-macos-x64-${{ matrix.artifact_suffix }}-dedicated-smoke",
-    ):
-        require(intel_job, token, "commit validation Intel corridor")
+    # Intel is not a release target: pull requests skip it, and pushes to main
+    # build one bridge variant. The manual universal2 candidate builds both.
+    for token in ("macos-x64:", "macos-15-intel", "Intel x64"):
+        reject(commit, token, "commit validation Intel corridor")
 
+    intel_start = push.index("          - name: macOS Intel x64 OpenGL Push Verification")
+    intel_entry = push[intel_start : push.index("\n    steps:", intel_start)]
     for token in (
-        "macOS Intel x64 OpenGL Push Verification",
-        "macOS Intel x64 Metal Push Verification",
         "os: macos-15-intel",
         "artifact_name: macos-x64-opengl",
-        "artifact_name: macos-x64-metal",
+        "runtime_smoke: true",
+        "python_tests: false",
+        "macos_graphics_bridge: opengl",
+    ):
+        require(intel_entry, token, "push verification Intel matrix entry")
+    if push.count("os: macos-15-intel") != 1:
+        raise AssertionError("push verification must build exactly one Intel bridge variant")
+    for token in (
         'runtime_cases="renderer-foundation-selftests,renderer-pbr-visible-selftest,renderer-cluster-grid-selftest,renderer-default-safety-selftest"',
         "python tools/tests/macos_dedicated_server_smoke.py",
         "push-${{ matrix.artifact_name }}-dedicated-smoke",
     ):
         require(push, token, "push verification Intel corridor")
+    reject(push, "macOS Intel x64 Metal Push Verification", "push verification Intel corridor")
+
+    candidate = read(".github/workflows/macos-universal2-candidate.yml")
+    for token in ('"runner": "macos-15-intel"', 'expected_arch="x86_64"', 'actual_arch="$(uname -m)"'):
+        require(candidate, token, "universal2 candidate Intel thin builds")
 
 
 def validate_companion_corridor() -> None:
@@ -101,9 +101,12 @@ def validate_companion_corridor() -> None:
     for token in ("'-Wl,-install_name,@loader_path/' + game_sp_binary_name + '.dylib'",
                   "'-Wl,-install_name,@loader_path/' + game_mp_binary_name + '.dylib'"):
         require(modules,token,'canonical macOS game install names')
-    for token in ('macos-15-intel','macos-15',"MACOSX_DEPLOYMENT_TARGET: \"11.0\""):
+    push=read('.github/workflows/push-verification.yml')
+    for token in ('macos-15',"MACOSX_DEPLOYMENT_TARGET: \"11.0\""):
         require(workflow,token,'canonical macOS CI corridor')
-    reject(workflow,'openQ4-game.git','retired companion checkout')
+    require(push,'macos-15-intel','canonical macOS Intel CI corridor')
+    for source in (workflow,push):
+        reject(source,'openQ4-game.git','retired companion checkout')
     require(read('tools/validation/openq4_validate.py'),'lipo','staged Mach-O architecture guard')
 
 

@@ -6,6 +6,20 @@ Later implementation and validation entries below are unreleased development
 work. Historical CI/publication success does not restore the withdrawn release.
 See [player release status](../user/release-status.md).
 
+## Windows stay see-through at any distance, 29 October 2026
+
+- Windows and open doorways no longer turn opaque once you step back from
+  them. On `game/mcc_1`, the medical bay window went solid as soon as you were
+  more than 200 units from it.
+- The cause was Quake 4's portal distance cull. The map files give some
+  windows and doorways a fade distance, and retail stopped drawing whatever
+  lay behind a portal past that distance. Retail hid the cut with a
+  fade-to-black that openQ4 does not draw, so the room simply vanished
+  behind the glass.
+- `r_portalsDistanceCull` now defaults to `0`, so every portal stays open. The
+  cull only saved fill rate on 2005 hardware. Set it to `1` for the retail
+  behaviour; the fade-to-black is still not drawn, so expect the same pop.
+
 ## Source layout cleanup, 29 October 2026
 
 - Packages now ship the glslang notice as `licenses/glslang.txt` (previously
@@ -18,6 +32,409 @@ See [player release status](../user/release-status.md).
   all licence notices live in `LICENSES/`. Unreferenced legacy build systems,
   installers and Xcode projects were removed. See
   [Source Layout and Naming](source-layout.md).
+
+## Rendering backend and GPU menu, 28 October 2026
+
+- The retained System page now groups rendering backend/device selection with
+  presets and Auto-Detect, shows the active renderer separately from pending
+  preferences, and offers a checked main-menu restart after Apply. Named GPUs
+  select Vulkan and persist stable IDs. Automatic prefers compatible discrete
+  hardware; fresh desktop configurations use Vulkan with OpenGL fallback while
+  existing explicit backend choices persist and Android keeps GLES.
+  Automatic preserves the implemented OpenGL binding when PC OpenXR is enabled.
+- Windowed stock SP gameplay passes on NVIDIA and Intel after cold saved-device
+  startup and actual menu-driven module switches in both directions. Missing
+  saved hardware falls back to GL with an explicit notice. The menu restart
+  supersedes current launch API/GPU overrides only, and waits until all old
+  owners have retired before replacing the renderer module. Linux selector and
+  desktop/Android adapter ASan/UBSan runs, historical-journal tests, 22 preset
+  fault mutations and 12-locale RmlUi layout tests pass. See
+  [selection policy and evidence](ui/performance-presets.md#rendering-backend-and-device-selection-28-october-2026)
+  for retained logs/captures, failed-run history and unrelated findings.
+- Engine/renderer ABI 29 requires replacing those binaries together. This
+  policy change does not qualify physical Linux/macOS/Android hardware or
+  frame-rate budgets, and does not bypass the complete-preset live Apply gate.
+  Vulkan remains experimental on Linux/macOS. The historical OpenGL-default
+  entries below describe their earlier source states and are superseded by
+  this user-requested selection policy in the current development tree.
+
+## Community report and package triage, 28 October 2026
+
+- Closed #183 after the reporter confirmed the development scope fix on both
+  OpenGL and Vulkan. The separate build-1 save failure is tracked in #205, with
+  #203 proposed; no new release or verified replacement payload is claimed.
+  Corrected the defective 26 October package recommendations on #168/#170/#183.
+- Marked #204 as a report against MacSourcePorts' signed build of withdrawn
+  0.14.000, with the music symptom still unconfirmed on available 0.13.2. The
+  requested log/level/volume evidence and package/save compatibility guidance
+  are on the issue. Corrected old 0.14.0 installation advice on #181.
+- Reviewed #203's exact head on Windows: its build-history check passes and
+  rejects each payload job changed back to a shallow checkout. Evidence:
+  `.tmp/github-maintenance-20261028/pr203-validation.json`. Actual packaged
+  save/load remains outstanding. Seven PRs remain blocked on CI; #173 retains
+  its input-routing change request. #191's ARM64 native run fails only the
+  cleanup cases covered by #201, while other jobs exhaust their 90-minute
+  limits. The [roadmap](roadmap.md#report-and-contribution-traceability) retains
+  the integration and qualification gates.
+
+## Retained model foundation, 28 October 2026
+
+- [x] Add a typed model scene and a native animated renderDef bridge with
+  per-part skins, body/head/weapon attachments, bounded target ownership and
+  renderer-internal coverage shaders. Preserve the frame's clock/primary world;
+  release borrowed references before purges/module unloads. Dedicated links
+  remain independent of the retained library.
+- [x] Full matched build/stage, seven selected native UI suites and 36 actual
+  Vulkan shader compiler cases pass. GL/Vulkan engine captures show the full
+  model after SP gameplay; Vulkan survives language/video resets. Raw failed
+  fixture views and 12 late asset precache warnings per final run remain in
+  the [bounded evidence](ui/document-format.md#model-foundation-evidence-28-october-2026).
+- [ ] Player Setup, both production previews, live-animation/native-skin changes,
+  native turnover/composition/map/module/failure qualification and remaining
+  device/platform gates are outstanding. Renderer-demo output is refused and
+  the diagnostic preview still ignores the authored canvas header. No product
+  requirement or migration variant is accepted.
+
+## Retained SETTINGS and acceptance review, 28 October 2026
+
+- [x] Recover the SETTINGS hub and Load Defaults dialog from the earlier UI
+  worktree into the main checkout. Preserve retained page returns and stock
+  fallback; repair SETTINGS from the Strogg pause selecting Load Game.
+- [x] Build and stage the current runtime; six native UI suites and the session
+  gate pass. OpenGL title/defaults/gameplay, Vulkan Marine/Strogg gameplay and
+  German portrait/fallback captures are retained under
+  `.tmp/retained-ui-completion/`. See the
+  [bounded evidence and failed Vulkan cases](ui/retained-screens.md#main-checkout-verification-28-october-2026).
+- [x] Harden the UI-11 transition after source review: require committed record
+  bytes, reject logs/nonimages as artwork, recheck earlier binary/log/image
+  hashes and reject control characters in evidence paths. All 24 acceptance,
+  14 archive and seven inventory fixtures pass.
+- [x] Repeat both Vulkan front-end cases in a coordinated runtime window: both
+  pass with unchanged engine/renderer/SP/MP hashes. Preserve the four earlier
+  unexpected exits as failed evidence; their cause is not established.
+- [ ] Complete Player Setup, the SYSTEM/editor round trip, independent tooling review and
+  the full UI platform/device/visual gates remain open. No requirement, resource
+  or final gate is accepted by this checkpoint.
+
+## Multiplayer roadmap qualification, 28 October 2026
+
+- MP-05: fixed snapshot catch-up being discarded during weapon creation. The
+  executable initialization regression rejects the old behavior; exact paused
+  Red Rover seeks pass on GL/Vulkan and the inspected capture shows the weapon.
+  [Evidence and remaining scope](multiview-demos.md#paused-seek-weapon-catch-up-28-october-2026).
+- MP-05: the optional library quota bounds newly admitted recordings without
+  pruning complete or partial files. The staged GL smoke passes refusal,
+  bounded stop, explicit recovery and playback, preserving its occupancy file;
+  [retention and sharing policy](multiview-demos.md#library-retention-and-quota-28-october-2026)
+  documents single-recorder admission and explicit archival.
+- MP-06: AAS area emission now supplies the liquid flag required by water-jump
+  reachability. The production-area fixture and pre-fix control pass. The actual
+  dedicated compiler emits 26 swim/16 water-jump links and nine correctly flagged
+  water areas in the partitioned lab; [evidence](liquid-qualification.md).
+  Liquid-consumer and broader presentation qualification remain open.
+- MP-07: the server diagnostic applies the measured lead/RTT prerequisite before
+  adding rewind bias. State/wiring checks pass; defaults remain off.
+- MP-02: bounded percentile profiling and explicit audit budgets are implemented.
+  The five-minute DM8 audit retains a navigation death, a stuck event and a
+  contested timing failure; it does not close the safety or performance gate.
+  A descending unpressed WALK fall now uses the existing safe-landing recovery.
+  Both diagonal DM8 probes that died before the fix land alive; four direct
+  approach controls still survive. Native boundaries and a knock-only reversal
+  control pass. The original match input sequence is not established, and the
+  wider gate stays open ([details](mp-bots.md#unpressed-walk-falls-and-timing-evidence-28-october-2026)).
+- A supporting staging fix excludes static-library object directories and linker
+  artifacts from `builddir/baseoq4/`. Copying those build-only files could fail
+  on a compiler lock. The packaging safety regression passes. This was discovered
+  during the MP rebuild; compiler outputs remain in their original build paths.
+- The imported regression run initially passed 73/74; its remaining teardown
+  fixture lacked a stub for the checkout's save dictionary-cache cleanup. The
+  corrected fixture and complete rerun pass 74/74
+  (`.tmp/mp-completion-20261028/contracts-final/`). New MVD quota, seek-weapon,
+  AAS-area and bot-profile checks pass separately. Affected final-runtime
+  reruns remain part of this work.
+
+## Graphics presets and airdefense performance, 27 October 2026
+
+- **28 October holistic preset audit:** Enhanced bridges Balanced and Quality;
+  lower tiers reset dormant effect costs and disable unused HDR scene targets.
+  All twelve localized choice lists and both menu routes expose seven tiers.
+  Active-device auto-detection replaces host-wide VRAM and the retired card-cap
+  stub, preserves unknown observations, handles UMA without an ARM penalty and
+  limits recommendations by drawable size and CPU concurrency. Auto never
+  selects the unmeasured Quality/Ultra tiers. Renderer ABI 28 carries the active
+  GPU facts; the settings effect footprint and journal schema are unchanged.
+- **First-launch follow-up:** new installations bootstrap conservatively and
+  apply the canonical active-device profile before entering gameplay, replacing
+  the frequency-based initial classifier. Saved configs with a missing spec
+  marker remain intact. Named profiles and launch overrides take precedence;
+  Android has a Performance ceiling and verified <=512 MiB discrete GPUs stay
+  at Minimum even when platform power hints are present. Seven tiers provide
+  the required coverage; Quality/Ultra remain manual choices.
+- **Classic-renderer and saved-config correction:** Apple GL 2.1's missing
+  modern post shaders no longer force Minimum on capable hardware. Classic
+  shader/texture capability and modern-effect eligibility are assessed
+  separately, while shared-memory Balanced keeps its resource/resolution limits.
+  SDL3 RAM-query failures stay unknown. Startup repairs an unset legacy machine
+  classification without executing the old recipes over saved AA, scale,
+  textures or VSync. New evidence is in `.tmp/preset-platform-followup/`.
+  Its `audit.json` records the reproduced startup failure, passing all-seven
+  GL/Vulkan gameplay runs, native Intel detection, three Meson suites and 18
+  rejected mutations each on Windows and Linux ASan/UBSan. Cleanup remains
+  blocked by automatic approval review; physical platform/FPS gates stay open.
+- **Drawable and legacy-command follow-up:** automatic scene scale now respects
+  conservative pixel budgets, including 50% at 4K on shared-memory graphics;
+  unsupported post AA is left off. The resolved recommendation is shared by
+  first launch, console and SYSTEM draft expansion. Stock quality choices use
+  canonical recipes, and Recommended reapplies even when the old classification
+  is unchanged, preserving display mode and VSync. Manual profiles and the
+  seven-tier/55-field footprint are unchanged. Evidence is recorded under
+  `.tmp/preset-resolution-audit/`; physical platform/FPS gates remain separate.
+  Final Windows/Linux sanitizer suites reject 22 mutations each; three Meson
+  suites and GL/Vulkan/Intel gameplay probes pass. Intel's 2400x1280 window uses
+  a verified 1800x960 scene. A Windows-constrained 4K request is retained as
+  nonqualifying evidence. Shared-stage Multiplayer/air-HUD document failures
+  and a vector coverage warning are tracked separately in the audit.
+- Follow-up validation: `.tmp/preset-review/audit.json` records passing Windows
+  build/staging, six Meson preset/UI/journal suites, Windows and Linux sanitizer
+  policy suites with 15 rejected mutations each, all seven presets in windowed
+  OpenGL/Vulkan SP gameplay, and native Intel Vulkan detection. Fresh autoexec
+  overrides (including equal-to-bootstrap values) and an existing config with
+  a missing detection marker pass live gameplay checks. Logs and accepted engine
+  captures remain; obsolete test binaries/caches and the old wiring helper are
+  removed under standing cleanup permission. Physical platform/FPS limits remain.
+- Preset audit validation passes: Windows build and policy/mutation suites;
+  Linux ASan/UBSan policy/mutation suites; seven-choice, twelve-locale UI layouts;
+  all seven profiles with device restarts in windowed SP gameplay on NVIDIA
+  OpenGL and Vulkan; native Intel Vulkan auto-detection. Engine captures and
+  immutable runtime identities are under `.tmp/preset-audit/`. This establishes
+  no fullscreen frame-time gate or physical qualification on other platforms.
+
+- **28 October scope update:** subsequent airdefense and checkpoint measurements
+  use Quality, the preset immediately below Ultra, at native 2560 x 1440. The
+  benchmark disables Quality's 144 FPS cap while preserving its graphics values.
+  The strict 150 FPS floor and checkpoint-stall removal remain open. Ultra still
+  selects the highest supported quality; earlier Ultra evidence remains historical.
+- Ultra now requests maximum stable AA, shadow and post-processing quality;
+  Quality uses intermediate settings. Reapplying a preset adopts the new values.
+  The retained SYSTEM catalog/draft and versioned recovery definitions cover
+  every added setting. Original V1/V2 effect catalogs remain immutable.
+- Pure profiles/Common/host/rollback checks, the SYSTEM Runtime/RmlUi preset
+  matrix and journal negative controls pass. The live engine preset self-test
+  also passes. No new UI Apply capability is claimed by this revision.
+- Renderer/UI optimizations cache BSE particle sort distances, preserve equal-
+  depth ordering, and avoid repeated retained HUD frame reads and opaque raster
+  vertex copies. Default fullscreen minimization remains unchanged; an explicit
+  SDL opt-out is now respected by the platform fallback too.
+- HF-07/REN-07/UI-07 remain open. The first complete native 1440p fullscreen
+  rotation with all Ultra effects and four cascades averages 38.5 FPS on Vulkan
+  (37.55 ms maximum), and 30.9 FPS on OpenGL (69.85 ms maximum);
+  it fails the required 150 FPS on every frame. See the
+  [measured checkpoint](ui/runtime-performance.md#airdefense-maximum-quality-reference-27-october-2026).
+  Subsequent profiling found enabled motion blur was not drawing because portal
+  skies reset main-camera history. Both backends now preserve it across subviews;
+  the benchmark requires actual post-effect draw evidence as well as CVar values.
+- The final preset mutation/adjacent suite passes with unchanged production
+  inputs (`.tmp/performance-presets-wqnrsn7b/result.json`); versioned settings
+  journal controls pass (`.tmp/settings-effect-journal-jot5612u/result.json`).
+  The preset runner now returns failure if its input-integrity audit fails;
+  previously that condition marked the JSON failed while the process exited 0.
+- Vulkan post-processing avoids unused depth transitions and redundant MSAA
+  capture blits. Paired native rotations save about 0.1–0.2 ms and 0.8–0.9 ms
+  respectively, with identical frozen RGB captures. Render-target/HDR validation
+  passes, including new fractional-coverage and cropped-capture GPU checks.
+  An unrelated restart crash exposed by those checks is fixed: Vulkan now clears
+  backend pointers to retired frame memory during device teardown. Temporal
+  fixtures and probe-source lifecycle checks pass across restart with validation.
+- Fresh opaque projected shadow maps share global-caster depth across receiver
+  ownerships. Five paired native rotations save 0.38 ms on average; Vulkan
+  validation and 100 bounded atlas/tile resize cycles pass. The latest strict
+  qualification averages 43.4 FPS and peaks at 38.36 ms, so the 150 FPS goal
+  remains unmet and the preceding qualification's worst-frame result is not improved.
+
+- Fresh PCSS receivers now sample the exact minimum of separate ownership depths,
+  avoiding the shared depth-block copy. Five paired native rotations save 2.53 ms
+  on average and improve p99 in every pair. Four view pairs are RGB-identical;
+  validation and 100 bounded atlas/tile resize cycles pass. Shader-header
+  consistency and shadow contracts pass. The staged default-on qualification
+  reaches 50.2 FPS mean and 26.35 ms p99, but its worst frame is 38.72 ms; the
+  every-frame 150 FPS goal remains unmet.
+
+- The optional GPU phase trace now distinguishes shadow-map production from
+  receiver shading without adding waits. With explicit default cache settings,
+  1,024 maximum-quality frames average 6.715 ms generating maps and 1.824 ms in
+  the remaining lighting work. This is diagnostic evidence, not qualification.
+  A repeated zero-light sampling experiment showed no gain and was removed.
+  The scratch profiler now resets cache settings left by resize probes; fresh
+  strict qualification profiles already used the correct defaults.
+
+- Shadow passes now omit unused stencil attachments while preserving depth
+  format and quality. Five matched rotations save 1.220 ms (6.16%) on average;
+  four p99 results improve and one regresses by 0.10 ms. Three settled views
+  match exactly, and one differs at 35 pixels by at most one intensity level.
+  Vulkan validation, 100 bounded atlas/point-size cycles and video restart pass.
+  The staged strict qualification records 52.55 FPS mean, 25.05 ms p99 and
+  29.82 ms maximum: workload gates pass, every performance gate still fails.
+  Point-cube ownership copying was slower in all five pairs and was removed.
+
+- Expanded optional GPU attribution identifies 15.008 ms in the main view,
+  2.269 ms in portal-sky rendering and only 0.243 ms in SMAA. Validation passes
+  all 1,024 phase masks and interval relationships without Vulkan warnings or
+  errors. Precomputed SSAO spiral offsets showed no useful gain in five matched
+  pairs and were removed. These are diagnostic results; the strict qualification
+  above remains the latest acceptance result.
+  A subsequent conservative portal-discard prototype also passes four exact
+  image comparisons and Vulkan validation, but its 0.21% mean difference over
+  five pairs is below repeat variation; its larger worst-frame spike and absent
+  useful gain do not justify retaining it. The experiment was removed.
+  The re-staged build's latest native qualification records 53.35 FPS mean,
+  26.40 ms p99 and 32.79 ms maximum, with workload gates passing and every
+  performance gate failing. The result does not close the strict 150 FPS goal.
+  Finer optional GPU timers attribute 4.400 ms to projected-map generation and
+  0.914 ms to point cubes; 1,024 nested timing samples pass Vulkan validation.
+  A bounded local-caster clear prototype was 0.204% slower across five pairs
+  despite frozen-view/control parity, so all experimental rendering code was
+  removed. The latest strict qualification remains unchanged.
+  After rebuilding the shared dictionary layout for a disabled-by-default save
+  prototype, the strict native fullscreen rerun records 53.01 FPS mean,
+  24.90 ms p99 and 31.81 ms maximum. Workload checks pass and all performance
+  gates fail; this is the latest default-build measurement, not a claimed gain.
+
+- Optional projected-shadow pipeline counters identify 143.5 million fragment
+  invocations per frame at maximum quality. Scoped captures and enabled/disabled
+  video-restart checks pass Vulkan validation. An opaque-caster specialization
+  preserves the tested view/control comparisons but regresses mean frame time
+  by 0.606% across three pairs and is removed. Only default-off diagnostics are
+  retained; this does not change the strict qualification or save-stall status.
+
+## Checkpoint saving, 27 October 2026
+
+Checkpoint optimization evidence for the current graphics work is recorded in
+[runtime performance](ui/runtime-performance.md#checkpoint-save-stalls-27-october-2026).
+Optional dictionary attribution (`com_saveGameProfile 3`) measures 2.82–2.99 ms
+per warm Vulkan snapshot across roughly 3.94 MB of dictionaries. Native SP/MP
+tests prove unchanged bytes and no diagnostic clock calls when disabled. The
+windowed maximum-quality probe passes load/quit/reopen, damaged-save rejection
+and obstructed-payload preservation. This identifies further work; the reported
+timings include profiling overhead and do not close the stall-removal gate.
+Two dictionary-cache prototypes that scanned content were slower and removed.
+The replacement uses mutation invalidation, passes 4,614 live byte comparisons
+and native mutation/lifetime/wire tests, and reduces mean warm serialization
+from 14.80 to 12.85 ms over normal/reversed alternating probes. That immediate
+population remained disabled: ten fresh-session saves showed a 16.94% mean
+first-save regression, requiring population to leave the save frame. The candidate's largest
+checkpoint window is 46.88 ms, so there is no worst-frame or stall-removal claim.
+The shared dictionary layout requires matching game ABI 57 and renderer ABI 27.
+That immediate-population prototype is now replaced by bounded population on
+later game frames. Deferred reuse passes 4,774 live byte comparisons and ten
+fresh-session save/reload checks without a measured first-save penalty. Normal
+and reversed warm pairs improve combined means from 13.56 to 11.47 ms, retaining
+every sample. Population batches peak at 0.566 ms in the oracle. The deferred
+path is enabled by default; the staged Vulkan default passes lifecycle,
+corrupt-save rejection and blocked-preview preservation. Native source-lifetime,
+deadline/byte bounds and SP/MP wire tests pass. These gains do not close the
+checkpoint stall or strict fullscreen frame-time gates.
+The latest maximum-quality default qualification is 53.68 FPS mean with an
+80.06 ms maximum frame; native extent, effects and HUD checks pass. That outlier
+is retained without an established cause. This rotation contains no saves and
+does not measure checkpoint improvements. An opt-in
+worker-side snapshot-copy experiment passes native ownership/failure tests and
+live lifecycle/corruption checks, but normal/reversed pairs regress total
+checkpoint work (26.04 to 28.86 ms) despite cheaper handoff (1.94 to 0.19 ms).
+It remains disabled by default. Transaction setup/commit and live snapshot
+serialization remain unresolved; see the runtime evidence for all outliers.
+Per-save legacy GUI reuse remains experimental and disabled: 430 GL/VK fresh-byte
+comparisons and native SP/MP wire/failure tests pass, and ten paired comparisons
+reduce serialization 13.66→9.92 ms, but total checkpoint time and window p99
+regress. Detailed commit profiling attributes 1.31–4.96 ms to file operations;
+transaction completion still needs work before promotion. A retained Motion
+snapshot candidate was removed after finding the workload serialized only
+legacy GUIs; its apparent speed difference is not valid evidence.
+Background checkpoint publication is also experimental and disabled. It retains
+payload-last commit, rollback/recovery and load/quit/menu joins. Native fault
+and lifetime tests, live preview-rename denial with unchanged original slots,
+and OpenGL disabled-job fallback pass. Normal/reversed samples regress total
+work despite cheaper commits; a balanced 20-save follow-up improves total work
+29.11→23.57 ms but has mixed p99 statistics. All results are retained, and no
+consistent whole-frame benefit or stall-removal claim is made for this switch.
+Combining it with GUI reuse improves total CPU work 32.16→29.25 ms but regresses
+mean window p99 29.22→34.73 ms and the maximum window 46.90→65.33 ms. Both remain
+disabled. The worst candidate window spends 32.69 ms in setup, now split into
+finer optional phases for diagnosis.
+Those phases expose a test observer cost: recovery checks emit unbuffered
+developer messages. Recovery takes 1.85–4.30 ms in the debug launch and
+0.08–0.17 ms with developer messages disabled on the same staged binary.
+These remain separate logging configurations, with no engine speedup claimed.
+The buffered developer-off comparison also leaves GUI reuse and worker
+publication disabled: total work falls 22.08→20.24 ms, but the maximum window
+rises 33.66→39.84 ms. A separate narrow fix removes duplicate developer tracing
+from explicit reads, retaining the existing fs_debug trace. Recovery now takes
+0.09–0.21 ms in the original debug launch; lifecycle, damaged-save rejection and
+blocked-preview preservation pass. Windows still peak at 40.64/27.19/34.97 ms,
+so this removes measured logging overhead without claiming stall removal.
+Projected shadow caster sorting and compatible indirect batching did not
+improve whole-frame means across five alternating pairs and were removed.
+A receiver-bound diagnostic reports full tile coverage in all 76 cascade
+samples, providing no basis for a simple rectangular shadow crop. These are
+rejected approaches, with evidence retained in the runtime performance record.
+A fixed maximum-sample SSAO sequence likewise regresses the five-pair mean
+by 0.591% and is removed; all original quality controls remain intact.
+Buffering and deferred capture/storage materially reduce the pause, with GL/VK
+reload, immediate load/quit/reopen, disabled-job fallback and failed-overwrite
+preservation passing. CRC wire parity and capture orientation tests pass.
+Scalar/dictionary batching and cached immutable UI snapshot identity reduce repeated
+serialization work. Checkpoint descriptions now persist with the background
+payload; fresh-profile first-save and failed-description-write preservation pass.
+The buffered-field rotating windowed probes peak at 29.9–34.9 ms on Vulkan and 45.6–81.2 ms
+on OpenGL. Production scalar/dictionary-wire tests and durable-file fault tests pass.
+The subsequent revision validates verified worker bytes in memory and processes
+CRC in sixteen-byte slices. Ordinary validation falls to 3.6–3.8 ms, but the latest
+Vulkan save windows still peak at 64.14/31.67/33.89 ms; the first-save spike remains.
+Reload, immediate load/quit/reopen, preview checks, and failed payload/description
+overwrite preservation pass. All six focused native suites pass.
+Starting snapshots with a 16 MiB allocation reduces warm serialization to
+16–17 ms in the latest Vulkan probe; lifecycle and failed-description preservation
+pass. The first checkpoint still peaks at 69.02 ms, so this does not close the
+stall-removal gate. OpenGL also passes load/quit/reopen with warm serialization
+around 15 ms, but checkpoint-window maxima remain 43.95–72.65 ms.
+The subsequent revision reuses the worker's CRC for its exact verified immutable
+snapshot, reducing main-thread validation to about 0.2 ms. Loading and recovery
+still hash the file independently. Vulkan lifecycle, damaged-save rejection and
+failed-overwrite preservation pass, as does OpenGL with workers disabled.
+The Vulkan checkpoint windows still peak at 62.05/32.98/28.37 ms.
+Compiled-script checksums are now warmed after compilation and reused for saves,
+with invalidation on code/definition changes and independent validation on load.
+Five fresh-reference comparisons and repeated compile/reload probes pass; they
+identify about 3 ms of avoidable hashing per warm save. The non-oracle run passes
+load/quit/reopen and failed-payload preservation, with a 0.5 ms globals phase and
+14–16 ms warm serialization. Its checkpoint windows still peak at
+60.50/27.57/28.71 ms, so the stall-removal gate remains open.
+The preview's durable write/readback now runs in a bounded worker after capture.
+The current-shadow Vulkan comparison reduces main-thread preview completion
+from 1.16–1.27 ms to 0.29–0.32 ms. Checkpoint windows still peak at
+25.23/24.45/27.36 ms, with 12–14 ms warm serialization. Immediate load/quit/reopen,
+damaged-save rejection and blocked-preview preservation pass; OpenGL lifecycle
+and blocked-description preservation also pass. The disabled-worker Vulkan
+fallback passes lifecycle and blocked-payload preservation. Native fault injection rejects
+failed persistence/readback and malformed thumbnails. This removes a disk barrier
+from the game thread, but does not close the stall-removal gate.
+An inline scalar-write experiment showed unchanged warm serialization
+(12.108 versus 12.134 ms) and was reverted. Both runtime variants pass lifecycle,
+corrupt-save rejection and failed-payload preservation. Expanded native checks
+for scalar bit patterns, buffer boundaries and failed flushes pass for the
+restored SP/MP writers. No performance improvement is claimed for that experiment.
+The staged build's subsequent native fullscreen rotation averages 50.0 FPS,
+with 26.15 ms p99 and a 33.04 ms maximum. Workload gates pass, performance gates
+fail; this run contains no checkpoint saves and does not measure the preview change.
+Vulkan also avoids clearing unused projected-shadow atlas space: paired native
+fullscreen rotations save roughly 2 ms per frame, with pixel-identical frozen
+captures. This is recorded separately from checkpoint serialization gains.
+The subsequent native-fullscreen Vulkan qualification, including the post-process
+changes, reaches 44.3 FPS mean with a 36.84 ms maximum frame. Workload gates pass;
+the strict 150 FPS gates still fail.
+The complete stall-removal acceptance remains open; these changes do not qualify
+the separate native-fullscreen 150 FPS floor.
+
+## CI qualification follow-up, 26 October 2026
 
 - GOV-02/CORE-04: Windows durable-file validation now has a 900-second Meson
   budget. Its existing per-command 600-second timeout still fails hung commands;
@@ -231,6 +648,15 @@ completed release material here and publish curated notes in `releases/`.
 - [Behavior and checks](ui/input-routing.md#trigger-glyphs-24-october-2026):
   generation width checks, native strip checks and a capture of every family.
   Candidate player wording is in [baseline refinements](releases/baseline-refinements.md).
+
+## SETTINGS page, 26 October 2026
+
+- [x] SETTINGS on the title and the pause opens a retained page with the
+  stock screen's buttons and Load Defaults' question, returning onto each
+  button from its page and handing DISPLAY to the stock panel where the
+  SYSTEM page is off ([SETTINGS page](ui/retained-screens.md#the-settings-page-26-october-2026):
+  native page test, gate contracts, captures at 16:9 in English and German,
+  9:16, the defaults and the pause).
 
 ## CONTROLS page, 25 October 2026
 
@@ -4269,10 +4695,10 @@ is `docs/dev/archive/2026-10-18/macos-moltenvk-decision.md`.
 
 - [ ] macOS Vulkan is described as running through MoltenVK, a Vulkan-on-Metal translation layer, and the first user-facing mention includes the words "translation layer".
 - [ ] The translation layer is never called native Metal, a Metal renderer, a Metal backend, a native Vulkan driver, or an OpenGL-free renderer, and no wording implies openQ4 renders through Metal directly.
-- [ ] OpenGL is stated as the default and recommended macOS renderer, with Vulkan opt-in through `r_renderApi vulkan` applied at the next engine start, and `r_renderApi best` still resolving to `gl`.
+- [ ] Player documentation distinguishes fresh desktop Automatic (Vulkan with OpenGL fallback) from preserved explicit backend choices, and retains experimental Linux/macOS qualification and Android GLES defaults. The 28 October GPU-selection request supersedes the earlier OpenGL-default policy.
 - [ ] The Vulkan renderer is described as a runtime choice inside the two existing `OpenGL` and `Metal bridge` packages, never as a third download, a new package variant, or a new `macos_graphics_bridge` value.
 - [ ] Any macOS Vulkan claim states that it is experimental and may not work, because no accepted real-Apple-hardware evidence exists; performance claims and comparisons for macOS Vulkan are not made at all.
-- [ ] A failed start is described accurately: a missing renderer module, a missing translation layer, or a GPU that cannot start Vulkan falls back to OpenGL, while a window or surface failure later in startup stops openQ4 with an error after setting `r_renderApi` back to `gl` for the next launch.
+- [ ] Failed-start guidance covers module/translation-layer/GPU, window, surface, swapchain and mandatory-resource startup failures falling back to OpenGL; post-start presentation/device recovery remains distinct.
 - [ ] The bundled MoltenVK version matches the pin recorded in `docs/dev/macos-moltenvk-provider-policy.md`, and its Apache-2.0 attribution is present in the package license collateral.
 
 ## Ready For Changelog

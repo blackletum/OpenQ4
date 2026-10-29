@@ -86,6 +86,7 @@ private:
 	std::map<std::string,bool> enabled;
 	// The value controls (not buttons or scrollbars) by ID, in the model.
 	std::shared_ptr<const std::map<std::string,const Control*>> controlDeclarations = std::make_shared<const std::map<std::string,const Control*>>();
+	std::shared_ptr<const std::vector<const ModelSceneSpec*>> modelDeclarations = std::make_shared<const std::vector<const ModelSceneSpec*>>();
 	std::map<std::string,ControlReadback> controlValues;
 	std::uint64_t revision = 0;
 	bool presentationDirty = false;

@@ -551,7 +551,8 @@ def validate_source_contracts() -> None:
     if re.search(
         r"game->SaveGame\s*\(\s*fileOut\s*,\s*saveType\s*\).*?"
         r"stagedProtectedLength\s*<=\s*SESSION_MAX_SAVEGAME_BYTES\s*-\s*SESSION_OPENQ4_SAVEGAME_INTEGRITY_BYTES.*?"
-        r"fileOut->Sync\s*\(\s*\).*?"
+        r"payloadFile->Write\s*\(.*?stagedProtectedLength.*?"
+        r"payloadFile->Sync\s*\(\s*\).*?"
         r"Session_AppendSaveGameIntegrityTrailer",
         session,
         re.DOTALL,
