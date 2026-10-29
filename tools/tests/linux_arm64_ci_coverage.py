@@ -145,7 +145,7 @@ def validate_commit_workflow() -> None:
         "    name: Linux ARM64 Commit Validation\n"
         "    runs-on: ubuntu-24.04-arm\n"
         "    needs: script-smoke\n"
-        "    timeout-minutes: 90\n"
+        "    timeout-minutes: 150\n"
         "    env:\n"
         "      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}\n"
         "      CC: gcc\n"

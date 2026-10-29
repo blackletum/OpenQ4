@@ -1148,7 +1148,7 @@ jobs:
     name: Linux ARM64 Commit Validation
     runs-on: ubuntu-24.04-arm
     needs: script-smoke
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       CC: gcc
@@ -1838,7 +1838,7 @@ jobs:
     name: macOS ARM64 ${{ matrix.bridge_label }} Commit Validation
     runs-on: macos-15
     needs: script-smoke
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"
