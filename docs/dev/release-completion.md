@@ -6,6 +6,20 @@ Later implementation and validation entries below are unreleased development
 work. Historical CI/publication success does not restore the withdrawn release.
 See [player release status](../user/release-status.md).
 
+## Windows stay see-through at any distance, 29 October 2026
+
+- Windows and open doorways no longer turn opaque once you step back from
+  them. On `game/mcc_1`, the medical bay window went solid as soon as you were
+  more than 200 units from it.
+- The cause was Quake 4's portal distance cull. The map files give some
+  windows and doorways a fade distance, and retail stopped drawing whatever
+  lay behind a portal past that distance. Retail hid the cut with a
+  fade-to-black that openQ4 does not draw, so the room simply vanished
+  behind the glass.
+- `r_portalsDistanceCull` now defaults to `0`, so every portal stays open. The
+  cull only saved fill rate on 2005 hardware. Set it to `1` for the retail
+  behaviour; the fade-to-black is still not drawn, so expect the same pop.
+
 ## Source layout cleanup, 29 October 2026
 
 - Packages now ship the glslang notice as `licenses/glslang.txt` (previously

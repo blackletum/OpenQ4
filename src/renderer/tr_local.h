@@ -1443,7 +1443,7 @@ extern idCVar r_stencilTranslucentShadows;	// 1 = let translucent materials cast
 extern idCVar r_useInfiniteFarZ;		// 1 = use the no-far-clip-plane trick
 extern idCVar r_useScissor;				// 1 = scissor clip as portals and lights are processed
 extern idCVar r_usePortals;				// 1 = use portals to perform area culling, otherwise draw everything
-extern idCVar r_portalsDistanceCull;	// 1 = enable distance-cull checks from portal fade data
+extern idCVar r_portalsDistanceCull;	// 1 = retail distance cull/fade from portal fade data (default 0)
 extern idCVar r_useStateCaching;		// avoid redundant state changes in GL_*() calls
 extern idCVar r_useRedundantStateFiltering;	// skip redundant legacy-backend env params, attrib toggles, and buffer rebinds
 extern idCVar r_useCombinerDisplayLists;// if 1, put all nvidia register combiner programming in display lists

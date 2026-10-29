@@ -725,7 +725,10 @@ idCVar r_resolutionScaleMode( "r_resolutionScaleMode", "1", CVAR_RENDERER | CVAR
 idCVar r_resolutionScaleSharpness( "r_resolutionScaleSharpness", "0.4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "sharpening amount for high-quality resolution scaling", 0.0f, 1.5f );
 idCVar r_demonstrateBug( "r_demonstrateBug", "0", CVAR_RENDERER | CVAR_BOOL, "used during development to show IHV's their problems" );
 idCVar r_usePortals( "r_usePortals", "1", CVAR_RENDERER | CVAR_BOOL, " 1 = use portals to perform area culling, otherwise draw everything" );
-idCVar r_portalsDistanceCull( "r_portalsDistanceCull", "1", CVAR_RENDERER | CVAR_BOOL, "enable distance-cull checks using portal fade cull ranges" );
+// Retail defaults to 1: a portal farther than its authored fade range stops the view flood, so
+// windows and doorways tagged with a fade (mcc_1's medical bay window, 200 units) turn opaque.
+// The cull only saved 2005-era fill rate, so openQ4 keeps every portal open unless asked.
+idCVar r_portalsDistanceCull( "r_portalsDistanceCull", "0", CVAR_RENDERER | CVAR_BOOL, "1 = stop drawing areas behind portals beyond their authored fade distance, as retail Quake 4 did" );
 idCVar r_singleLight( "r_singleLight", "-1", CVAR_RENDERER | CVAR_INTEGER, "suppress all but one light" );
 idCVar r_singleEntity( "r_singleEntity", "-1", CVAR_RENDERER | CVAR_INTEGER, "suppress all but one entity" );
 idCVar r_singleSurface( "r_singleSurface", "-1", CVAR_RENDERER | CVAR_INTEGER, "suppress all but one surface on each entity" );
