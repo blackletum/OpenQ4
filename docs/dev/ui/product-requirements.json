@@ -108,7 +108,7 @@
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/document-format.md",
       "scope": "Typed JSONC, stable IDs, value edits and motion only; components, structure editing and full model unfinished.",
-      "sha256": "2ed1e6436fcd852a4261e37c8e3fcced84e294098bf885b41ba9052dffcb23b8"
+      "sha256": "27ed5f63cf2e297198b950847958b640862df4a4b1317963a801f51ce37cc737"
     },
     "binding-foundation": {
       "kind": "implementation_checkpoint",
@@ -132,7 +132,7 @@
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/vector-paths.md",
       "scope": "Native paths, fills, stroke unions and linear paints; all required primitive variants, production artwork and editor unfinished.",
-      "sha256": "be12143d6f1420a0e34279cd8e8f4ca8cd98a3ad8a411091a5b08e812c1c0cd5"
+      "sha256": "9345e60e1286351f1abd72f9c430672f0696a766f38bb227719f546f5ad6326e"
     },
     "coverage-foundation": {
       "kind": "implementation_checkpoint",
@@ -253,7 +253,7 @@
       "scope": "M2 implementation subset: canonical typed toggle, stepped slider and constrained choice roles, atomic authoritative value/mixed/option readbacks, invocation-local immutable edit operands and acknowledged proposals. Authored stable vector parts have compiler-enforced geometry and property ownership; derived popup placement, tentative selection/drag state, source cancellation and versioned widget snapshots support the subset. The packaged openq4.system document declares the complete 53-field draft/baseline service schema and presents eight initial immediate image controls with local dirty-discard and eligible display-confirmation panels. A non-archived default-off ui_retainedSystem option selects the normal Session child route, preserving its exact parent and service-owned return guard. The final Windows build/package stage and 13 native UI suites pass; the production Session boundary passes 173 checks and the capture runner passes 15 tests with 444 rejected altered-log cases. Source/binary-bound hidden windowed Windows SP/OpenGL at 125% and MP/Vulkan at 200%, both at 1280x720, each pass 18 normal Session stages after active gameplay. Draft/readback/apply, dirty Back/continue/discard, tentative/committed choice, language/video recovery with an unapplied draft, exact parent return and fresh-owner reopen are covered. All 14 engine render-target images were reviewed, including column reflow, popup placement and distinct disabled Apply; SP has no warnings/errors, MP retains 94 baseline warnings with no new warning messages or errors. These are semantic integration and static-view checks, not full physical-input, transition, display/platform/language or artwork qualification. Precise numeric text entry/IME, complete controls and setting inventory, effect/preset executors, full source-derived artwork/transitions, touch/accessibility/scrollbars, editor round trips and full platform/corpus qualification remain required. Discard currently resets the draft and stays on the page. No requirement, milestone, production screen or migration entry is accepted.",
       "local_capture_summary": ".tmp/ui/value-controls-review/capture-evidence.json",
       "local_capture_summary_sha256": "2c5c14d4d0a9d0fb8cc8d45dab9af39fdc9e6c4ab017f93a1f6a3e49c3cf1a40",
-      "sha256": "dc7396dab1d2cc37011c06332a26eec1f7eaf757865f1fe13a3ddd3b3d6247f0"
+      "sha256": "12c7d4687243e245f04ff801b2194ba1dfa967bd45864035500c214ea26b3552"
     },
     "system-exit-foundation": {
       "kind": "implementation_checkpoint",
@@ -772,7 +772,7 @@
       "kind": "implementation_checkpoint",
       "path": "docs/dev/ui/value-controls.md",
       "scope": "Catalog lists for retained choices: state-sourced option labels and a state-bound option count, with hidden options ineligible, unmeasured and unreachable, the closed value naming a hidden selection, and an open list closing when its labels or length change. Qualified by native schema, readback, interaction and runtime tests.",
-      "sha256": "dc7396dab1d2cc37011c06332a26eec1f7eaf757865f1fe13a3ddd3b3d6247f0"
+      "sha256": "12c7d4687243e245f04ff801b2194ba1dfa967bd45864035500c214ea26b3552"
     },
     "renderer-settings-reports": {
       "kind": "implementation_checkpoint",
@@ -1464,7 +1464,7 @@
       "path": "docs/dev/ui/document-format.md",
       "baseline_engine_revision": "52d4c3616eb391fa52c913f4cfc8274746b789ae",
       "scope": "UI-01/UI-09/INV-013 bounded working-copy foundation: typed model scenes, native root/head/weapon output, per-part skins, bounded private targets and built-in coverage resolve. Seven native UI suites and 36 actual Vulkan compiler cases pass; GL/Vulkan gameplay pose captures pass, including Vulkan resource resets. Failed fixture views and late precache warnings are preserved. Player Setup, both production previews, live animation/native skin/composition/turnover/map/module/failure/platform qualification remain. No product acceptance.",
-      "sha256": "2ed1e6436fcd852a4261e37c8e3fcced84e294098bf885b41ba9052dffcb23b8",
+      "sha256": "27ed5f63cf2e297198b950847958b640862df4a4b1317963a801f51ce37cc737",
       "local_capture_summary": ".tmp/retained-ui-completion/models/validation-evidence.json",
       "local_capture_summary_sha256": "e0880d83ed28986859c01471736decddb6d0e1502a3f15b73d735faf65e97fbf"
     }

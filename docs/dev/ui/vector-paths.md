@@ -194,7 +194,7 @@ is pinned at `8dbd6483e920311a58c9af10a10beb278efebc36`, archive SHA-256
 Its seven C sources build as a static Meson subproject. No example/GL backend
 implementation is incorporated.
 
-The upstream [SGI-B-2.0 notice](../../licenses/libtess2.txt) is retained, credited
+The upstream [SGI-B-2.0 notice](../../../LICENSES/libtess2.txt) is retained, credited
 in README and installed into `licenses/`. This version is on the FSF's
 [GPL-compatible license list](https://www.gnu.org/licenses/license-list.html#SGIFreeB).
 Curve/stroke construction, responsive coordinates, paint splitting, source

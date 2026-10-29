@@ -37,7 +37,7 @@ OPENQ4_SUPPORT_DIRS = (
     "ui",
     "sys",
     "bse",
-    "MayaImport",
+    "mayaimport",
 )
 
 MANIFEST_NAME = "openq4_gamelibs_stage_manifest.json"

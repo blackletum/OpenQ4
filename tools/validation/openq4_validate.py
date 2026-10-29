@@ -490,6 +490,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "ui_engine_thread.py",
         root / "tools" / "tests" / "ui_generated_images.py",
         root / "tools" / "tests" / "filesystem_case_segments.py",
+        root / "tools" / "tests" / "repository_path_portability.py",
         root / "tools" / "tests" / "pinned_archive_headers.py",
         root / "tools" / "tests" / "filesystem_find_file_contract.py",
         root / "tools" / "tests" / "filesystem_length_probe_contract.py",

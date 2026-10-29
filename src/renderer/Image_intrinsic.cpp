@@ -32,8 +32,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 #include "RendererResourceSettings.h"
-#include "smaa/AreaTex.h"
-#include "smaa/SearchTex.h"
+#include "../external/smaa/AreaTex.h"
+#include "../external/smaa/SearchTex.h"
 
 #define	DEFAULT_SIZE	16
 

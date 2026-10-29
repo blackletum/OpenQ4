@@ -58,7 +58,7 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 #include <cstdint>
 
 #if defined(OPENQ4_SDL3_DARWIN_HOST)
-#include "../osx/macosx_common.h"
+#include "../macos/macos_common.h"
 // SDL3_SetANGLEHintDefaults runs before SDL_Init, so it cannot use
 // SDL_GetBasePath to find a staged ANGLE beside the executable.
 #include <limits.h>

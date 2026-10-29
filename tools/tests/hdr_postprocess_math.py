@@ -389,7 +389,7 @@ def test_display_color_mapping_matches_legacy_curve_and_present_path():
     vk_module = (root / "src" / "renderer" / "Vulkan" / "vk_Backend.cpp").read_text(encoding="utf-8")
     win32_backend = (root / "src" / "sys" / "win32" / "win_glimp.cpp").read_text(encoding="utf-8")
     linux_native = (root / "src" / "sys" / "linux" / "glimp.cpp").read_text(encoding="utf-8")
-    osx_native = (root / "src" / "sys" / "osx" / "macosx_glimp.mm").read_text(encoding="utf-8")
+    osx_native = (root / "src" / "sys" / "macos" / "macos_glimp.mm").read_text(encoding="utf-8")
 
     for channel in (0.0, 0.1, 0.25, 0.5, 0.85, 1.0):
         shader_value = apply_display_color_mapping((channel, channel, channel), 1.2, 1.4)[0]

@@ -30,7 +30,7 @@ def main() -> None:
     evidence = read("docs/dev/linux-arm64-signoff-evidence.md")
     session = read("src/framework/Session.cpp")
     linux_main = read("src/sys/linux/main.cpp")
-    macos_main = read("src/sys/osx/macosx_sdl3_main.cpp")
+    macos_main = read("src/sys/macos/macos_sdl3_main.cpp")
     posix_console = read("src/sys/posix/posix_syscon.cpp")
 
     for token in (

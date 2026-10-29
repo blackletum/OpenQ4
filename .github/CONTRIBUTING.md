@@ -148,6 +148,9 @@ powershell -ExecutionPolicy Bypass -File tools/build/meson_setup.ps1 install -C 
   `.install/baseoq4/` directory is the staged output, not an editing target.
 - **Build output:** use `builddir/` for local development artifacts and
   `.install/` for staged runtime packages.
+- **Layout and naming:** [Source Layout and Naming](../docs/dev/source-layout.md)
+  describes every top-level directory, where vendored code and licence notices
+  go, and how new files are named.
 
 ### Before Submitting a Pull Request
 

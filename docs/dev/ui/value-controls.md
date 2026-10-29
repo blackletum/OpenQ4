@@ -98,7 +98,7 @@ reasserted after layout and restore. A small
 updates stacking geometry and transforms after layout and before popup
 placement, without an additional rendering pass. This makes placement use the
 same animated transform as the frame being rendered. RmlUi remains pinned to
-6.3 under its [MIT notice](../../licenses/RmlUi.txt).
+6.3 under its [MIT notice](../../../LICENSES/RmlUi.txt).
 
 Keyboard focus reveals controls inside scrollable bodies without resetting
 unrelated scroll positions. Pointer-wheel events scroll the nearest actual

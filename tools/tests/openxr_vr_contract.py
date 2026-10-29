@@ -192,7 +192,7 @@ def check_strings() -> None:
 
 
 def check_documents() -> None:
-    for relative in ("docs/user/vr.md", "docs/dev/archive/2026-10-18/plans/2026-10-02-openxr-vr.md", "docs/licenses/openxr-sdk.txt",
+    for relative in ("docs/user/vr.md", "docs/dev/archive/2026-10-18/plans/2026-10-02-openxr-vr.md", "LICENSES/openxr-sdk.txt",
                      "tools/tests/openxr_vr_smoke.py", "tools/tests/openxr_vr_menu_smoke.py",
                      "tools/tests/openxr_vr_mp_smoke.py",
                      "tools/tests/openxr/OpenXRTestRuntime.cpp",

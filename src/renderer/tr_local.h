@@ -177,7 +177,7 @@ typedef struct drawSurf_s {
 // interfaces, and the idRenderLightLocal/idRenderEntityLocal definitions live
 // in the shared render-geometry library so dmap can construct them without
 // renderer internals
-#include "../render_geo/RenderGeometry.h"
+#include "../rendergeo/RenderGeometry.h"
 
 typedef enum {
 	SHADOWMAP_CASTER_REJECT_UNKNOWN = 0,
@@ -2286,7 +2286,7 @@ TR_STENCILSHADOWS
 
 void R_MakeShadowFrustums( idRenderLightLocal *def );
 
-// shadowGen_t is defined by ../render_geo/RenderGeometry.h
+// shadowGen_t is defined by ../rendergeo/RenderGeometry.h
 
 srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 									 const srfTriangles_t *tri, const idRenderLightLocal *light,
@@ -2333,7 +2333,7 @@ dmap time optimization of shadow volumes, called from R_CreateShadowVolume
 
 
 // optimizedShadow_t and the dmap shadow-optimizer entry points are declared
-// by ../render_geo/RenderGeometry.h
+// by ../rendergeo/RenderGeometry.h
 
 /*
 ============================================================
@@ -2343,7 +2343,7 @@ TRISURF
 ============================================================
 */
 
-// triangle-surface entry points are declared by ../render_geo/RenderGeometry.h;
+// triangle-surface entry points are declared by ../rendergeo/RenderGeometry.h;
 // the frame-memory-coupled maintenance below stays renderer-side
 void				R_PurgeTriSurfData( frameData_t *frame );
 void				R_FreeDeferredTriSurfs( frameData_t *frame );

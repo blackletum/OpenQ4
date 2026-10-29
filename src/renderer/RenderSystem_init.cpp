@@ -1457,7 +1457,7 @@ static bool R_CheckPortableExtensions( bool legacyPolicy, char *error, int error
 	// GL_ATI_fragment_shader
 	glConfig.atiFragmentShaderAvailable = R_CheckExtension( "GL_ATI_fragment_shader" );
 	if (! glConfig.atiFragmentShaderAvailable ) {
-		// only on OSX: ATI_fragment_shader is faked through ATI_text_fragment_shader (macosx_glimp.cpp)
+		// only on OSX: ATI_fragment_shader is faked through ATI_text_fragment_shader (macos_glimp.cpp)
 		glConfig.atiFragmentShaderAvailable = R_CheckExtension( "GL_ATI_text_fragment_shader" );
 	}
 	if ( glConfig.atiFragmentShaderAvailable ) {

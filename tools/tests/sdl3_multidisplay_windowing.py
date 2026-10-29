@@ -206,16 +206,16 @@ def validate_platform_wrappers() -> None:
     win_main = read("src/sys/win32/win_main.cpp")
     win = read("src/sys/win32/win_sdl3.cpp")
     linux = read("src/sys/linux/linux_sdl3.cpp")
-    macos = read("src/sys/osx/macosx_sdl3.cpp")
-    macos_misc = read("src/sys/osx/macosx_misc.mm")
+    macos = read("src/sys/macos/macos_sdl3.cpp")
+    macos_misc = read("src/sys/macos/macos_misc.mm")
 
     require(meson_sources, '"src/sys/win32/win_sdl3.cpp"', "Windows SDL3 source selection")
     require(meson_sources, '"sys/linux/linux_sdl3.cpp"', "Linux SDL3 source selection")
-    require(meson_sources, '"sys/osx/macosx_sdl3.cpp"', "macOS SDL3 source selection")
+    require(meson_sources, '"sys/macos/macos_sdl3.cpp"', "macOS SDL3 source selection")
     require(macos_misc, "SDL_PROP_WINDOW_COCOA_WINDOW_POINTER", "macOS native SDL window lookup")
     require(macos_misc, "contentRectForFrameRect", "macOS AppKit frame/content conversion")
     require(macos_misc, "NSMaxY( frameRect ) - NSMaxY( contentRect )", "macOS title-bar measurement")
-    require(meson_sources, '"sys/osx/macosx_sdl3_main.cpp"', "macOS SDL3 main source selection")
+    require(meson_sources, '"sys/macos/macos_sdl3_main.cpp"', "macOS SDL3 main source selection")
 
     for source, context in (
         (win, "Windows SDL3 wrapper"),

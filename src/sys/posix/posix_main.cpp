@@ -861,7 +861,7 @@ void Sys_DLL_Unload( intptr_t handle ) {
 
 #if !defined( MACOS_X )
 // Only relevant when specified on the command line. macOS provides a
-// bundle-aware implementation in macosx_compat.mm so Finder launches can use
+// bundle-aware implementation in macos_compat.mm so Finder launches can use
 // the adjacent package root even when their process working directory differs.
 const char *Sys_DefaultCDPath( void ) {
 #if defined( __ANDROID__ )

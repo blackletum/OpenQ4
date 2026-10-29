@@ -161,7 +161,7 @@ def validate_platform_sources() -> None:
     require(linux_block, "sys/posix/posix_main.cpp", "Linux SDL3 platform sources")
     require(linux_block, "sys/linux/linux_sdl3.cpp", "Linux SDL3 platform sources")
     require(darwin_block, "sys/posix/posix_main.cpp", "macOS SDL3 platform sources")
-    require(darwin_block, "sys/osx/macosx_sdl3.cpp", "macOS SDL3 platform sources")
+    require(darwin_block, "sys/macos/macos_sdl3.cpp", "macOS SDL3 platform sources")
 
 
 def validate_ci_smoke() -> None:

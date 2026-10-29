@@ -94,7 +94,7 @@ def validate_platform_integration() -> None:
         ),
         (
             "macOS",
-            "src/sys/osx/macosx_misc.mm",
+            "src/sys/macos/macos_misc.mm",
             "void idSysLocal::OpenURL( const char *url, bool doexit ) {",
             "openURL: nsURL",
         ),
@@ -112,7 +112,7 @@ def validate_platform_integration() -> None:
         reject(body, "ignoring %s", f"{platform} ignored URL raw logging")
 
     linux = read("src/sys/linux/main.cpp")
-    macos = read("src/sys/osx/macosx_misc.mm")
+    macos = read("src/sys/macos/macos_misc.mm")
     reject(linux, "static bool Sys_IsSafeURL", "Linux broad scheme policy")
     reject(macos, "OSX_URLHasSafeSchemeSyntax", "macOS broad scheme policy")
     reject(macos, "OSX_FileURLIsLocalRuntimeFile", "macOS file URL launcher")

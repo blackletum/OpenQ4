@@ -6,6 +6,19 @@ Later implementation and validation entries below are unreleased development
 work. Historical CI/publication success does not restore the withdrawn release.
 See [player release status](../user/release-status.md).
 
+## Source layout cleanup, 29 October 2026
+
+- Packages now ship the glslang notice as `licenses/glslang.txt` (previously
+  `licenses/glslang-LICENSE.txt`). The other licence files keep their names.
+- Source checkouts on Windows and macOS no longer show phantom changes from
+  nine files that were tracked under both `OpenQ4` and `openQ4` spellings.
+- Developer-only: `src/sys/osx` is now `src/sys/macos` (`macosx_*` files are
+  `macos_*`), `src/render_geo` is `src/rendergeo`, `src/MayaImport` is
+  `src/mayaimport`, vendored libjpeg and SMAA moved under `src/external/`, and
+  all licence notices live in `LICENSES/`. Unreferenced legacy build systems,
+  installers and Xcode projects were removed. See
+  [Source Layout and Naming](source-layout.md).
+
 ## Rendering backend and GPU menu, 28 October 2026
 
 - The retained System page now groups rendering backend/device selection with

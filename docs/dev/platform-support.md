@@ -155,7 +155,7 @@ The support tiers above remain unchanged until their evidence gates are met.
 ## SDL3 implementation record (Linux/macOS)
 
 - Linux and macOS now use the shared SDL3 runtime path when `-Dplatform_backend=sdl3` is selected, and that is the default configuration as of March 30, 2026.
-- macOS SDL3 builds select `src/sys/osx/macosx_sdl3.cpp` and `src/sys/osx/macosx_sdl3_main.cpp` with the shared SDL3 window, input, controller, and OpenGL context path.
+- macOS SDL3 builds select `src/sys/macos/macos_sdl3.cpp` and `src/sys/macos/macos_sdl3_main.cpp` with the shared SDL3 window, input, controller, and OpenGL context path.
 - The native Linux X11/GLX backend and experimental macOS Cocoa/OpenGL diagnostic backend remain available through `-Dplatform_backend=native` for comparison and rollback while SDL3 remains the release path. On macOS, native backend results are comparison-only unless a future support decision adds dedicated validation. On SteamOS, the SDL3 path also watches application lifecycle events so suspend/resume and foreground/background transitions flow through the same input release, rumble stop, config write, and controller reacquire behavior used by the normal event pump.
 
 ## Definition Of Done For First-Class Platform Support

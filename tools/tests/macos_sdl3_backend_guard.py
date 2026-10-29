@@ -47,8 +47,8 @@ def require_before(haystack: str, first: str, second: str, context: str) -> None
 
 
 def validate_macos_sdl3_source_selection() -> None:
-    wrapper = read("src/sys/osx/macosx_sdl3.cpp")
-    main = read("src/sys/osx/macosx_sdl3_main.cpp")
+    wrapper = read("src/sys/macos/macos_sdl3.cpp")
+    main = read("src/sys/macos/macos_sdl3_main.cpp")
     sources = read("tools/build/meson_sources.py")
     display = function_body(wrapper, "CGDirectDisplayID Sys_DisplayToUse(void) {")
     openq4_main = function_body(main, "static int SDLCALL OpenQ4_Main(int argc, char **argv) {")
@@ -57,8 +57,8 @@ def validate_macos_sdl3_source_selection() -> None:
     require(wrapper, "#define OPENQ4_SDL3_DARWIN_HOST 1", "macOS SDL3 wrapper host marker")
     require(wrapper, '#include "../sdl3/sdl3_backend.cpp"', "macOS SDL3 wrapper shared backend")
     require(sources, "SDL3_DARWIN_SOURCES", "macOS SDL3 source manifest")
-    require(sources, '"sys/osx/macosx_sdl3.cpp"', "macOS SDL3 source manifest")
-    require(sources, '"sys/osx/macosx_sdl3_main.cpp"', "macOS SDL3 source manifest")
+    require(sources, '"sys/macos/macos_sdl3.cpp"', "macOS SDL3 source manifest")
+    require(sources, '"sys/macos/macos_sdl3_main.cpp"', "macOS SDL3 source manifest")
 
     for token in (
         "CGGetActiveDisplayList",
@@ -79,7 +79,7 @@ def validate_macos_sdl3_source_selection() -> None:
 
 
 def validate_macos_process_handoff_guards() -> None:
-    source = read("src/sys/osx/macosx_misc.mm")
+    source = read("src/sys/macos/macos_misc.mm")
     start_process = function_body(source, "static bool OSX_StartProcessArgs( char *const argv[], bool dofork ) {")
     drop_environment = function_body(source, "static bool OSX_ShouldDropProcessEnvironmentEntry( const char *entry ) {")
     filtered_environment = function_body(source, "static char **OSX_CreateFilteredProcessEnvironment() {")
@@ -388,7 +388,7 @@ def validate_posix_signal_guards() -> None:
 
 
 def validate_native_vram_probe_guards() -> None:
-    source = read("src/sys/osx/macosx_compat.mm")
+    source = read("src/sys/macos/macos_compat.mm")
     video_ram = function_body(source, "int Sys_GetVideoRam( void ) {")
 
     require(video_ram, "const CGDirectDisplayID display = Sys_DisplayToUse();", "native macOS VRAM display guard")

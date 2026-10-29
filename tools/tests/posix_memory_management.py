@@ -59,7 +59,7 @@ def validate_posix_page_locking() -> None:
 
 def validate_ram_total_helpers() -> None:
     linux_main = read("src/sys/linux/main.cpp")
-    macos_compat = read("src/sys/osx/macosx_compat.mm")
+    macos_compat = read("src/sys/macos/macos_compat.mm")
 
     for source, context in (
         (linux_main, "Linux system RAM total"),

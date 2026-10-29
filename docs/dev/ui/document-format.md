@@ -403,7 +403,7 @@ commands, with no host-input capture.
 [JsonCpp 1.9.6](https://github.com/open-source-parsers/jsoncpp/tree/1.9.6) is pinned
 through Meson under its MIT licensing option. The archive SHA-256 is
 `f93b6dd7ce796b13d02c108bc9f79812245a82e577581c4c9aabe57075c90ea2`.
-The [upstream notice](../../licenses/JsonCpp.txt) is retained and installed into
+The [upstream notice](../../../LICENSES/JsonCpp.txt) is retained and installed into
 `licenses/`. README credits its authors. The three implementation files form a
 static dependency isolated from engine headers. Dedicated binaries do not link
 the document parser or retained renderer. No new dynamic runtime DLL is added.

@@ -43,7 +43,7 @@ If you have questions concerning this license or the applicable additional terms
 
 // LIGHT_CULL_ALL_FRONT, LIGHT_CLIP_EPSILON, and srfCullInfo_t are defined by
 // the shared render-geometry library
-#include "../render_geo/RenderGeometry.h"
+#include "../rendergeo/RenderGeometry.h"
 
 
 typedef struct {		

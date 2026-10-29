@@ -15,7 +15,7 @@ For player-facing setup instructions, see [../user/input-settings.md](../user/in
 
 - Reviewed shared SDL3 event generation in `src/sys/sdl3/sdl3_backend.cpp`, as reached through the Windows, Linux, and macOS wrapper entries.
 - Reviewed native Linux X11 input in `src/sys/linux/input.cpp`.
-- Reviewed native macOS Cocoa input in `src/sys/osx/macosx_event.mm`.
+- Reviewed native macOS Cocoa input in `src/sys/macos/macos_event.mm`.
 - Reviewed shared POSIX poll buffering in `src/sys/posix/posix_input.cpp`.
 - Compared behavior to legacy `WM_KEY*` + `WM_CHAR`/DirectInput paths in:
   - `src/sys/win32/win_wndproc.cpp`

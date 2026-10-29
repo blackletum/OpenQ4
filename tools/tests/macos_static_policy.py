@@ -107,7 +107,7 @@ def validate_process_launch_policy() -> None:
             if pattern.search(source):
                 raise AssertionError(f"Unsafe macOS process helper {name!r} found in {relative_path}")
 
-    misc = read("src/sys/osx/macosx_misc.mm")
+    misc = read("src/sys/macos/macos_misc.mm")
     start_process = function_body(misc, "static bool OSX_StartProcessArgs( char *const argv[], bool dofork ) {")
     do_start_process = function_body(misc, "void Sys_DoStartProcess( const char *exeName, bool dofork ) {")
     filtered_environment = function_body(misc, "static char **OSX_CreateFilteredProcessEnvironment() {")
@@ -132,11 +132,11 @@ def validate_process_launch_policy() -> None:
 
 def validate_url_open_policy() -> None:
     open_url_hits = files_containing("openURL:")
-    expected_hits = ["src/sys/osx/macosx_misc.mm"]
+    expected_hits = ["src/sys/macos/macos_misc.mm"]
     if open_url_hits != expected_hits:
         raise AssertionError(f"Unexpected macOS openURL callsites: {open_url_hits!r}")
 
-    misc = read("src/sys/osx/macosx_misc.mm")
+    misc = read("src/sys/macos/macos_misc.mm")
     open_url = function_body(misc, "void idSysLocal::OpenURL( const char *url, bool doexit ) {")
     allowed_url = function_body(misc, "static bool OSX_IsAllowedURL( NSURL *url ) {")
 
@@ -167,20 +167,20 @@ def validate_deprecated_api_boundaries() -> None:
         raise AssertionError(f"Deprecated NSRunAlertPanel found in active macOS sources: {nsrun_hits!r}")
 
     nsopengl_hits = files_containing("NSOpenGL")
-    if nsopengl_hits != ["src/sys/osx/macosx_glimp.mm"]:
+    if nsopengl_hits != ["src/sys/macos/macos_glimp.mm"]:
         raise AssertionError(f"NSOpenGL escaped the native fallback boundary: {nsopengl_hits!r}")
 
     carbon_hits = files_containing("Carbon")
-    if carbon_hits != ["src/sys/osx/macosx_event.mm"]:
+    if carbon_hits != ["src/sys/macos/macos_event.mm"]:
         raise AssertionError(f"Carbon escaped the native fallback boundary: {carbon_hits!r}")
 
     sources = read("tools/build/meson_sources.py")
     sdl3_darwin = assignment_block(sources, "SDL3_DARWIN_SOURCES")
     native_darwin = assignment_block(sources, "DARWIN_PLATFORM_SOURCES")
-    require(native_darwin, '"sys/osx/macosx_event.mm"', "native macOS source list")
-    require(native_darwin, '"sys/osx/macosx_glimp.mm"', "native macOS source list")
-    reject(sdl3_darwin, "macosx_event.mm", "SDL3 macOS source list")
-    reject(sdl3_darwin, "macosx_glimp.mm", "SDL3 macOS source list")
+    require(native_darwin, '"sys/macos/macos_event.mm"', "native macOS source list")
+    require(native_darwin, '"sys/macos/macos_glimp.mm"', "native macOS source list")
+    reject(sdl3_darwin, "macos_event.mm", "SDL3 macOS source list")
+    reject(sdl3_darwin, "macos_glimp.mm", "SDL3 macOS source list")
 
     meson = read("meson.build")
     require(meson, "macos_framework_modules = ['Cocoa', 'OpenGL', 'ApplicationServices']", "macOS SDL3 framework policy")
@@ -205,7 +205,7 @@ def validate_release_distribution_policy() -> None:
 
 
 def validate_package_root_runtime_policy() -> None:
-    compat = read("src/sys/osx/macosx_compat.mm")
+    compat = read("src/sys/macos/macos_compat.mm")
     package_directory = function_body(compat, "static void Sys_RequireMacOSPackageRootDirectory( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {")
     package_executable = function_body(compat, "static void Sys_RequireMacOSPackageRootExecutable( const idStr &packageDirectory, const char *entry, idStr &missingEntries ) {")
     executable_exists = function_body(compat, "static bool Sys_ExecutableFileExists( const char *path ) {")
