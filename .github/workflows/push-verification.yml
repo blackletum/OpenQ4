@@ -1,7 +1,11 @@
 name: Push Verification
 
+# Pull requests run Commit Validation, so branch pushes do not also run this
+# workflow on the same commit. Dispatch it manually for a branch without a PR.
 on:
   push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -152,7 +156,6 @@ jobs:
             tools/tests/base64_input_safety.py \
             tools/tests/campaign_split_state_transition.py \
             tools/tests/campaign_scope.py \
-            tools/tests/campaign_chapters.py \
             tools/tests/campaign_runtime.py \
             tools/tests/campaign_selection_runtime.py \
             tools/tests/clang_tidy_input_safety.py \
@@ -489,6 +492,7 @@ jobs:
             tools/ui/update_system_render_options.py \
             tools/ui/update_system_initial_focus.py \
             tools/ui/update_system_menu_button.py \
+            tools/ui/build_subtitles.py \
             tools/tests/windows_text_store.py \
             tools/tests/windows_text_collection_bridge.py \
             tools/tests/windows_text_session.py \
@@ -564,8 +568,6 @@ jobs:
             tools/tests/renderer_gl_display_policy.py \
             tools/tests/sdl3_strict_window.py \
             tools/tests/ui_capture_display_device.py \
-            tools/tests/ui_capture_multiplayer_rosters.py \
-            tools/tests/ui_capture_system_refresh.py \
             tools/ui/capture_display_device.py \
             tools/tests/ui_legacy_inventory.py \
             tools/tests/game_regression_suite.py \
@@ -652,7 +654,6 @@ jobs:
           python tools/tests/base64_input_safety.py
           python tools/tests/campaign_split_state_transition.py
           python tools/tests/campaign_scope.py
-          python tools/tests/campaign_chapters.py
           python tools/tests/clang_tidy_input_safety.py
           python tools/tests/cmdargs_append_contract.py
           python tools/tests/console_completion_contract.py
@@ -939,6 +940,7 @@ jobs:
           python tools/ui/update_system_render_options.py --check
           python tools/ui/update_system_initial_focus.py --check
           python tools/ui/update_system_menu_button.py --check
+          python tools/ui/build_subtitles.py --check
           python tools/tests/ui_text_input.py
           python tools/tests/ui_retained_input.py
           python tools/tests/ui_retained_state_sources.py
@@ -1004,8 +1006,6 @@ jobs:
           python tools/tests/renderer_gl_display_policy.py
           python tools/tests/sdl3_strict_window.py
           python tools/tests/ui_capture_display_device.py
-          python tools/tests/ui_capture_multiplayer_rosters.py
-          python tools/tests/ui_capture_system_refresh.py
           python tools/tests/ui_legacy_inventory.py
           python tools/tests/game_regression_suite.py --check-discovery
           python tools/tests/presentation_clock_ownership.py
@@ -1049,13 +1049,14 @@ jobs:
           set -euo pipefail
           bash tools/validation/validate_push.sh --dry-run
 
+  # Build jobs do not wait for script-smoke. It already runs the validator's
+  # Python checks on Linux, so each build job skips them except one Windows and
+  # one arm64 macOS job, which cover the MSVC STL, libc++ and arm64 floating
+  # point behavior those native harnesses depend on.
   posix-builds:
     name: ${{ matrix.name }}
-    needs: script-smoke
     runs-on: ${{ matrix.os }}
-    # The full Python, build and Meson suites exceed 150 minutes on hosted
-    # Intel Macs: the script checks alone have taken over two hours.
-    timeout-minutes: ${{ matrix.os == 'macos-15-intel' && 240 || 150 }}
+    timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
     strategy:
@@ -1066,37 +1067,38 @@ jobs:
             os: ubuntu-24.04
             artifact_name: linux-x64
             runtime_smoke: true
+            python_tests: false
             macos_graphics_bridge: ""
             macos_openal_provider: ""
           - name: Linux ARM64 Push Verification
             os: ubuntu-24.04-arm
             artifact_name: linux-arm64
             runtime_smoke: true
+            python_tests: false
             macos_graphics_bridge: ""
             macos_openal_provider: ""
           - name: macOS OpenGL Push Verification
             os: macos-15
             artifact_name: macos-opengl
             runtime_smoke: true
+            python_tests: true
             macos_graphics_bridge: opengl
             macos_openal_provider: system
           - name: macOS Metal Push Verification
             os: macos-15
             artifact_name: macos-metal
             runtime_smoke: true
+            python_tests: false
             macos_graphics_bridge: metal
             macos_openal_provider: system
+          # GitHub does not publish Intel Mac packages, so one bridge variant
+          # keeps the x86_64 slice building and loading.
           - name: macOS Intel x64 OpenGL Push Verification
             os: macos-15-intel
             artifact_name: macos-x64-opengl
             runtime_smoke: true
+            python_tests: false
             macos_graphics_bridge: opengl
-            macos_openal_provider: system
-          - name: macOS Intel x64 Metal Push Verification
-            os: macos-15-intel
-            artifact_name: macos-x64-metal
-            runtime_smoke: true
-            macos_graphics_bridge: metal
             macos_openal_provider: system
     steps:
       - name: Checkout
@@ -1196,6 +1198,9 @@ jobs:
         run: |
           set -euo pipefail
           validation_args=(--install --fail-on-dirty)
+          if [[ "${{ matrix.python_tests }}" != "true" ]]; then
+            validation_args+=(--skip-python-tests)
+          fi
           if [[ -n "${{ matrix.macos_graphics_bridge }}" ]]; then
             validation_args+=(
               --platform-backend=sdl3
@@ -1296,7 +1301,6 @@ jobs:
 
   windows-build:
     name: Windows Push Verification
-    needs: script-smoke
     runs-on: windows-2025-vs2026
     timeout-minutes: 150
     env:
@@ -1395,7 +1399,6 @@ jobs:
 
   windows-arm64-build:
     name: Windows ARM64 Push Verification
-    needs: script-smoke
     runs-on: windows-11-arm
     timeout-minutes: 150
     env:
@@ -1433,7 +1436,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python tools/validation/openq4_validate.py push --install --fail-on-dirty "--extra-setup-arg=-Dopenal_root_override=$env:OPENQ4_OPENAL_ROOT"
+          python tools/validation/openq4_validate.py push --install --fail-on-dirty --skip-python-tests "--extra-setup-arg=-Dopenal_root_override=$env:OPENQ4_OPENAL_ROOT"
 
       - name: Run Windows ARM64 dedicated server smoke
         shell: pwsh

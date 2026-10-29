@@ -211,47 +211,17 @@ def validate_docs_and_wiring() -> None:
     ):
         require(source, "macos_universal2_release_candidate.py", context)
 
-    commit_macos_start = commit.index("  macos-arm64:")
-    commit_universal_start = commit.index("  macos-universal2:", commit_macos_start)
-    commit_thin_jobs = commit[commit_macos_start:commit_universal_start]
+    # Pull requests keep the mode-preserving arm64 thin payload; universal2
+    # assembly runs only in the manual candidate lane checked above.
+    for token in ("  macos-x64:", "  macos-universal2:"):
+        reject(commit, token, "commit validation universal2 scope")
+    commit_arm64 = commit[commit.index("  macos-arm64:"):]
     for token in (
         "Archive macOS ARM64 staged payload with modes",
-        "Archive macOS Intel staged payload with modes",
         "tar -C .install -czf",
     ):
-        require(commit_thin_jobs, token, "commit-validation thin payload transfer")
-    reject(commit_thin_jobs, "path: .install", "commit-validation thin payload transfer")
-
-    commit_universal = commit[commit_universal_start:]
-    require(commit_universal, "Restore mode-preserving thin payloads", "commit-validation universal2 restore")
-    require(commit_universal, "tar -xzf", "commit-validation universal2 restore")
-    commit_package_step_name = "- name: Package and validate universal2 app"
-    commit_dependency_step = "- name: Install release documentation dependency"
-    commit_setup_step = "- name: Setup Python"
-    commit_package_start = commit_universal.index(commit_package_step_name)
-    commit_package_end = commit_universal.index(
-        "\n      - name:", commit_package_start + len(commit_package_step_name)
-    )
-    commit_package_step = commit_universal[commit_package_start:commit_package_end]
-    commit_suffix_argument = "--package-suffix=-${{ matrix.artifact_suffix }}"
-    if commit_package_step.count(commit_suffix_argument) != 1:
-        raise AssertionError("Commit universal2 packaging must pass its leading-hyphen suffix as one argv token")
-    reject(
-        commit_package_step,
-        '--package-suffix "-${{ matrix.artifact_suffix }}"',
-        "commit-validation universal2 package argument safety",
-    )
-    if commit_universal.count(commit_dependency_step) != 1:
-        raise AssertionError("Expected exactly one release documentation dependency step in commit universal2 packaging")
-    require_before(commit_universal, commit_setup_step, commit_dependency_step, "commit packaging dependency")
-    require_before(commit_universal, commit_dependency_step, commit_package_step_name, "commit packaging dependency")
-    commit_dependency_start = commit_universal.index(commit_dependency_step)
-    commit_dependency_end = commit_universal.index(
-        "\n      - name:", commit_dependency_start + len(commit_dependency_step)
-    )
-    commit_dependency = commit_universal[commit_dependency_start:commit_dependency_end]
-    require(commit_dependency, "python -m pip install markdown", "commit packaging dependency")
-    reject(commit_dependency, "\n        if:", "commit packaging dependency")
+        require(commit_arm64, token, "commit-validation thin payload archive")
+    reject(commit_arm64, "path: .install", "commit-validation thin payload archive")
 
 
 def main() -> None:

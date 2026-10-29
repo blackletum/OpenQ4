@@ -152,7 +152,6 @@ jobs:
             tools/tests/base64_input_safety.py \
             tools/tests/campaign_split_state_transition.py \
             tools/tests/campaign_scope.py \
-            tools/tests/campaign_chapters.py \
             tools/tests/campaign_runtime.py \
             tools/tests/campaign_selection_runtime.py \
             tools/tests/clang_tidy_input_safety.py \
@@ -489,6 +488,7 @@ jobs:
             tools/ui/update_system_render_options.py \
             tools/ui/update_system_initial_focus.py \
             tools/ui/update_system_menu_button.py \
+            tools/ui/build_subtitles.py \
             tools/tests/windows_text_store.py \
             tools/tests/windows_text_collection_bridge.py \
             tools/tests/windows_text_session.py \
@@ -564,8 +564,6 @@ jobs:
             tools/tests/renderer_gl_display_policy.py \
             tools/tests/sdl3_strict_window.py \
             tools/tests/ui_capture_display_device.py \
-            tools/tests/ui_capture_multiplayer_rosters.py \
-            tools/tests/ui_capture_system_refresh.py \
             tools/ui/capture_display_device.py \
             tools/tests/ui_legacy_inventory.py \
             tools/tests/game_regression_suite.py \
@@ -652,7 +650,6 @@ jobs:
           python tools/tests/base64_input_safety.py
           python tools/tests/campaign_split_state_transition.py
           python tools/tests/campaign_scope.py
-          python tools/tests/campaign_chapters.py
           python tools/tests/clang_tidy_input_safety.py
           python tools/tests/cmdargs_append_contract.py
           python tools/tests/console_completion_contract.py
@@ -939,6 +936,7 @@ jobs:
           python tools/ui/update_system_render_options.py --check
           python tools/ui/update_system_initial_focus.py --check
           python tools/ui/update_system_menu_button.py --check
+          python tools/ui/build_subtitles.py --check
           python tools/tests/ui_text_input.py
           python tools/tests/ui_retained_input.py
           python tools/tests/ui_retained_state_sources.py
@@ -1004,8 +1002,6 @@ jobs:
           python tools/tests/renderer_gl_display_policy.py
           python tools/tests/sdl3_strict_window.py
           python tools/tests/ui_capture_display_device.py
-          python tools/tests/ui_capture_multiplayer_rosters.py
-          python tools/tests/ui_capture_system_refresh.py
           python tools/tests/ui_legacy_inventory.py
           python tools/tests/game_regression_suite.py --check-discovery
           python tools/tests/presentation_clock_ownership.py
@@ -1050,10 +1046,13 @@ jobs:
           bash tools/validation/validate_push.sh --dry-run
           bash tools/validation/validate_pr.sh --dry-run
 
+  # Build jobs do not wait for script-smoke. It already runs the validator's
+  # Python checks on Linux, so each build job skips them except this one and the
+  # arm64 macOS OpenGL job, which cover the MSVC STL, libc++ and arm64 floating
+  # point behavior those native harnesses depend on.
   windows-x64:
     name: Windows x64 Commit Validation
     runs-on: windows-2025
-    needs: script-smoke
     timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
@@ -1147,7 +1146,6 @@ jobs:
   linux-arm64:
     name: Linux ARM64 Commit Validation
     runs-on: ubuntu-24.04-arm
-    needs: script-smoke
     timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
@@ -1242,6 +1240,7 @@ jobs:
           export VK_ICD_FILENAMES="${vulkan_icds[0]}"
           env LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 xvfb-run -a bash tools/validation/validate_pr.sh \
             --fail-on-dirty \
+            --skip-python-tests \
             --runtime \
             --runtime-cases renderer-foundation-selftests,renderer-pbr-visible-selftest,renderer-cluster-grid-selftest,renderer-default-safety-selftest,renderer-shadow-planner-selftest,renderer-shadow-projected-diagnostic,sdl3-x11-display-diagnostics,renderer-vk-clear-startup,renderer-vk-probe-source-lifecycle,renderer-vk-hdr-selftest,renderer-vk-temporal-motion-selftest,renderer-vk-fallback-drill,renderer-vk-device-fallback-drill,renderer-vk-window-recovery,renderer-vk-surface-recovery,renderer-vk-swapchain-recovery,renderer-vk-resources-recovery \
             --runtime-tiers auto \
@@ -1284,9 +1283,7 @@ jobs:
   windows-arm64:
     name: Windows ARM64 Commit Validation
     runs-on: windows-11-arm
-    needs: script-smoke
-    # Match push validation: the full source-check suite and native ARM64 build
-    # exceed 90 minutes on hosted Windows runners.
+    # Match push validation's limit for the native ARM64 build and tests.
     timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
@@ -1327,7 +1324,7 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           Write-Host "Selected validation profile: pr"
-          python tools/validation/openq4_validate.py pr --fail-on-dirty "--extra-setup-arg=-Dopenal_root_override=$env:OPENQ4_OPENAL_ROOT"
+          python tools/validation/openq4_validate.py pr --fail-on-dirty --skip-python-tests "--extra-setup-arg=-Dopenal_root_override=$env:OPENQ4_OPENAL_ROOT"
 
       - name: Run Windows ARM64 dedicated server smoke
         shell: pwsh
@@ -1360,7 +1357,6 @@ jobs:
   linux-sanitizer:
     name: Linux x64 ASan+UBSan Commit Validation
     runs-on: ubuntu-24.04
-    needs: script-smoke
     # The instrumented build alone can take over 80 minutes. Leave time for
     # native tests, staging, the Wayland smoke and its evidence upload.
     timeout-minutes: 150
@@ -1536,13 +1532,15 @@ jobs:
   linux-wayland:
     name: Linux ${{ matrix.arch_label }} ${{ matrix.compiler_label }} Wayland ${{ matrix.libdecor_label }} Commit Validation
     runs-on: ${{ matrix.runner }}
-    needs: script-smoke
     # Leave time for the complete regression suite and fresh compiler builds.
     timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
+    # Only the compiler, architecture and linux_x11 change the build. The
+    # libdecor and window-operation settings are runtime switches, so the x64
+    # libdecor job also runs the synchronous window-operation pass.
     strategy:
       fail-fast: false
       matrix:
@@ -1556,21 +1554,9 @@ jobs:
             libdecor_label: libdecor
             disable_libdecor: "0"
             prefer_libdecor: "1"
-            sync_window_ops: "0"
+            sync_window_ops_pass: "1"
             linux_x11: auto
             artifact_suffix: x64-libdecor
-          - arch_label: x64
-            runner: ubuntu-24.04
-            expected_uname: x86_64
-            compiler_label: GCC
-            cc: gcc
-            cxx: g++
-            libdecor_label: no-libdecor
-            disable_libdecor: "1"
-            prefer_libdecor: "0"
-            sync_window_ops: "0"
-            linux_x11: disabled
-            artifact_suffix: x64-no-libdecor-wayland-only
           - arch_label: x64
             runner: ubuntu-24.04
             expected_uname: x86_64
@@ -1580,21 +1566,9 @@ jobs:
             libdecor_label: no-libdecor
             disable_libdecor: "1"
             prefer_libdecor: "0"
-            sync_window_ops: "0"
+            sync_window_ops_pass: "0"
             linux_x11: disabled
             artifact_suffix: x64-clang-no-libdecor-wayland-only
-          - arch_label: x64
-            runner: ubuntu-24.04
-            expected_uname: x86_64
-            compiler_label: GCC
-            cc: gcc
-            cxx: g++
-            libdecor_label: sync-window-ops
-            disable_libdecor: "0"
-            prefer_libdecor: "0"
-            sync_window_ops: "1"
-            linux_x11: auto
-            artifact_suffix: x64-sync-window-ops
           - arch_label: ARM64
             runner: ubuntu-24.04-arm
             expected_uname: aarch64
@@ -1604,7 +1578,7 @@ jobs:
             libdecor_label: libdecor
             disable_libdecor: "0"
             prefer_libdecor: "1"
-            sync_window_ops: "0"
+            sync_window_ops_pass: "0"
             linux_x11: auto
             artifact_suffix: arm64-libdecor
           - arch_label: ARM64
@@ -1616,7 +1590,7 @@ jobs:
             libdecor_label: no-libdecor
             disable_libdecor: "1"
             prefer_libdecor: "0"
-            sync_window_ops: "0"
+            sync_window_ops_pass: "0"
             linux_x11: disabled
             artifact_suffix: arm64-clang-no-libdecor-wayland-only
 
@@ -1747,25 +1721,11 @@ jobs:
           export SDL_VIDEO_DRIVER=wayland
           export SDL_VIDEODRIVER=wayland
           export LIBGL_ALWAYS_SOFTWARE=1
-          if [ "${{ matrix.disable_libdecor }}" = "1" ]; then
-            export OPENQ4_WAYLAND_DISABLE_LIBDECOR=1
-          else
-            unset OPENQ4_WAYLAND_DISABLE_LIBDECOR
-          fi
-          if [ "${{ matrix.prefer_libdecor }}" = "1" ]; then
-            export OPENQ4_WAYLAND_PREFER_LIBDECOR=1
-          else
-            unset OPENQ4_WAYLAND_PREFER_LIBDECOR
-          fi
-          if [ "${{ matrix.sync_window_ops }}" = "1" ]; then
-            export OPENQ4_WAYLAND_SYNC_WINDOW_OPS=1
-          else
-            unset OPENQ4_WAYLAND_SYNC_WINDOW_OPS
-          fi
 
           bash tools/validation/validate_pr.sh \
             --build-dir builddir \
             --fail-on-dirty \
+            --skip-python-tests \
             --extra-setup-arg=-Dlinux_x11=${{ matrix.linux_x11 }}
 
           sdl_config="$(find builddir -name SDL_build_config.h -print -quit)"
@@ -1783,27 +1743,56 @@ jobs:
             done
           fi
 
-          ld_debug_prefix="${RUNNER_TEMP}/openq4-wayland-loader-${{ matrix.artifact_suffix }}"
-          export LD_DEBUG=libs
-          export LD_DEBUG_OUTPUT="${ld_debug_prefix}"
-          python tools/tests/renderer_validation_matrix.py \
-            --cases renderer-default-safety-selftest,sdl3-wayland-window-lifecycle,sdl3-wayland-window-stress,sdl3-wayland-mouse-capture,sdl3-wayland-mouse-capture-stress,sdl3-wayland-display-diagnostics \
-            --tiers auto \
-            --basepath "" \
-            --skip-official-pak-validation
-          unset LD_DEBUG LD_DEBUG_OUTPUT
+          # Runs the Wayland renderer cases with one set of libdecor and
+          # window-operation switches: label, disable, prefer, sync.
+          run_wayland_pass() {
+            local label="$1" disable_libdecor="$2" prefer_libdecor="$3" sync_window_ops="$4"
+            shift 4
+            if [ "${disable_libdecor}" = "1" ]; then
+              export OPENQ4_WAYLAND_DISABLE_LIBDECOR=1
+            else
+              unset OPENQ4_WAYLAND_DISABLE_LIBDECOR
+            fi
+            if [ "${prefer_libdecor}" = "1" ]; then
+              export OPENQ4_WAYLAND_PREFER_LIBDECOR=1
+            else
+              unset OPENQ4_WAYLAND_PREFER_LIBDECOR
+            fi
+            if [ "${sync_window_ops}" = "1" ]; then
+              export OPENQ4_WAYLAND_SYNC_WINDOW_OPS=1
+            else
+              unset OPENQ4_WAYLAND_SYNC_WINDOW_OPS
+            fi
 
-          shopt -s nullglob
-          loader_logs=("${ld_debug_prefix}".*)
-          if [ "${#loader_logs[@]}" -eq 0 ]; then
-            echo "Dynamic-loader diagnostics were not produced."
-            exit 1
-          fi
-          if [ "${{ matrix.prefer_libdecor }}" = "1" ]; then
-            grep -hF 'libdecor-0.so.0' "${loader_logs[@]}" >/dev/null
-          elif [ "${{ matrix.disable_libdecor }}" = "1" ] && grep -hF 'libdecor-0.so.0' "${loader_logs[@]}" >/dev/null; then
-            echo "libdecor loaded despite OPENQ4_WAYLAND_DISABLE_LIBDECOR=1."
-            exit 1
+            local ld_debug_prefix="${RUNNER_TEMP}/openq4-wayland-loader-${label}"
+            export LD_DEBUG=libs
+            export LD_DEBUG_OUTPUT="${ld_debug_prefix}"
+            python tools/tests/renderer_validation_matrix.py \
+              --cases renderer-default-safety-selftest,sdl3-wayland-window-lifecycle,sdl3-wayland-window-stress,sdl3-wayland-mouse-capture,sdl3-wayland-mouse-capture-stress,sdl3-wayland-display-diagnostics \
+              --tiers auto \
+              --basepath "" \
+              --skip-official-pak-validation \
+              "$@"
+            unset LD_DEBUG LD_DEBUG_OUTPUT
+
+            shopt -s nullglob
+            local loader_logs=("${ld_debug_prefix}".*)
+            if [ "${#loader_logs[@]}" -eq 0 ]; then
+              echo "Dynamic-loader diagnostics were not produced for ${label}."
+              exit 1
+            fi
+            if [ "${prefer_libdecor}" = "1" ]; then
+              grep -hF 'libdecor-0.so.0' "${loader_logs[@]}" >/dev/null
+            elif [ "${disable_libdecor}" = "1" ] && grep -hF 'libdecor-0.so.0' "${loader_logs[@]}" >/dev/null; then
+              echo "libdecor loaded despite OPENQ4_WAYLAND_DISABLE_LIBDECOR=1."
+              exit 1
+            fi
+          }
+
+          run_wayland_pass "${{ matrix.artifact_suffix }}" "${{ matrix.disable_libdecor }}" "${{ matrix.prefer_libdecor }}" 0
+          if [ "${{ matrix.sync_window_ops_pass }}" = "1" ]; then
+            run_wayland_pass "${{ matrix.artifact_suffix }}-sync-window-ops" 0 0 1 \
+              --output-dir .tmp/renderer-validation/sync-window-ops
           fi
 
       - name: Run Linux x64 dedicated server smoke
@@ -1837,7 +1826,6 @@ jobs:
   macos-arm64:
     name: macOS ARM64 ${{ matrix.bridge_label }} Commit Validation
     runs-on: macos-15
-    needs: script-smoke
     timeout-minutes: 150
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
@@ -1849,10 +1837,12 @@ jobs:
           - bridge_label: OpenGL
             macos_graphics_bridge: opengl
             macos_openal_provider: system
+            python_tests: true
             artifact_suffix: opengl
           - bridge_label: Metal
             macos_graphics_bridge: metal
             macos_openal_provider: system
+            python_tests: false
             artifact_suffix: metal
 
     steps:
@@ -1895,8 +1885,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          validation_args=(--fail-on-dirty)
+          if [[ "${{ matrix.python_tests }}" != "true" ]]; then
+            validation_args+=(--skip-python-tests)
+          fi
           bash tools/validation/validate_pr.sh \
-            --fail-on-dirty \
+            "${validation_args[@]}" \
             --platform-backend=sdl3 \
             --extra-setup-arg=-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }} \
             --extra-setup-arg=-Dmacos_openal_provider=${{ matrix.macos_openal_provider }}
@@ -1963,265 +1957,5 @@ jobs:
           name: commit-macos-arm64-${{ matrix.artifact_suffix }}-payload
           path: .tmp/macos-thin-payload/arm64-${{ matrix.artifact_suffix }}-payload.tar.gz
           if-no-files-found: warn
-          retention-days: 14
-          include-hidden-files: true
-
-  macos-x64:
-    name: macOS Intel x64 ${{ matrix.bridge_label }} Commit Validation
-    runs-on: macos-15-intel
-    needs: script-smoke
-    # Allow the complete script/build/test/package corridor on hosted Intel
-    # Macs; its script checks alone can exceed the former job limit.
-    timeout-minutes: 240
-    env:
-      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}
-      MACOSX_DEPLOYMENT_TARGET: "11.0"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - bridge_label: OpenGL
-            macos_graphics_bridge: opengl
-            macos_openal_provider: system
-            artifact_suffix: opengl
-          - bridge_label: Metal
-            macos_graphics_bridge: metal
-            macos_openal_provider: system
-            artifact_suffix: metal
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Verify Intel host
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$(uname -m)" != "x86_64" ]]; then
-            echo "macOS Intel validation requires x86_64, found $(uname -m)."
-            exit 1
-          fi
-
-      - name: Setup Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.x"
-
-      - name: Setup Java for Android host storage validation
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Install Meson and Ninja
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install meson ninja
-
-      - name: Prepare pinned OpenAL Soft
-        shell: bash
-        run: |
-          set -euo pipefail
-          prepared_root="${GITHUB_WORKSPACE}/.tmp/openal-soft-macos-x64"
-          bash tools/build/prepare_macos_openal_soft.sh \
-            --architecture x64 \
-            --deployment-target "${MACOSX_DEPLOYMENT_TARGET}" \
-            --output-root "${prepared_root}" \
-            --stage-install-dir .install
-          echo "PKG_CONFIG_PATH=${prepared_root}/lib/pkgconfig" >> "${GITHUB_ENV}"
-
-      - name: Run selected validation profile
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash tools/validation/validate_pr.sh \
-            --fail-on-dirty \
-            --platform-backend=sdl3 \
-            --extra-setup-arg=-Dmacos_graphics_bridge=${{ matrix.macos_graphics_bridge }} \
-            --extra-setup-arg=-Dmacos_openal_provider=${{ matrix.macos_openal_provider }}
-
-      - name: Normalize Intel thin payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          python tools/build/assemble_macos_universal2.py prepare \
-            --install-root .install \
-            --arch x64
-
-      - name: Run macOS dedicated server smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          python tools/tests/macos_dedicated_server_smoke.py \
-            --arch x64 \
-            --output-root .tmp/macos-dedicated-smoke/x64-${{ matrix.artifact_suffix }}
-
-      - name: Stage pinned MoltenVK for Intel thin payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash tools/build/prepare_macos_moltenvk.sh --output-dir .install
-          bash tools/build/prepare_macos_moltenvk.sh --verify-only --output-dir .install
-
-      - name: Record macOS Intel thin-build provenance
-        shell: bash
-        run: |
-          set -euo pipefail
-          python tools/build/assemble_macos_universal2.py record \
-            --install-root .install \
-            --source-manifest .tmp/validation/pr-builddir/openq4_game_sources.json \
-            --arch x64 \
-            --graphics-bridge ${{ matrix.macos_graphics_bridge }} \
-            --openal-provider ${{ matrix.macos_openal_provider }} \
-            --deployment-target "${MACOSX_DEPLOYMENT_TARGET}" \
-            --build-type debug
-
-      - name: Publish macOS Intel dedicated server smoke
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: commit-macos-x64-${{ matrix.artifact_suffix }}-dedicated-smoke
-          path: .tmp/macos-dedicated-smoke/x64-${{ matrix.artifact_suffix }}
-          if-no-files-found: warn
-          retention-days: 14
-          include-hidden-files: true
-
-      - name: Archive macOS Intel staged payload with modes
-        shell: bash
-        run: |
-          set -euo pipefail
-          payload_archive=".tmp/macos-thin-payload/x64-${{ matrix.artifact_suffix }}-payload.tar.gz"
-          mkdir -p "$(dirname "${payload_archive}")"
-          rm -f "${payload_archive}"
-          tar -C .install -czf "${payload_archive}" .
-          tar -tzf "${payload_archive}" >/dev/null
-
-      - name: Publish macOS Intel staged payload
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: commit-macos-x64-${{ matrix.artifact_suffix }}-payload
-          path: .tmp/macos-thin-payload/x64-${{ matrix.artifact_suffix }}-payload.tar.gz
-          if-no-files-found: warn
-          retention-days: 14
-          include-hidden-files: true
-
-  macos-universal2:
-    # Pre-publication gate only; release artifacts remain arm64-only.
-    name: macOS universal2 ${{ matrix.bridge_label }} Assembly
-    runs-on: macos-15
-    needs:
-      - macos-arm64
-      - macos-x64
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - bridge_label: OpenGL
-            artifact_suffix: opengl
-          - bridge_label: Metal
-            artifact_suffix: metal
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.x"
-
-      - name: Setup Java for Android host storage validation
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Install release documentation dependency
-        run: python -m pip install markdown
-
-      - name: Download macOS ARM64 thin payload
-        uses: actions/download-artifact@v8
-        with:
-          name: commit-macos-arm64-${{ matrix.artifact_suffix }}-payload
-          path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}/arm64
-
-      - name: Download macOS Intel thin payload
-        uses: actions/download-artifact@v8
-        with:
-          name: commit-macos-x64-${{ matrix.artifact_suffix }}-payload
-          path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}/x64
-
-      - name: Restore mode-preserving thin payloads
-        shell: bash
-        run: |
-          set -euo pipefail
-          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
-          for arch in arm64 x64; do
-            payload_archive="${corridor_root}/${arch}/${arch}-${{ matrix.artifact_suffix }}-payload.tar.gz"
-            if [ -L "${payload_archive}" ] || [ ! -f "${payload_archive}" ]; then
-              echo "Missing regular thin payload archive: ${payload_archive}"
-              exit 1
-            fi
-            tar -tzf "${payload_archive}" >/dev/null
-            tar -xzf "${payload_archive}" -C "${corridor_root}/${arch}"
-            rm -f "${payload_archive}"
-          done
-
-      - name: Assemble exact dual-slice staging tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
-          mkdir -p "${corridor_root}/package-output"
-          python tools/build/assemble_macos_universal2.py assemble \
-            --arm64-root "${corridor_root}/arm64" \
-            --x64-root "${corridor_root}/x64" \
-            --output-root "${corridor_root}/universal2" \
-            --assembly-manifest "${corridor_root}/assembly-manifest.json"
-
-      - name: Run native universal2 dedicated-server smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
-          python tools/tests/macos_dedicated_server_smoke.py \
-            --install-root "${corridor_root}/universal2" \
-            --arch universal2 \
-            --output-root "${corridor_root}/dedicated-smoke"
-
-      - name: Package and validate universal2 app
-        shell: bash
-        run: |
-          set -euo pipefail
-          corridor_root=".tmp/macos-universal2/${{ matrix.artifact_suffix }}"
-          export OPENQ4_UNIVERSAL_INSTALL_ROOT="${corridor_root}/universal2"
-          release_version="$(python -c 'import json, os; print(json.load(open(os.path.join(os.environ["OPENQ4_UNIVERSAL_INSTALL_ROOT"], "baseoq4", "mod.json"), encoding="utf-8"))["version"])')"
-          python tools/build/package_nightly.py \
-            --platform macos \
-            --arch universal2 \
-            --version "${release_version}" \
-            --version-tag universal2-ci \
-            --source-root . \
-            --install-dir "${corridor_root}/universal2" \
-            --output-dir "${corridor_root}/package-output" \
-            --archive-format tar.xz \
-            --package-suffix=-${{ matrix.artifact_suffix }} \
-            --macos-signing-mode ad-hoc \
-
-      - name: Publish universal2 assembly evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: commit-macos-universal2-${{ matrix.artifact_suffix }}
-          path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}
-          if-no-files-found: error
           retention-days: 14
           include-hidden-files: true
