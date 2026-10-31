@@ -414,6 +414,14 @@ def validate_release_build_history() -> None:
     build_checkout = workflow.split("  builds:", 1)[1].split("- name: Fetch pinned openQ4-game", 1)[0]
     if "fetch-depth: 0" not in build_checkout or "fetch-depth: 1" in build_checkout:
         raise AssertionError("release compilation must use complete engine history")
+    # Push verification publishes the payloads handed to players for testing,
+    # so its packaging jobs need the same complete history (#183).
+    push = (ROOT / ".github/workflows/push-verification.yml").read_text(encoding="utf-8")
+    for job in ("posix-builds", "windows-build", "windows-arm64-build"):
+        section = push.split(f"\n  {job}:\n", 1)[1]
+        checkout = section.split("uses: actions/checkout@v7", 1)[1].split("\n      - name:", 1)[0]
+        if "fetch-depth: 0" not in checkout:
+            raise AssertionError(f"push verification job {job} publishes payloads and must use complete engine history")
 
 
 def validate_release_version_floor_and_docs_classification() -> None:

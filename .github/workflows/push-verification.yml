@@ -1113,6 +1113,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # These jobs publish the test payloads players are given. Save payloads use
+          # the engine commit count as their build number; a shallow checkout makes
+          # it 1, and the build then rejects every save it writes (#183).
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -1318,6 +1323,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # These jobs publish the test payloads players are given. Save payloads use
+          # the engine commit count as their build number; a shallow checkout makes
+          # it 1, and the build then rejects every save it writes (#183).
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -1417,6 +1427,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # These jobs publish the test payloads players are given. Save payloads use
+          # the engine commit count as their build number; a shallow checkout makes
+          # it 1, and the build then rejects every save it writes (#183).
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v7
